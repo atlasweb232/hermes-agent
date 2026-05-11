@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from hermes_cli import kanban_db as kb
+from hermes_cli.config import load_config, save_config
+from hermes_state import SessionDB
 
 
 @pytest.fixture
@@ -47,6 +49,143 @@ def test_init_creates_expected_tables(kanban_home):
     assert {"tasks", "task_links", "task_comments", "task_events"} <= names
 
 
+def test_build_worker_context_includes_supervisor_memory_packet(kanban_home, monkeypatch):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="oauth callback", body="use aws endpoints", assignee="worker")
+
+    memory_db = SessionDB()
+    try:
+        packet = memory_db.upsert_memory_packet(
+            packet_id="mempkt_test",
+            query="oauth callback",
+            status="ready",
+            tenant_id="atlas",
+            repo_id="default",
+            job_id=tid,
+            task_id=tid,
+            scopes=["atlas", "default"],
+            claims_json=[{"record_id": "rec-1", "title": "callback claim", "status": "active", "score": 0.9}],
+            evidence_json=[{"uri": "artifact://evidence.txt"}],
+            contradictions_json=[],
+            freshness_json={"policy": "fresh"},
+            confidence=0.9,
+            source="test",
+            expires_at=time.time() + 3600,
+        )
+        assert packet == "mempkt_test"
+    finally:
+        memory_db.close()
+
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_ID", "mempkt_test")
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_STATUS", "ready")
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_QUERY", "oauth callback")
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_SCOPE", "atlas,default")
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_CLAIMS", "1")
+    monkeypatch.setenv("HERMES_MEMORY_PACKET_EVIDENCE", "1")
+
+    with kb.connect() as conn:
+        ctx = kb.build_worker_context(conn, tid)
+
+    assert "Supervisor memory packet" in ctx
+    assert "Packet ID: mempkt_test" in ctx
+    assert "callback claim" in ctx
+
+
+def test_build_worker_context_includes_supervisor_learning_context(kanban_home):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["approved_candidates"] = [
+        {
+            "id": "metacand_1",
+            "kind": "routing_hint",
+            "claim": "Prefer AWS OAuth redirect endpoints for atlas-email-flutter",
+            "match": "oauth callback",
+            "assignee": "jules",
+            "workspace_kind": "worktree",
+            "score": 0.9,
+            "status": "approved",
+            "evidence_json": {
+                "command": "hermes memory candidates approve metacand_1 --apply",
+                "notes": "Prefer workspace-scoped routing for OAuth fixes",
+            },
+        }
+    ]
+    learning["applied_candidates"] = learning["approved_candidates"]
+    learning["routing_hints"] = learning["approved_candidates"]
+    learning["validation_recipes"] = [
+        {
+            "id": "metacand_2",
+            "kind": "validation_recipe",
+            "claim": "Run tests before deploy",
+            "match": "Fix oauth callback flow",
+            "score": 0.8,
+            "status": "approved",
+            "evidence_json": {
+                "tests": ["pytest tests/hermes_cli/test_kanban_db.py -q"],
+                "notes": "Validation recipe should stay visible in worker context",
+            },
+        }
+    ]
+    learning["hook_rules"] = [
+        {
+            "id": "metacand_4",
+            "kind": "hook_rule",
+            "claim": "Capture task-failure hook details for oauth callback work",
+            "match": "Fix oauth callback flow",
+            "score": 0.75,
+            "status": "approved",
+            "evidence_json": {
+                "command": "hermes memory learn --repo-id atlas-email-flutter",
+                "notes": "Hook guidance should be surfaced as active learning guidance",
+            },
+        }
+    ]
+    learning["recovery_hints"] = [
+        {
+            "id": "metacand_3",
+            "kind": "recovery_hint",
+            "claim": "Retry OAuth callback tasks with the AWS redirect URL",
+            "score": 0.7,
+            "status": "approved",
+            "evidence_json": {
+                "match": "oauth callback",
+                "workspace_kind": "worktree",
+                "notes": "Restart the handoff with the learned AWS callback route",
+            },
+        }
+    ]
+    save_config(cfg)
+
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            workspace_kind="worktree",
+        )
+        ctx = kb.build_worker_context(conn, tid)
+
+    assert "Supervisor learning context" in ctx
+    assert "Routing hints:" in ctx
+    assert "Prefer AWS OAuth redirect endpoints" in ctx
+    assert "Validation recipes:" in ctx
+    assert "command=hermes memory candidates approve metacand_1 --apply" in ctx
+    assert "tests=[\"pytest tests/hermes_cli/test_kanban_db.py -q\"]" in ctx
+    assert "notes=Validation recipe should stay visible in worker context" in ctx
+    assert "Active learning guidance" in ctx
+    assert "Validation recipe:" in ctx
+    assert "Tests: [\"pytest tests/hermes_cli/test_kanban_db.py -q\"]" in ctx
+    assert "Hook rule:" in ctx
+    assert "Command: hermes memory learn --repo-id atlas-email-flutter" in ctx
+    assert "Recovery hints:" in ctx
+    assert "Retry OAuth callback tasks with the AWS redirect URL" in ctx
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert task is not None
+    assert task.assignee == "jules"
+
+
 # ---------------------------------------------------------------------------
 # Task creation + status inference
 # ---------------------------------------------------------------------------
@@ -59,6 +198,47 @@ def test_create_task_no_parents_is_ready(kanban_home):
     assert t.status == "ready"
     assert t.assignee == "alice"
     assert t.workspace_kind == "scratch"
+
+
+def test_create_task_memory_fields_roundtrip(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="gate me",
+            assignee="alice",
+            memory_required=True,
+            memory_query="oauth callback aws",
+            memory_scope="atlas-email-flutter",
+        )
+        t = kb.get_task(conn, tid)
+    assert t is not None
+    assert t.memory_required is True
+    assert t.memory_query == "oauth callback aws"
+    assert t.memory_scope == "atlas-email-flutter"
+
+
+def test_create_task_uses_routing_hint_when_assignee_missing(kanban_home):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["auto_route_tasks"] = True
+    learning["routing_hints"] = [
+        {
+            "match": "oauth callback",
+            "assignee": "jules",
+            "kind": "routing_hint",
+            "claim": "Use jules for oauth callback work",
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="Fix oauth callback flow", body="microsoft login")
+        t = kb.get_task(conn, tid)
+
+    assert t is not None
+    assert t.assignee == "jules"
 
 
 def test_create_task_with_parent_is_todo_until_parent_done(kanban_home):

@@ -591,6 +591,9 @@ class Task:
     max_runtime_seconds: Optional[int] = None
     last_heartbeat_at: Optional[int] = None
     current_run_id: Optional[int] = None
+    memory_required: bool = False
+    memory_query: Optional[str] = None
+    memory_scope: Optional[str] = None
     workflow_template_id: Optional[str] = None
     current_step_key: Optional[str] = None
     # Force-loaded skills for the worker on this task (appended to the
@@ -660,6 +663,9 @@ class Task:
             current_run_id=(
                 row["current_run_id"] if "current_run_id" in keys else None
             ),
+            memory_required=bool(row["memory_required"]) if "memory_required" in keys and row["memory_required"] is not None else False,
+            memory_query=row["memory_query"] if "memory_query" in keys else None,
+            memory_scope=row["memory_scope"] if "memory_scope" in keys else None,
             workflow_template_id=(
                 row["workflow_template_id"] if "workflow_template_id" in keys else None
             ),
@@ -782,6 +788,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Pointer into task_runs for the currently-active run (NULL if no
     -- run is in-flight). Denormalised for cheap reads.
     current_run_id       INTEGER,
+    -- Supervisor memory policy for this task.
+    memory_required      INTEGER NOT NULL DEFAULT 0,
+    memory_query         TEXT,
+    memory_scope         TEXT,
     -- Forward-compat for v2 workflow routing. In v1 the kernel writes
     -- these when the task is opted into a template but otherwise ignores
     -- them; the dispatcher doesn't consult them for routing yet.
@@ -1054,6 +1064,18 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(
             conn, "tasks", "current_run_id", "current_run_id INTEGER"
         )
+    if "memory_required" not in cols:
+        _add_column_if_missing(
+            conn, "tasks", "memory_required", "memory_required INTEGER NOT NULL DEFAULT 0"
+        )
+    if "memory_query" not in cols:
+        _add_column_if_missing(
+            conn, "tasks", "memory_query", "memory_query TEXT"
+        )
+    if "memory_scope" not in cols:
+        _add_column_if_missing(
+            conn, "tasks", "memory_scope", "memory_scope TEXT"
+        )
     if "workflow_template_id" not in cols:
         _add_column_if_missing(
             conn, "tasks", "workflow_template_id", "workflow_template_id TEXT"
@@ -1227,6 +1249,204 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
+def get_learning_routing_hint(
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a learned routing hint for a new task, if any."""
+    try:
+        from hermes_cli.config import load_config
+    except Exception:
+        return None
+
+    try:
+        cfg = load_config()
+        learning = cfg.get("supervisor", {}).get("learning", {})
+        if not isinstance(learning, dict) or not learning.get("auto_route_tasks", True):
+            return None
+        hints = learning.get("routing_hints") or []
+        if not isinstance(hints, list):
+            return None
+        haystack = f"{title}\n{body or ''}".casefold()
+        for hint in hints:
+            if not isinstance(hint, dict):
+                continue
+            match = str(hint.get("match") or hint.get("claim") or "").strip()
+            target = _canonical_assignee(
+                hint.get("assignee") or hint.get("profile") or hint.get("worker")
+            )
+            hint_workspace_kind = str(hint.get("workspace_kind") or "").strip()
+            if workspace_kind and hint_workspace_kind and hint_workspace_kind != workspace_kind:
+                continue
+            if match and target and match.casefold() in haystack:
+                return {
+                    "match": match,
+                    "assignee": target,
+                    "workspace_kind": hint_workspace_kind or None,
+                    "candidate_id": hint.get("candidate_id") or hint.get("id"),
+                    "claim": hint.get("claim"),
+                    "status": hint.get("status"),
+                    "score": hint.get("score"),
+                }
+    except Exception:
+        return None
+    return None
+
+
+def get_learning_recovery_hint(
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a learned recovery hint for a failed task, if any."""
+    try:
+        from hermes_cli.config import load_config
+    except Exception:
+        return None
+
+    try:
+        cfg = load_config()
+        learning = cfg.get("supervisor", {}).get("learning", {})
+        if not isinstance(learning, dict):
+            return None
+        hints = learning.get("recovery_hints") or []
+        if not isinstance(hints, list):
+            return None
+        haystack = f"{title}\n{body or ''}".casefold()
+        for hint in hints:
+            if not isinstance(hint, dict):
+                continue
+            match = str(hint.get("match") or hint.get("claim") or "").strip()
+            hint_workspace_kind = str(hint.get("workspace_kind") or "").strip()
+            if workspace_kind and hint_workspace_kind and hint_workspace_kind != workspace_kind:
+                continue
+            if match and match.casefold() in haystack:
+                return {
+                    "match": match,
+                    "claim": hint.get("claim"),
+                    "notes": hint.get("notes") or hint.get("advice") or hint.get("recommendation"),
+                    "workspace_kind": hint_workspace_kind or None,
+                    "candidate_id": hint.get("candidate_id") or hint.get("id"),
+                    "status": hint.get("status"),
+                    "score": hint.get("score"),
+                }
+    except Exception:
+        return None
+    return None
+
+
+def _match_learning_config_entry(
+    entries: Any,
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+    assignee_keys: tuple[str, ...] = (),
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(entries, list):
+        return None
+    haystack = f"{title}\n{body or ''}".casefold()
+    for hint in entries:
+        if not isinstance(hint, dict):
+            continue
+        evidence = hint.get("evidence_json") if isinstance(hint.get("evidence_json"), dict) else {}
+        match = str(hint.get("match") or hint.get("claim") or evidence.get("match") or "").strip()
+        hint_workspace_kind = str(hint.get("workspace_kind") or evidence.get("workspace_kind") or "").strip()
+        if workspace_kind and hint_workspace_kind and hint_workspace_kind != workspace_kind:
+            continue
+        if match and match.casefold() in haystack:
+            matched: Dict[str, Any] = {
+                "match": match,
+                "claim": hint.get("claim"),
+                "notes": hint.get("notes") or hint.get("advice") or hint.get("recommendation") or evidence.get("notes"),
+                "command": hint.get("command") or evidence.get("command"),
+                "tests": hint.get("tests") or evidence.get("tests"),
+                "workspace_kind": hint_workspace_kind or None,
+                "candidate_id": hint.get("candidate_id") or hint.get("id"),
+                "status": hint.get("status"),
+                "score": hint.get("score"),
+            }
+            for key in assignee_keys:
+                value = hint.get(key) or evidence.get(key)
+                if value:
+                    matched[key] = value
+            if evidence:
+                matched["evidence_json"] = evidence
+            return matched
+    return None
+
+
+def get_learning_validation_recipe(
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a learned validation recipe for a task, if any."""
+    try:
+        from hermes_cli.config import load_config
+    except Exception:
+        return None
+
+    try:
+        cfg = load_config()
+        learning = cfg.get("supervisor", {}).get("learning", {})
+        if not isinstance(learning, dict):
+            return None
+        recipes = learning.get("validation_recipes") or []
+        return _match_learning_config_entry(
+            recipes,
+            title,
+            body,
+            workspace_kind=workspace_kind,
+        )
+    except Exception:
+        return None
+
+
+def get_learning_hook_rule(
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return a learned hook rule for a task, if any."""
+    try:
+        from hermes_cli.config import load_config
+    except Exception:
+        return None
+
+    try:
+        cfg = load_config()
+        learning = cfg.get("supervisor", {}).get("learning", {})
+        if not isinstance(learning, dict):
+            return None
+        rules = learning.get("hook_rules") or []
+        return _match_learning_config_entry(
+            rules,
+            title,
+            body,
+            workspace_kind=workspace_kind,
+        )
+    except Exception:
+        return None
+
+
+def _match_learning_routing_assignee(
+    title: str,
+    body: Optional[str],
+    *,
+    workspace_kind: Optional[str] = None,
+) -> Optional[str]:
+    hint = get_learning_routing_hint(title, body, workspace_kind=workspace_kind)
+    if not hint:
+        return None
+    return str(hint.get("assignee") or "").strip() or None
+
+
 def create_task(
     conn: sqlite3.Connection,
     *,
@@ -1244,6 +1464,9 @@ def create_task(
     max_runtime_seconds: Optional[int] = None,
     skills: Optional[Iterable[str]] = None,
     max_retries: Optional[int] = None,
+    memory_required: bool = False,
+    memory_query: Optional[str] = None,
+    memory_scope: Optional[str] = None,
 ) -> str:
     """Create a new task and optionally link it under parent tasks.
 
@@ -1270,6 +1493,8 @@ def create_task(
     translation skill regardless of the profile's default config).
     """
     assignee = _canonical_assignee(assignee)
+    if assignee is None:
+        assignee = _match_learning_routing_assignee(title, body, workspace_kind=workspace_kind)
     if not title or not title.strip():
         raise ValueError("title is required")
     if workspace_kind not in VALID_WORKSPACE_KINDS:
@@ -1377,8 +1602,8 @@ def create_task(
                         id, title, body, assignee, status, priority,
                         created_by, created_at, workspace_kind, workspace_path,
                         tenant, idempotency_key, max_runtime_seconds, skills,
-                        max_retries
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        max_retries, memory_required, memory_query, memory_scope
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -1396,6 +1621,9 @@ def create_task(
                         int(max_runtime_seconds) if max_runtime_seconds else None,
                         json.dumps(skills_list) if skills_list is not None else None,
                         int(max_retries) if max_retries is not None else None,
+                        1 if memory_required else 0,
+                        memory_query,
+                        memory_scope,
                     ),
                 )
                 for pid in parents:
@@ -3466,13 +3694,18 @@ def _record_task_failure(
     blocked = False
     with write_txn(conn):
         row = conn.execute(
-            "SELECT consecutive_failures, status, max_retries "
+            "SELECT consecutive_failures, status, max_retries, title, body, workspace_kind "
             "FROM tasks WHERE id = ?", (task_id,),
         ).fetchone()
         if row is None:
             return False
         failures = int(row["consecutive_failures"]) + 1
         cur_status = row["status"]
+        recovery_hint = get_learning_recovery_hint(
+            str(row["title"] or ""),
+            row["body"],
+            workspace_kind=str(row["workspace_kind"] or ""),
+        )
 
         # Per-task override wins over both caller-supplied and default
         # thresholds. None (the common case) falls through.
@@ -3528,6 +3761,8 @@ def _record_task_failure(
                 "error": error[:500],
                 "trigger_outcome": outcome,
             }
+            if recovery_hint:
+                payload["learning_recovery_hint"] = recovery_hint
             if event_payload_extra:
                 payload.update(event_payload_extra)
             _append_event(
@@ -3559,11 +3794,17 @@ def _record_task_failure(
                     conn, task_id,
                     outcome=outcome, status=outcome,
                     error=error[:500],
-                    metadata={"failures": failures},
+                    metadata={
+                        "failures": failures,
+                        "learning_recovery_hint": recovery_hint,
+                    },
                 )
+                event_payload = {"error": error[:500], "failures": failures}
+                if recovery_hint:
+                    event_payload["learning_recovery_hint"] = recovery_hint
                 _append_event(
                     conn, task_id, outcome,
-                    {"error": error[:500], "failures": failures},
+                    event_payload,
                     run_id=run_id,
                 )
             # Timeout/crash path's caller already emitted its own event.
@@ -3747,6 +3988,49 @@ def dispatch_once(
     result.timed_out = enforce_max_runtime(conn)
     result.promoted = recompute_ready(conn)
 
+    # Memory gate recovery: if a memory-required task was previously
+    # blocked, re-evaluate it before we look at the ready queue. A task
+    # that now has a valid packet can be unblocked and picked up in the
+    # same tick; a still-blocked task stays parked.
+    try:
+        from hermes_cli.supervisor_memory import evaluate_memory_readiness
+    except Exception:
+        evaluate_memory_readiness = None  # type: ignore[assignment]
+    if evaluate_memory_readiness is not None:
+        blocked_memory_rows = conn.execute(
+            "SELECT id FROM tasks WHERE status = 'blocked' AND memory_required = 1 "
+            "ORDER BY priority DESC, created_at ASC"
+        ).fetchall()
+        for row in blocked_memory_rows:
+            task = get_task(conn, row["id"])
+            if task is None:
+                continue
+            repo_scope = (
+                (task.memory_scope or "").strip()
+                or task.tenant
+                or _normalize_board_slug(board)
+                or get_current_board()
+            )
+            gate = None
+            try:
+                from hermes_state import SessionDB
+
+                with contextlib.closing(SessionDB()) as memory_db:
+                    gate = evaluate_memory_readiness(
+                        memory_db,
+                        query=(task.memory_query or task.title or task.id),
+                        tenant_id=task.tenant,
+                        repo_id=repo_scope,
+                        job_id=task.id,
+                        task_id=task.id,
+                        required=True,
+                        scopes=[s for s in (task.tenant, repo_scope, task.id) if s],
+                    )
+            except Exception:
+                gate = None
+            if gate and gate.status in {"ready", "degraded", "empty", "not_required"}:
+                unblock_task(conn, task.id)
+
     # Count tasks already running so max_spawn enforces concurrency rather
     # than a per-tick spawn budget. See the docstring above for the full
     # rationale; the short version is that a 60-second tick interval with a
@@ -3800,6 +4084,40 @@ def dispatch_once(
         if dry_run:
             result.spawned.append((row["id"], row["assignee"], ""))
             continue
+        task = get_task(conn, row["id"])
+        if task is None:
+            continue
+        if task.memory_required:
+            try:
+                from hermes_state import SessionDB
+                from hermes_cli.supervisor_memory import evaluate_memory_readiness
+
+                memory_db = SessionDB()
+                try:
+                    repo_scope = (task.memory_scope or "").strip() or task.tenant or _normalize_board_slug(board) or get_current_board()
+                    gate = evaluate_memory_readiness(
+                        memory_db,
+                        query=(task.memory_query or task.title or task.id),
+                        tenant_id=task.tenant,
+                        repo_id=repo_scope,
+                        job_id=task.id,
+                        task_id=task.id,
+                        required=True,
+                        scopes=[s for s in (task.tenant, repo_scope, task.id) if s],
+                    )
+                finally:
+                    memory_db.close()
+            except Exception:
+                gate = None
+            if gate and gate.status == "blocked":
+                block_task(
+                    conn,
+                    task.id,
+                    reason=f"memory gate blocked: {gate.reason}",
+                )
+                result.auto_blocked.append(task.id)
+                continue
+
         claimed = claim_task(conn, row["id"], ttl_seconds=ttl_seconds)
         if claimed is None:
             continue
@@ -3970,6 +4288,83 @@ def _default_spawn(
     # board slug still forces it to the right directory.
     resolved_board = _normalize_board_slug(board) or get_current_board()
     env["HERMES_KANBAN_BOARD"] = resolved_board
+    # Supervisor memory packet: best-effort compact context for the worker.
+    # We keep the source of truth in state.db and only pass a few routing
+    # hints via env so the worker prompt stays small.
+    try:
+        from hermes_state import SessionDB
+        from hermes_cli.supervisor_memory import create_memory_packet
+
+        memory_db = SessionDB()
+        try:
+            memory_query = (task.memory_query or "").strip()
+            if not memory_query:
+                memory_query = "\n\n".join(
+                    part for part in (
+                        (task.title or "").strip(),
+                        (task.body or "").strip(),
+                    )
+                    if part
+                )
+            memory_scope = (task.memory_scope or "").strip() or task.tenant or resolved_board
+            memory_packet = create_memory_packet(
+                memory_db,
+                query=memory_query or task.id,
+                tenant_id=task.tenant,
+                repo_id=memory_scope or resolved_board,
+                job_id=task.id,
+                task_id=task.id,
+                scopes=[s for s in (task.tenant, memory_scope or resolved_board, task.id) if s],
+                required=bool(task.memory_required),
+            )
+            env["HERMES_MEMORY_PACKET_ID"] = memory_packet.packet_id
+            env["HERMES_MEMORY_PACKET_STATUS"] = memory_packet.status
+            env["HERMES_MEMORY_PACKET_QUERY"] = memory_packet.query
+            env["HERMES_MEMORY_PACKET_SCOPE"] = ",".join(memory_packet.scopes)
+            env["HERMES_MEMORY_PACKET_CLAIMS"] = str(len(memory_packet.claims))
+            env["HERMES_MEMORY_PACKET_EVIDENCE"] = str(len(memory_packet.evidence))
+
+            validation_recipe = get_learning_validation_recipe(
+                task.title,
+                task.body,
+                workspace_kind=task.workspace_kind,
+            )
+            if validation_recipe:
+                env["HERMES_LEARNING_VALIDATION_RECIPE_ID"] = str(
+                    validation_recipe.get("candidate_id")
+                    or validation_recipe.get("id")
+                    or "",
+                )
+                env["HERMES_LEARNING_VALIDATION_RECIPE_MATCH"] = str(
+                    validation_recipe.get("match") or "",
+                )
+                env["HERMES_LEARNING_VALIDATION_RECIPE_COMMAND"] = str(
+                    validation_recipe.get("command") or "",
+                )
+                tests_value = validation_recipe.get("tests")
+                if isinstance(tests_value, (list, tuple)):
+                    env["HERMES_LEARNING_VALIDATION_RECIPE_TESTS"] = json.dumps(
+                        list(tests_value),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                elif tests_value not in (None, ""):
+                    env["HERMES_LEARNING_VALIDATION_RECIPE_TESTS"] = str(tests_value)
+                notes_value = validation_recipe.get("notes")
+                if notes_value not in (None, ""):
+                    env["HERMES_LEARNING_VALIDATION_RECIPE_NOTES"] = str(notes_value)
+                try:
+                    env["HERMES_LEARNING_VALIDATION_RECIPE"] = json.dumps(
+                        validation_recipe,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except Exception:
+                    pass
+        finally:
+            memory_db.close()
+    except Exception:
+        pass
     # HERMES_PROFILE is the author the kanban_comment tool defaults to.
     # `hermes -p <assignee>` activates the profile, but the env var is
     # what the tool reads — set it explicitly here so comments are
@@ -4138,6 +4533,58 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
             return s
         return s[:limit] + f"… [truncated, {len(s) - limit} chars omitted]"
 
+    def _format_learning_entries(entries: Any) -> list[str]:
+        lines: list[str] = []
+        if not isinstance(entries, list):
+            return lines
+
+        def _render_value(value: Any) -> str:
+            if value is None or value == "":
+                return ""
+            if isinstance(value, (dict, list, tuple)):
+                try:
+                    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+                except Exception:
+                    return str(value)
+            return str(value)
+
+        for entry in entries[:5]:
+            if not isinstance(entry, dict):
+                continue
+            claim = _cap(str(entry.get("claim") or ""), 180)
+            kind = str(entry.get("kind") or "playbook")
+            score = entry.get("score")
+            score_part = f" score={score}" if score is not None else ""
+            identifier = str(entry.get("id") or entry.get("candidate_id") or "").strip()
+            prefix_bits = [f"[{kind}]{score_part}"]
+            if identifier:
+                prefix_bits.append(f"id={identifier}")
+            evidence = entry.get("evidence_json") if isinstance(entry.get("evidence_json"), dict) else {}
+            structured_parts: list[str] = []
+            for key, label in (
+                ("match", "match"),
+                ("assignee", "assignee"),
+                ("workspace_kind", "workspace"),
+                ("command", "command"),
+                ("tests", "tests"),
+                ("notes", "notes"),
+            ):
+                value = entry.get(key)
+                if value in (None, "") and isinstance(evidence, dict):
+                    value = evidence.get(key)
+                rendered = _render_value(value)
+                if rendered:
+                    structured_parts.append(f"{label}={_cap(rendered, 120)}")
+            head = " ".join(prefix_bits)
+            if claim:
+                line = f"- {head} {claim}"
+            else:
+                line = f"- {head}"
+            if structured_parts:
+                line += " | " + "; ".join(structured_parts)
+            lines.append(line)
+        return lines
+
     lines: list[str] = []
     lines.append(f"# Kanban task {task.id}: {task.title}")
     lines.append("")
@@ -4146,7 +4593,150 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
     if task.tenant:
         lines.append(f"Tenant:   {task.tenant}")
     lines.append(f"Workspace: {task.workspace_kind} @ {task.workspace_path or '(unresolved)'}")
+    if task.memory_required:
+        lines.append("Memory policy: required")
+        if task.memory_query:
+            lines.append(f"Memory query: {task.memory_query}")
+        if task.memory_scope:
+            lines.append(f"Memory scope: {task.memory_scope}")
     lines.append("")
+
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config()
+        learning_cfg = cfg.get("supervisor", {}).get("learning", {})
+        if isinstance(learning_cfg, dict):
+            approved = learning_cfg.get("approved_candidates") or []
+            applied = learning_cfg.get("applied_candidates") or []
+            routing_hints = learning_cfg.get("routing_hints") or []
+            validation_recipes = learning_cfg.get("validation_recipes") or []
+            hook_rules = learning_cfg.get("hook_rules") or []
+            memory_rules = learning_cfg.get("memory_rules") or []
+            recovery_hints = learning_cfg.get("recovery_hints") or []
+            playbooks = learning_cfg.get("playbooks") or []
+            if any((approved, applied, routing_hints, validation_recipes, hook_rules, memory_rules, recovery_hints, playbooks)):
+                lines.append("## Supervisor learning context")
+                if approved:
+                    lines.append(f"Approved candidates: {len(approved)}")
+                if applied:
+                    lines.append(f"Applied candidates: {len(applied)}")
+                sections = [
+                    ("Routing hints", routing_hints),
+                    ("Validation recipes", validation_recipes),
+                    ("Hook rules", hook_rules),
+                    ("Memory rules", memory_rules),
+                    ("Recovery hints", recovery_hints),
+                    ("Playbooks", playbooks),
+                ]
+                for label, entries in sections:
+                    rendered = _format_learning_entries(entries)
+                    if rendered:
+                        lines.append(f"{label}:")
+                        lines.extend(rendered)
+                active_guidance: list[tuple[str, Dict[str, Any]]] = []
+                validation_recipe = get_learning_validation_recipe(
+                    task.title,
+                    task.body,
+                    workspace_kind=task.workspace_kind,
+                )
+                if validation_recipe:
+                    active_guidance.append(("Validation recipe", validation_recipe))
+                hook_rule = get_learning_hook_rule(
+                    task.title,
+                    task.body,
+                    workspace_kind=task.workspace_kind,
+                )
+                if hook_rule:
+                    active_guidance.append(("Hook rule", hook_rule))
+                if active_guidance:
+                    lines.append("## Active learning guidance")
+
+                    def _render_learning_guidance(entry: Dict[str, Any]) -> list[str]:
+                        rendered: list[str] = []
+                        def _render_value(value: Any) -> str:
+                            if value is None or value == "":
+                                return ""
+                            if isinstance(value, (dict, list, tuple)):
+                                try:
+                                    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+                                except Exception:
+                                    return str(value)
+                            return str(value)
+                        for key, label in (
+                            ("claim", "Claim"),
+                            ("match", "Match"),
+                            ("command", "Command"),
+                            ("tests", "Tests"),
+                            ("notes", "Notes"),
+                            ("workspace_kind", "Workspace"),
+                            ("candidate_id", "Candidate"),
+                            ("score", "Score"),
+                            ("status", "Status"),
+                        ):
+                            value = entry.get(key)
+                            if value in (None, ""):
+                                continue
+                            rendered.append(f"{label}: {_cap(_render_value(value), 200)}")
+                        return rendered
+
+                    for label, entry in active_guidance:
+                        lines.append(f"{label}:")
+                        lines.extend(f"- {line}" for line in _render_learning_guidance(entry))
+                lines.append("")
+    except Exception:
+        pass
+
+    packet_id = os.environ.get("HERMES_MEMORY_PACKET_ID", "").strip()
+    packet_status = os.environ.get("HERMES_MEMORY_PACKET_STATUS", "").strip()
+    packet_query = os.environ.get("HERMES_MEMORY_PACKET_QUERY", "").strip()
+    packet_scope = os.environ.get("HERMES_MEMORY_PACKET_SCOPE", "").strip()
+    packet_claims = os.environ.get("HERMES_MEMORY_PACKET_CLAIMS", "").strip()
+    packet_evidence = os.environ.get("HERMES_MEMORY_PACKET_EVIDENCE", "").strip()
+    packet = None
+    if packet_id:
+        try:
+            from hermes_state import SessionDB
+
+            memory_db = SessionDB()
+            try:
+                packet = memory_db.get_memory_packet(packet_id)
+            finally:
+                memory_db.close()
+        except Exception:
+            packet = None
+
+    if packet_id or packet:
+        lines.append("## Supervisor memory packet")
+        if packet_id:
+            lines.append(f"Packet ID: {packet_id}")
+        if packet_status:
+            lines.append(f"Status: {packet_status}")
+        if packet_query:
+            lines.append(f"Query: {packet_query}")
+        if packet_scope:
+            lines.append(f"Scope: {packet_scope}")
+        if packet_claims:
+            lines.append(f"Claims: {packet_claims}")
+        if packet_evidence:
+            lines.append(f"Evidence: {packet_evidence}")
+        if packet:
+            if packet.get("expires_at"):
+                lines.append(f"Expires at: {time.strftime('%Y-%m-%d %H:%M', time.localtime(float(packet['expires_at'])))}")
+            freshness = packet.get("freshness_json") or {}
+            if isinstance(freshness, dict) and freshness:
+                freshness_line = ", ".join(f"{k}={v}" for k, v in freshness.items())
+                lines.append(f"Freshness: {freshness_line}")
+            claims = packet.get("claims_json") or []
+            if claims:
+                lines.append("Top claims:")
+                for claim in claims[:3]:
+                    title = claim.get("title") or claim.get("kind") or claim.get("record_id") or "(claim)"
+                    status = claim.get("status") or "active"
+                    score = claim.get("score")
+                    score_part = f" score={score}" if score is not None else ""
+                    lines.append(f"- {title} ({status}{score_part})")
+        lines.append("")
 
     if task.body and task.body.strip():
         lines.append("## Body")

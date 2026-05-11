@@ -193,6 +193,18 @@ class TestMissingModelSection:
         assert not any("no 'model' section" in i.message for i in issues)
 
 
+class TestSupervisorConfigValidation:
+    def test_supervisor_root_key_is_known(self):
+        issues = validate_config_structure({
+            "supervisor": {
+                "memory": {
+                    "enabled": True,
+                }
+            }
+        })
+        assert not any("misplaced" in i.message.lower() for i in issues)
+
+
 class TestConfigIssueDataclass:
     """ConfigIssue should be a proper dataclass."""
 

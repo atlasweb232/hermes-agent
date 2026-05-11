@@ -68,6 +68,9 @@ def _task_to_dict(t: kb.Task) -> dict[str, Any]:
         "created_at": t.created_at,
         "started_at": t.started_at,
         "completed_at": t.completed_at,
+        "memory_required": t.memory_required,
+        "memory_query": t.memory_query,
+        "memory_scope": t.memory_scope,
         "result": t.result,
         "skills": list(t.skills) if t.skills else [],
         "max_retries": t.max_retries,
@@ -294,6 +297,21 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
                                "two retries. Omit to use the dispatcher's "
                                "kanban.failure_limit config "
                                f"(default {kb.DEFAULT_FAILURE_LIMIT}).")
+    p_create.add_argument(
+        "--memory-required",
+        action="store_true",
+        help="Require a supervisor memory packet before dispatching this task",
+    )
+    p_create.add_argument(
+        "--memory-query",
+        default=None,
+        help="Optional search query for supervisor memory gating",
+    )
+    p_create.add_argument(
+        "--memory-scope",
+        default=None,
+        help="Optional memory scope label (repo, tenant, or custom)",
+    )
     p_create.add_argument("--json", action="store_true", help="Emit JSON output")
 
     # --- list ---
@@ -1077,12 +1095,32 @@ def _cmd_create(args: argparse.Namespace) -> int:
             max_runtime_seconds=max_runtime,
             skills=getattr(args, "skills", None) or None,
             max_retries=max_retries,
+            memory_required=bool(getattr(args, "memory_required", False)),
+            memory_query=getattr(args, "memory_query", None),
+            memory_scope=getattr(args, "memory_scope", None),
         )
         task = kb.get_task(conn, task_id)
+        routing_hint = kb.get_learning_routing_hint(
+            task.title,
+            task.body,
+            workspace_kind=task.workspace_kind,
+        )
     if getattr(args, "json", False):
-        print(json.dumps(_task_to_dict(task), indent=2, ensure_ascii=False))
+        payload = _task_to_dict(task)
+        if routing_hint:
+            payload["routing_hint"] = routing_hint
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
-        print(f"Created {task_id}  ({task.status}, assignee={task.assignee or '-'})")
+        msg = f"Created {task_id}  ({task.status}, assignee={task.assignee or '-'})"
+        if routing_hint:
+            parts = []
+            if routing_hint.get("match"):
+                parts.append(f"match={routing_hint['match']}")
+            if routing_hint.get("workspace_kind"):
+                parts.append(f"workspace={routing_hint['workspace_kind']}")
+            if parts:
+                msg += f"  [routing: {', '.join(parts)}]"
+        print(msg)
 
         # Warn when the task would sit in `ready` because no dispatcher is
         # present. Only warn on ready+assigned tasks — triage/todo are
@@ -1251,6 +1289,12 @@ def _cmd_show(args: argparse.Namespace) -> int:
         print(f"  started:   {_fmt_ts(task.started_at)}")
     if task.completed_at:
         print(f"  completed: {_fmt_ts(task.completed_at)}")
+    if getattr(task, "memory_required", False):
+        print("  memory:    required")
+        if getattr(task, "memory_query", None):
+            print(f"  memory q:  {task.memory_query}")
+        if getattr(task, "memory_scope", None):
+            print(f"  memory s:  {task.memory_scope}")
     if parents:
         print(f"  parents:   {', '.join(parents)}")
     if children:

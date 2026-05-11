@@ -1443,6 +1443,12 @@ class TestSchemaInit:
         assert "sessions" in tables
         assert "messages" in tables
         assert "schema_version" in tables
+        assert "hermes_memory_readiness" in tables
+        assert "hermes_memory_packets" in tables
+        assert "hermes_memory_records" in tables
+        assert "hermes_memory_evidence" in tables
+        assert "hermes_learning_runs" in tables
+        assert "hermes_meta_candidates" in tables
 
     def test_schema_version(self, db):
         cursor = db._conn.execute("SELECT version FROM schema_version")
@@ -1454,6 +1460,63 @@ class TestSchemaInit:
         cursor = db._conn.execute("PRAGMA table_info(sessions)")
         columns = {row[1] for row in cursor.fetchall()}
         assert "title" in columns
+
+    def test_memory_packet_and_record_roundtrip(self, db):
+        record_id = db.upsert_memory_record(
+            record_id="rec-1",
+            kind="claim",
+            title="OAuth callback claim",
+            body="Use aws endpoint for callback",
+            payload_json={"source": "repo-note"},
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            status="active",
+            score=0.75,
+            evidence_uri="artifact://build-1/log.txt",
+            evidence_sha256="deadbeef",
+        )
+        assert record_id == "rec-1"
+
+        packet_id = db.upsert_memory_packet(
+            packet_id="mempkt_test",
+            query="oauth callback",
+            status="ready",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            scopes=["atlas", "atlas-email-flutter"],
+            claims_json=[{"record_id": "rec-1"}],
+            evidence_json=[{"uri": "artifact://build-1/log.txt"}],
+            contradictions_json=[],
+            freshness_json={"policy": "fresh"},
+            confidence=0.75,
+            source="test",
+            expires_at=12345.0,
+        )
+        assert packet_id == "mempkt_test"
+
+        readiness_id = db.record_memory_readiness(
+            status="ready",
+            scope="atlas,atlas-email-flutter",
+            required=True,
+            reason="packet_available",
+            packet_id=packet_id,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            job_id="job-1",
+            task_id="task-1",
+            policy_version="v1",
+            config_snapshot={"enabled": True},
+        )
+        assert readiness_id > 0
+
+        packets = db.list_memory_packets(repo_id="atlas-email-flutter", limit=5)
+        assert packets[0]["id"] == "mempkt_test"
+        assert packets[0]["claims_json"] == [{"record_id": "rec-1"}]
+        records = db.list_memory_records(repo_id="atlas-email-flutter", limit=5)
+        assert records[0]["id"] == "rec-1"
+        assert records[0]["payload_json"] == {"source": "repo-note"}
+        readiness = db.list_memory_readiness(repo_id="atlas-email-flutter", limit=5)
+        assert readiness[0]["packet_id"] == "mempkt_test"
 
     def test_topic_mode_schema_is_not_auto_migrated_on_open(self, tmp_path):
         """Opening an old DB should not add topic-mode columns until /topic opts in.
@@ -2942,4 +3005,3 @@ class TestFTS5ToolCallMigration:
             assert version == 11
         finally:
             session_db.close()
-
