@@ -96,6 +96,32 @@ If you're considering adding a CLI lane, open an issue describing the specific C
 
 The historical issue for this is [#19931](https://github.com/NousResearch/hermes-agent/issues/19931) and the closed-not-merged Codex-specific PR [#19924](https://github.com/NousResearch/hermes-agent/pull/19924) — those describe the original architecture proposal but didn't land a runner.
 
+## Registering persistent lanes
+
+For lanes that aren't Hermes profiles — an external CLI worker pool, a long-running daemon, anything that pulls tasks via `claim_task` directly — the dispatcher needs to be told the lane is intentional. Otherwise it can't tell "task is correctly waiting for the external pool to grab it" from "the operator typo'd a profile name and the task is stranded."
+
+```bash
+# Register a persistent lane.
+hermes kanban lanes register factory \
+    --description "external Codex CLI worker pool"
+
+# List what's registered.
+hermes kanban lanes list
+
+# Remove a lane (future tasks for it land in skipped_nonspawnable again).
+hermes kanban lanes unregister factory
+```
+
+Hermes profile workers don't need registration — the dispatcher auto-detects them via `profile_exists()`.
+
+What changes once a lane is registered:
+
+- A ready task whose assignee names the registered lane lands in `DispatchResult.skipped_lane` (intentional steady-state).
+- An unregistered non-profile assignee still lands in `DispatchResult.skipped_nonspawnable` (operator-actionable; the dashboard / `hermes kanban diagnostics` flags these as warnings).
+- The `kanban_lanes` table is **opt-in**: an empty registry preserves the pre-#20157 behavior exactly — every non-profile assignee lands in `skipped_nonspawnable` like before.
+
+This split is the only thing the registry does. It does not gate `claim_task` (any caller with DB access can still claim work — the model is "claim wins, registration is just intent annotation") and it does not authenticate external workers. If you need claim-scoped auth for non-Hermes claimers, that's a separate, harder problem (token issuance, expiry, revocation) that nobody has needed yet — open an issue with a concrete threat model.
+
 ## Failure modes the dispatcher handles
 
 So lane authors don't have to reimplement these:

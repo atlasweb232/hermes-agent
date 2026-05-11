@@ -1530,3 +1530,204 @@ def test_task_dict_survives_corrupt_created_at(tmp_path, monkeypatch):
         conn.close()
     age = kb.task_age(task)
     assert age["created_age_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# Lane registry (#20157)
+#
+# Persistent worker lanes live in `kanban_lanes`. Tasks assigned to a
+# registered lane land in DispatchResult.skipped_lane (intentional
+# steady-state, not operator-actionable) instead of the legacy
+# skipped_nonspawnable bucket (which now means "no profile AND no lane —
+# probably a typo or a deleted profile, the operator should look at it").
+#
+# An empty registry = full backward compat: every non-profile assignee
+# still lands in skipped_nonspawnable just like before.
+# ---------------------------------------------------------------------------
+
+
+def test_register_lane_inserts_and_lists(kanban_home):
+    """Register a fresh lane and confirm it shows up in list_lanes."""
+    conn = kb.connect()
+    try:
+        is_new = kb.register_lane(
+            conn, "factory",
+            description="external Codex CLI worker pool",
+        )
+        assert is_new is True
+        lanes = kb.list_lanes(conn)
+        assert len(lanes) == 1
+        assert lanes[0].name == "factory"
+        assert lanes[0].kind == "persistent"
+        assert lanes[0].description == "external Codex CLI worker pool"
+        assert lanes[0].created_at > 0
+        assert lanes[0].updated_at == lanes[0].created_at
+    finally:
+        conn.close()
+
+
+def test_register_lane_idempotent_update(kanban_home):
+    """Re-registering a lane updates description + updated_at, returns False."""
+    import time as _t
+    conn = kb.connect()
+    try:
+        kb.register_lane(conn, "factory", description="v1")
+        original = kb.list_lanes(conn)[0]
+        # Sleep to ensure updated_at advances at integer-second resolution.
+        _t.sleep(1.1)
+        is_new = kb.register_lane(conn, "factory", description="v2")
+        assert is_new is False
+        lanes = kb.list_lanes(conn)
+        assert len(lanes) == 1
+        assert lanes[0].description == "v2"
+        assert lanes[0].created_at == original.created_at
+        assert lanes[0].updated_at > original.updated_at
+    finally:
+        conn.close()
+
+
+def test_register_lane_rejects_empty_name(kanban_home):
+    conn = kb.connect()
+    try:
+        with pytest.raises(ValueError, match="lane name is required"):
+            kb.register_lane(conn, "")
+        with pytest.raises(ValueError, match="lane name is required"):
+            kb.register_lane(conn, "   ")
+    finally:
+        conn.close()
+
+
+def test_register_lane_strips_whitespace(kanban_home):
+    """Surrounding whitespace on the lane name is normalised away."""
+    conn = kb.connect()
+    try:
+        kb.register_lane(conn, "  factory  ")
+        lanes = kb.list_lanes(conn)
+        assert len(lanes) == 1
+        assert lanes[0].name == "factory"
+        assert kb.is_registered_lane(conn, "factory")
+        assert kb.is_registered_lane(conn, "  factory  ")
+    finally:
+        conn.close()
+
+
+def test_unregister_lane_removes_and_returns_true(kanban_home):
+    conn = kb.connect()
+    try:
+        kb.register_lane(conn, "factory")
+        assert kb.is_registered_lane(conn, "factory")
+        removed = kb.unregister_lane(conn, "factory")
+        assert removed is True
+        assert not kb.is_registered_lane(conn, "factory")
+        assert kb.list_lanes(conn) == []
+    finally:
+        conn.close()
+
+
+def test_unregister_lane_unknown_returns_false(kanban_home):
+    conn = kb.connect()
+    try:
+        assert kb.unregister_lane(conn, "never-registered") is False
+    finally:
+        conn.close()
+
+
+def test_is_registered_lane_handles_none_and_empty(kanban_home):
+    conn = kb.connect()
+    try:
+        assert kb.is_registered_lane(conn, "") is False
+        assert kb.is_registered_lane(conn, None) is False
+    finally:
+        conn.close()
+
+
+def test_dispatch_routes_registered_lane_to_skipped_lane(kanban_home, monkeypatch):
+    """A ready task assigned to a registered lane lands in skipped_lane,
+    NOT skipped_nonspawnable — that's the whole point of the registry."""
+    # No profile named 'factory' exists; without the registry it would land
+    # in skipped_nonspawnable. With the registry, it lands in skipped_lane.
+    import hermes_cli.kanban_db as _kb
+    # profile_exists returns False for unknown names by default; pin it
+    # explicitly so this test doesn't depend on whatever profiles the test
+    # environment has lying around.
+    monkeypatch.setattr(
+        "hermes_cli.profiles.profile_exists",
+        lambda name: False,
+    )
+
+    conn = kb.connect()
+    try:
+        kb.register_lane(conn, "factory", description="external worker pool")
+        tid = kb.create_task(conn, title="for the factory", assignee="factory")
+        # Promote to ready manually since there are no parents.
+        conn.execute("UPDATE tasks SET status = 'ready' WHERE id = ?", (tid,))
+
+        result = kb.dispatch_once(
+            conn, spawn_fn=lambda *a, **kw: None, dry_run=False,
+        )
+        assert tid in result.skipped_lane, (
+            f"Registered lane task should land in skipped_lane; got "
+            f"skipped_lane={result.skipped_lane}, "
+            f"skipped_nonspawnable={result.skipped_nonspawnable}"
+        )
+        assert tid not in result.skipped_nonspawnable
+    finally:
+        conn.close()
+
+
+def test_dispatch_routes_unregistered_typo_to_skipped_nonspawnable(
+    kanban_home, monkeypatch,
+):
+    """Unregistered non-profile assignee = operator-actionable. Goes to
+    skipped_nonspawnable (NOT skipped_lane) so diagnostics warn on it."""
+    monkeypatch.setattr(
+        "hermes_cli.profiles.profile_exists",
+        lambda name: False,
+    )
+
+    conn = kb.connect()
+    try:
+        # No lane registered for 'fctory' — operator typo'd 'factory'.
+        kb.register_lane(conn, "factory")
+        tid = kb.create_task(conn, title="typo task", assignee="fctory")
+        conn.execute("UPDATE tasks SET status = 'ready' WHERE id = ?", (tid,))
+
+        result = kb.dispatch_once(
+            conn, spawn_fn=lambda *a, **kw: None, dry_run=False,
+        )
+        assert tid in result.skipped_nonspawnable, (
+            "Typo'd assignee with no matching lane should still land in "
+            "skipped_nonspawnable so the operator sees the warning."
+        )
+        assert tid not in result.skipped_lane
+    finally:
+        conn.close()
+
+
+def test_empty_lane_registry_is_backward_compatible(kanban_home, monkeypatch):
+    """No lanes registered = same behavior as before #20157.
+
+    Every non-profile assignee lands in skipped_nonspawnable (the legacy
+    bucket). Operators who never run `hermes kanban lanes register` see
+    no behavior change.
+    """
+    monkeypatch.setattr(
+        "hermes_cli.profiles.profile_exists",
+        lambda name: False,
+    )
+
+    conn = kb.connect()
+    try:
+        # Confirm registry is empty.
+        assert kb.list_lanes(conn) == []
+        tid = kb.create_task(conn, title="legacy", assignee="orion-cc")
+        conn.execute("UPDATE tasks SET status = 'ready' WHERE id = ?", (tid,))
+
+        result = kb.dispatch_once(
+            conn, spawn_fn=lambda *a, **kw: None, dry_run=False,
+        )
+        # Pre-#20157 behavior: orion-cc lands in skipped_nonspawnable.
+        assert tid in result.skipped_nonspawnable
+        assert result.skipped_lane == []
+    finally:
+        conn.close()

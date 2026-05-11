@@ -499,6 +499,51 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
     )
     p_stats.add_argument("--json", action="store_true")
 
+    # --- lanes register / list / unregister ---
+    # Distinguish "intentional persistent worker lane" (an external CLI worker
+    # pool, a long-running daemon, etc.) from "typo'd profile name" so the
+    # dispatcher's diagnostics don't cry wolf on multi-lane setups. See #20157.
+    p_lanes = sub.add_parser(
+        "lanes",
+        help="Manage persistent worker lanes (non-spawnable assignees)",
+        description=(
+            "Register persistent worker lanes that the dispatcher should NOT "
+            "auto-spawn for. Tasks assigned to a registered lane land in "
+            "skipped_lane (intentional steady-state) instead of "
+            "skipped_nonspawnable (operator-actionable typo). Use this when "
+            "you have an external CLI worker pool, a long-running daemon, or "
+            "any process that pulls tasks via `kanban claim` directly. "
+            "Hermes profile workers don't need registration — the dispatcher "
+            "auto-detects them."
+        ),
+    )
+    lanes_sub = p_lanes.add_subparsers(dest="lanes_action")
+
+    l_register = lanes_sub.add_parser(
+        "register", aliases=["add"],
+        help="Register a persistent worker lane",
+    )
+    l_register.add_argument("name", help="Lane name (matches the assignee on tasks)")
+    l_register.add_argument("--kind", default="persistent",
+                            choices=["persistent"],
+                            help="Lane kind. Currently only 'persistent' is "
+                                 "supported; the column exists for future "
+                                 "kinds (e.g. 'webhook', 'cli').")
+    l_register.add_argument("--description", default=None,
+                            help="Optional one-line description for the dashboard")
+
+    l_list = lanes_sub.add_parser(
+        "list", aliases=["ls"],
+        help="List registered lanes",
+    )
+    l_list.add_argument("--json", action="store_true")
+
+    l_unregister = lanes_sub.add_parser(
+        "unregister", aliases=["rm", "remove"],
+        help="Remove a registered lane",
+    )
+    l_unregister.add_argument("name")
+
     # --- notify subscribe / list / remove ---
     p_nsub = sub.add_parser(
         "notify-subscribe",
@@ -726,6 +771,7 @@ def kanban_command(args: argparse.Namespace) -> int:
         "context":  _cmd_context,
         "specify":  _cmd_specify,
         "gc":       _cmd_gc,
+        "lanes":    _dispatch_lanes,
     }
     handler = handlers.get(action)
     if not handler:
@@ -928,6 +974,108 @@ def _cmd_boards_rename(args: argparse.Namespace) -> int:
         return 1
     meta = kb.write_board_metadata(normed, name=args.name)
     print(f"Board {normed!r} renamed to {meta['name']!r}.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Lane registry handlers — `hermes kanban lanes ...`
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_lanes(args: argparse.Namespace) -> int:
+    """Handle ``hermes kanban lanes <action>``."""
+    sub = getattr(args, "lanes_action", None) or "list"
+    if sub in ("register", "add"):
+        return _cmd_lanes_register(args)
+    if sub in ("list", "ls"):
+        return _cmd_lanes_list(args)
+    if sub in ("unregister", "rm", "remove"):
+        return _cmd_lanes_unregister(args)
+    print(f"kanban lanes: unknown action {sub!r}", file=sys.stderr)
+    return 2
+
+
+def _cmd_lanes_register(args: argparse.Namespace) -> int:
+    name = (args.name or "").strip()
+    if not name:
+        print("kanban lanes register: name is required", file=sys.stderr)
+        return 2
+    conn = kb.connect()
+    try:
+        is_new = kb.register_lane(
+            conn,
+            name,
+            kind=args.kind,
+            description=args.description,
+        )
+    finally:
+        conn.close()
+    if is_new:
+        print(f"Registered lane {name!r} ({args.kind}).")
+    else:
+        print(f"Updated lane {name!r} ({args.kind}).")
+    print(
+        "Tasks assigned to this lane will land in skipped_lane on the "
+        "dispatcher (intentional steady-state) instead of "
+        "skipped_nonspawnable (operator-actionable)."
+    )
+    return 0
+
+
+def _cmd_lanes_list(args: argparse.Namespace) -> int:
+    conn = kb.connect()
+    try:
+        lanes = kb.list_lanes(conn)
+    finally:
+        conn.close()
+    if getattr(args, "json", False):
+        out = [
+            {
+                "name": lane.name,
+                "kind": lane.kind,
+                "description": lane.description,
+                "created_at": lane.created_at,
+                "updated_at": lane.updated_at,
+            }
+            for lane in lanes
+        ]
+        print(json.dumps(out, indent=2))
+        return 0
+    if not lanes:
+        print(
+            "No registered lanes. The dispatcher treats every non-profile "
+            "assignee as a typo (skipped_nonspawnable). Register persistent "
+            "lanes with `hermes kanban lanes register <name>`."
+        )
+        return 0
+    name_w = max(len(lane.name) for lane in lanes)
+    kind_w = max(len(lane.kind) for lane in lanes)
+    print(f"{'NAME':<{name_w}}  {'KIND':<{kind_w}}  DESCRIPTION")
+    for lane in lanes:
+        desc = lane.description or ""
+        print(f"{lane.name:<{name_w}}  {lane.kind:<{kind_w}}  {desc}")
+    return 0
+
+
+def _cmd_lanes_unregister(args: argparse.Namespace) -> int:
+    name = (args.name or "").strip()
+    if not name:
+        print("kanban lanes unregister: name is required", file=sys.stderr)
+        return 2
+    conn = kb.connect()
+    try:
+        removed = kb.unregister_lane(conn, name)
+    finally:
+        conn.close()
+    if not removed:
+        print(f"kanban lanes unregister: no lane named {name!r}",
+              file=sys.stderr)
+        return 1
+    print(
+        f"Unregistered lane {name!r}. Future tasks assigned to it will land "
+        "in skipped_nonspawnable (operator-actionable) instead of "
+        "skipped_lane."
+    )
     return 0
 
 

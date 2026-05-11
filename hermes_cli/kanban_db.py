@@ -867,6 +867,19 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
 );
 
+-- Persistent worker lane registry. Distinguishes "intentional persistent
+-- lane the dispatcher should NOT spawn for" (an external CLI worker pool,
+-- a long-running daemon, etc.) from "typo'd profile name." Without this,
+-- the dispatcher can't tell the two apart and operators can't tell which
+-- skipped_nonspawnable entries are actionable. See #20157.
+CREATE TABLE IF NOT EXISTS kanban_lanes (
+    name        TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL DEFAULT 'persistent',
+    description TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_tenant          ON tasks(tenant);
@@ -1097,6 +1110,22 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
             _add_column_if_missing(
                 conn, "kanban_notify_subs", "notifier_profile", "notifier_profile TEXT"
             )
+
+    # Lane registry — distinguish "intentional persistent lane" from
+    # "typo'd profile name." Idempotent CREATE so legacy DBs pick up the
+    # table on next open; existing setups continue to work because the
+    # registry is opt-in (no rows = no behavior change).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kanban_lanes (
+            name        TEXT PRIMARY KEY,
+            kind        TEXT NOT NULL DEFAULT 'persistent',
+            description TEXT,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
+        )
+        """
+    )
 
     # One-shot backfill: any task that is 'running' before runs existed
     # had its claim_lock / claim_expires / worker_pid on the task row.
@@ -2905,12 +2934,25 @@ class DispatchResult:
     """Ready task ids skipped because they have no assignee at all.
     Operator-actionable — usually a misfiled task waiting for routing."""
     skipped_nonspawnable: list[str] = field(default_factory=list)
-    """Ready task ids skipped because their assignee names a control-plane
-    lane (a Claude Code terminal like ``orion-cc``) rather than a Hermes
-    profile. Expected steady-state on multi-lane setups; NOT an
-    operator-actionable failure. Tracked separately so health telemetry
-    can distinguish "real stuck" (nothing spawned but spawnable work
-    available) from "correctly idle" (nothing spawnable in the queue)."""
+    """Ready task ids skipped because their assignee resolves to neither a
+    Hermes profile nor a registered persistent lane. Operator-actionable:
+    almost always a typo'd profile name or a deleted profile that left
+    tasks stranded. The dashboard / `hermes kanban diagnostics` surfaces
+    these as warnings.
+
+    Pre-#20157 this bucket also included intentional persistent lanes
+    (Claude Code terminals etc.) and the operator had to know which were
+    typos. Registered lanes now land in ``skipped_lane`` instead, so this
+    bucket is unambiguously actionable."""
+    skipped_lane: list[str] = field(default_factory=list)
+    """Ready task ids skipped because their assignee names a registered
+    persistent lane (an external CLI worker pool, a long-running daemon,
+    etc.) — the dispatcher intentionally does not auto-spawn for these;
+    the lane pulls work via ``claim_task`` directly. NOT operator-
+    actionable; expected steady-state on multi-lane setups. Tracked
+    separately so health telemetry can distinguish \"real stuck\"
+    (skipped_nonspawnable non-empty) from \"correctly idle\" (only
+    skipped_lane non-empty). See #20157."""
     crashed: list[str] = field(default_factory=list)
     """Task ids reclaimed because their worker PID disappeared."""
     auto_blocked: list[str] = field(default_factory=list)
@@ -3789,13 +3831,17 @@ def dispatch_once(
         except Exception:
             profile_exists = None  # type: ignore[assignment]
         if profile_exists is not None and not profile_exists(row["assignee"]):
-            # Bucket separately from skipped_unassigned: the operator
-            # cannot fix this by assigning a profile (the assignee IS the
-            # intended owner — a terminal lane). Health telemetry uses
-            # this distinction to suppress spurious "stuck" warnings on
-            # multi-lane setups where the ready queue is steadily full
-            # of human-pulled work.
-            result.skipped_nonspawnable.append(row["id"])
+            # Bucket: registered persistent lanes (intentional steady-
+            # state, the operator should NOT see a warning) vs unknown
+            # assignees (almost always a typo or a deleted profile —
+            # tasks stranded, the operator SHOULD see a warning).
+            # Pre-#20157 these were the same bucket; the registry split
+            # them apart so health telemetry stops crying wolf on
+            # multi-lane setups while still flagging real typos.
+            if is_registered_lane(conn, row["assignee"]):
+                result.skipped_lane.append(row["id"])
+            else:
+                result.skipped_nonspawnable.append(row["id"])
             continue
         if dry_run:
             result.spawned.append((row["id"], row["assignee"], ""))
@@ -4543,6 +4589,106 @@ def rewind_notify_cursor(
             ),
         )
     return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Lane registry — persistent worker lanes that are not Hermes profiles
+#
+# Registered lanes change one thing for the dispatcher: when a ready task's
+# assignee names a registered lane, it lands in DispatchResult.skipped_lane
+# (intentional steady-state, not actionable) instead of the legacy
+# skipped_nonspawnable bucket (which now means "no profile AND no lane —
+# probably a typo or a deleted profile, and the operator should look at it").
+#
+# An empty registry = full backward compat: every non-profile assignee still
+# lands in skipped_nonspawnable just like before. The split only kicks in
+# once an operator runs `hermes kanban lanes register <name>`.
+#
+# See #20157.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Lane:
+    name: str
+    kind: str
+    description: Optional[str]
+    created_at: int
+    updated_at: int
+
+
+def register_lane(
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    kind: str = "persistent",
+    description: Optional[str] = None,
+) -> bool:
+    """Register a persistent worker lane.
+
+    Returns True when a new row was inserted, False when the row existed
+    and was updated in place (idempotent re-register is allowed; updates
+    ``description``/``kind``/``updated_at`` so an operator can refresh
+    the description without unregister/register churn).
+    """
+    if not name or not name.strip():
+        raise ValueError("lane name is required")
+    name = name.strip()
+    now = int(time.time())
+    with write_txn(conn):
+        existing = conn.execute(
+            "SELECT name FROM kanban_lanes WHERE name = ?", (name,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO kanban_lanes (name, kind, description, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, kind, description, now, now),
+            )
+            return True
+        conn.execute(
+            "UPDATE kanban_lanes SET kind = ?, description = ?, updated_at = ? "
+            "WHERE name = ?",
+            (kind, description, now, name),
+        )
+        return False
+
+
+def unregister_lane(conn: sqlite3.Connection, name: str) -> bool:
+    """Remove a registered lane. Returns True when a row was deleted."""
+    if not name or not name.strip():
+        raise ValueError("lane name is required")
+    with write_txn(conn):
+        cur = conn.execute(
+            "DELETE FROM kanban_lanes WHERE name = ?", (name.strip(),),
+        )
+    return cur.rowcount > 0
+
+
+def list_lanes(conn: sqlite3.Connection) -> list[Lane]:
+    rows = conn.execute(
+        "SELECT name, kind, description, created_at, updated_at "
+        "FROM kanban_lanes ORDER BY name"
+    ).fetchall()
+    return [
+        Lane(
+            name=row["name"],
+            kind=row["kind"],
+            description=row["description"],
+            created_at=int(row["created_at"]),
+            updated_at=int(row["updated_at"]),
+        )
+        for row in rows
+    ]
+
+
+def is_registered_lane(conn: sqlite3.Connection, name: str) -> bool:
+    if not name:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM kanban_lanes WHERE name = ? LIMIT 1", (name.strip(),),
+    ).fetchone()
+    return row is not None
 
 
 # ---------------------------------------------------------------------------
