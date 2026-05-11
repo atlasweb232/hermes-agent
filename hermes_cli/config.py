@@ -473,6 +473,43 @@ DEFAULT_CONFIG = {
         "image_input_mode": "auto",
         "disabled_toolsets": [],
     },
+
+    # Supervisor orchestration policy — controls memory-aware assignment,
+    # readiness gating, and fallback behavior for compact memory packets.
+    "supervisor": {
+        "memory": {
+            "enabled": True,
+            # Required-memory jobs must carry a compact packet id or an
+            # explicit fallback status before delegation.
+            "block_on_missing_packet": True,
+            # Allow a job to continue in memory-light mode when the router
+            # reports no relevant context but policy allows fallback.
+            "allow_fallback_when_empty": True,
+            # Default lifetime for compact packets, in seconds.
+            "packet_ttl_seconds": 3600,
+            # Max rows inspected when building a compact packet.
+            "search_limit": 12,
+            # Minimum evidence rows required to promote a candidate.
+            "min_evidence_items": 1,
+        },
+        "learning": {
+            "enabled": True,
+            # Max recent records examined when synthesizing learning
+            # candidates from memory artifacts.
+            "max_records": 50,
+            # Candidate score floor before a record is emitted as a
+            # meta-candidate.
+            "min_score": 0.2,
+            # If true, routing hints may auto-fill assignees for new
+            # tasks that do not specify one explicitly.
+            "auto_route_tasks": True,
+        },
+        "monitoring": {
+            "enabled": True,
+            # How many recent runs to include in the learning monitor rollup.
+            "recent_runs": 20,
+        },
+    },
     
     "terminal": {
         "backend": "local",
@@ -2949,6 +2986,7 @@ _KNOWN_ROOT_KEYS = {
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
+    "supervisor",
     "sessions",
 }
 

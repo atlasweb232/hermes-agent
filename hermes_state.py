@@ -244,6 +244,130 @@ CREATE TABLE IF NOT EXISTS state_meta (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS hermes_memory_readiness (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT,
+    repo_id TEXT,
+    job_id TEXT,
+    task_id TEXT,
+    scope TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    reason TEXT,
+    packet_id TEXT,
+    policy_version TEXT,
+    config_snapshot TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_readiness_scope
+    ON hermes_memory_readiness(tenant_id, repo_id, job_id, task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_readiness_status
+    ON hermes_memory_readiness(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hermes_memory_packets (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    repo_id TEXT,
+    job_id TEXT,
+    task_id TEXT,
+    query TEXT NOT NULL,
+    scopes TEXT,
+    claims_json TEXT,
+    evidence_json TEXT,
+    contradictions_json TEXT,
+    freshness_json TEXT,
+    status TEXT NOT NULL,
+    confidence REAL,
+    source TEXT,
+    expires_at REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_packets_scope
+    ON hermes_memory_packets(tenant_id, repo_id, job_id, task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_packets_status
+    ON hermes_memory_packets(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hermes_memory_records (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    repo_id TEXT,
+    job_id TEXT,
+    task_id TEXT,
+    kind TEXT NOT NULL,
+    title TEXT,
+    body TEXT,
+    payload_json TEXT,
+    packet_id TEXT,
+    evidence_uri TEXT,
+    evidence_sha256 TEXT,
+    status TEXT NOT NULL,
+    score REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_records_scope
+    ON hermes_memory_records(tenant_id, repo_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_records_status
+    ON hermes_memory_records(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_records_packet
+    ON hermes_memory_records(packet_id);
+
+CREATE TABLE IF NOT EXISTS hermes_memory_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    record_id TEXT,
+    packet_id TEXT,
+    uri TEXT NOT NULL,
+    sha256 TEXT,
+    mime_type TEXT,
+    excerpt TEXT,
+    created_at REAL NOT NULL,
+    FOREIGN KEY (record_id) REFERENCES hermes_memory_records(id) ON DELETE CASCADE,
+    FOREIGN KEY (packet_id) REFERENCES hermes_memory_packets(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_evidence_record
+    ON hermes_memory_evidence(record_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_memory_evidence_packet
+    ON hermes_memory_evidence(packet_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hermes_learning_runs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    repo_id TEXT,
+    packet_id TEXT,
+    status TEXT NOT NULL,
+    metrics_json TEXT,
+    notes TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_learning_runs_scope
+    ON hermes_learning_runs(tenant_id, repo_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hermes_meta_candidates (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    repo_id TEXT,
+    kind TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    evidence_json TEXT,
+    score REAL,
+    status TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_meta_candidates_scope
+    ON hermes_meta_candidates(tenant_id, repo_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_meta_candidates_status
+    ON hermes_meta_candidates(status, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
@@ -2384,6 +2508,622 @@ class SessionDB:
             )
         self._execute_write(_do)
 
+    @staticmethod
+    def _json_text(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _json_value(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, (list, dict)):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return value
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+
+    def record_memory_readiness(
+        self,
+        *,
+        status: str,
+        scope: str = "global",
+        required: bool = False,
+        reason: Optional[str] = None,
+        packet_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        policy_version: Optional[str] = None,
+        config_snapshot: Optional[Any] = None,
+    ) -> int:
+        now = time.time()
+
+        def _do(conn):
+            cur = conn.execute(
+                """
+                INSERT INTO hermes_memory_readiness (
+                    tenant_id, repo_id, job_id, task_id, scope, required,
+                    status, reason, packet_id, policy_version, config_snapshot,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    repo_id,
+                    job_id,
+                    task_id,
+                    scope,
+                    1 if required else 0,
+                    status,
+                    reason,
+                    packet_id,
+                    policy_version,
+                    self._json_text(config_snapshot),
+                    now,
+                    now,
+                ),
+            )
+            return cur.lastrowid
+
+        return self._execute_write(_do)
+
+    def list_memory_readiness(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("job_id", job_id),
+            ("task_id", task_id),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_memory_readiness
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["config_snapshot"] = self._json_value(item.get("config_snapshot"))
+            parsed.append(item)
+        return parsed
+
+    def upsert_memory_packet(
+        self,
+        *,
+        packet_id: str,
+        query: str,
+        status: str,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        scopes: Optional[Any] = None,
+        claims_json: Optional[Any] = None,
+        evidence_json: Optional[Any] = None,
+        contradictions_json: Optional[Any] = None,
+        freshness_json: Optional[Any] = None,
+        confidence: Optional[float] = None,
+        source: Optional[str] = None,
+        expires_at: Optional[float] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_memory_packets (
+                    id, tenant_id, repo_id, job_id, task_id, query, scopes,
+                    claims_json, evidence_json, contradictions_json,
+                    freshness_json, status, confidence, source, expires_at,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    job_id = excluded.job_id,
+                    task_id = excluded.task_id,
+                    query = excluded.query,
+                    scopes = excluded.scopes,
+                    claims_json = excluded.claims_json,
+                    evidence_json = excluded.evidence_json,
+                    contradictions_json = excluded.contradictions_json,
+                    freshness_json = excluded.freshness_json,
+                    status = excluded.status,
+                    confidence = excluded.confidence,
+                    source = excluded.source,
+                    expires_at = excluded.expires_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    packet_id,
+                    tenant_id,
+                    repo_id,
+                    job_id,
+                    task_id,
+                    query,
+                    self._json_text(scopes),
+                    self._json_text(claims_json),
+                    self._json_text(evidence_json),
+                    self._json_text(contradictions_json),
+                    self._json_text(freshness_json),
+                    status,
+                    confidence,
+                    source,
+                    expires_at,
+                    now,
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+        return packet_id
+
+    def list_memory_packets(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("job_id", job_id),
+            ("task_id", task_id),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_memory_packets
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for key in ("scopes", "claims_json", "evidence_json", "contradictions_json", "freshness_json"):
+                item[key] = self._json_value(item.get(key))
+            parsed.append(item)
+        return parsed
+
+    def get_memory_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM hermes_memory_packets WHERE id = ?",
+                (packet_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        for key in ("scopes", "claims_json", "evidence_json", "contradictions_json", "freshness_json"):
+            item[key] = self._json_value(item.get(key))
+        return item
+
+    def upsert_memory_record(
+        self,
+        *,
+        record_id: str,
+        kind: str,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        payload_json: Optional[Any] = None,
+        status: str = "active",
+        score: Optional[float] = None,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        job_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        packet_id: Optional[str] = None,
+        evidence_uri: Optional[str] = None,
+        evidence_sha256: Optional[str] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_memory_records (
+                    id, tenant_id, repo_id, job_id, task_id, kind, title,
+                    body, payload_json, packet_id, evidence_uri,
+                    evidence_sha256, status, score, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    job_id = excluded.job_id,
+                    task_id = excluded.task_id,
+                    kind = excluded.kind,
+                    title = excluded.title,
+                    body = excluded.body,
+                    payload_json = excluded.payload_json,
+                    packet_id = excluded.packet_id,
+                    evidence_uri = excluded.evidence_uri,
+                    evidence_sha256 = excluded.evidence_sha256,
+                    status = excluded.status,
+                    score = excluded.score,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record_id,
+                    tenant_id,
+                    repo_id,
+                    job_id,
+                    task_id,
+                    kind,
+                    title,
+                    body,
+                    self._json_text(payload_json),
+                    packet_id,
+                    evidence_uri,
+                    evidence_sha256,
+                    status,
+                    score,
+                    now,
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+        return record_id
+
+    def add_memory_evidence(
+        self,
+        *,
+        uri: str,
+        record_id: Optional[str] = None,
+        packet_id: Optional[str] = None,
+        sha256: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        excerpt: Optional[str] = None,
+    ) -> int:
+        now = time.time()
+
+        def _do(conn):
+            cur = conn.execute(
+                """
+                INSERT INTO hermes_memory_evidence (
+                    record_id, packet_id, uri, sha256, mime_type, excerpt,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (record_id, packet_id, uri, sha256, mime_type, excerpt, now),
+            )
+            return cur.lastrowid
+
+        return self._execute_write(_do)
+
+    def list_memory_records(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        kind: Optional[str] = None,
+        packet_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("kind", kind),
+            ("packet_id", packet_id),
+            ("status", status),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_memory_records
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload_json"] = self._json_value(item.get("payload_json"))
+            parsed.append(item)
+        return parsed
+
+    def search_memory_records(
+        self,
+        query: str,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        if not query:
+            return []
+        clauses = [
+            "(title LIKE ? OR body LIKE ? OR payload_json LIKE ? OR kind LIKE ?)"
+        ]
+        params: List[Any] = [f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%"]
+        if tenant_id is not None:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if repo_id is not None:
+            clauses.append("repo_id = ?")
+            params.append(repo_id)
+        where = " AND ".join(clauses)
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_memory_records
+                WHERE {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload_json"] = self._json_value(item.get("payload_json"))
+            parsed.append(item)
+        return parsed
+
+    def record_learning_run(
+        self,
+        *,
+        run_id: str,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        packet_id: Optional[str] = None,
+        status: str = "completed",
+        metrics_json: Optional[Any] = None,
+        notes: Optional[str] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_learning_runs (
+                    id, tenant_id, repo_id, packet_id, status,
+                    metrics_json, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    packet_id = excluded.packet_id,
+                    status = excluded.status,
+                    metrics_json = excluded.metrics_json,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    run_id,
+                    tenant_id,
+                    repo_id,
+                    packet_id,
+                    status,
+                    self._json_text(metrics_json),
+                    notes,
+                    now,
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+        return run_id
+
+    def list_learning_runs(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("status", status),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_learning_runs
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metrics_json"] = self._json_value(item.get("metrics_json"))
+            parsed.append(item)
+        return parsed
+
+    def upsert_meta_candidate(
+        self,
+        *,
+        candidate_id: str,
+        kind: str,
+        claim: str,
+        evidence_json: Optional[Any] = None,
+        score: Optional[float] = None,
+        status: str = "proposed",
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_meta_candidates (
+                    id, tenant_id, repo_id, kind, claim, evidence_json,
+                    score, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    kind = excluded.kind,
+                    claim = excluded.claim,
+                    evidence_json = excluded.evidence_json,
+                    score = excluded.score,
+                    status = excluded.status,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    candidate_id,
+                    tenant_id,
+                    repo_id,
+                    kind,
+                    claim,
+                    self._json_text(evidence_json),
+                    score,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+        return candidate_id
+
+    def list_meta_candidates(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("kind", kind),
+            ("status", status),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_meta_candidates
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["evidence_json"] = self._json_value(item.get("evidence_json"))
+            parsed.append(item)
+        return parsed
+
+    def get_meta_candidate(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM hermes_meta_candidates WHERE id = ?",
+                (candidate_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["evidence_json"] = self._json_value(item.get("evidence_json"))
+        return item
+
+    def update_meta_candidate_status(
+        self,
+        candidate_id: str,
+        *,
+        status: str,
+        evidence_json: Optional[Any] = None,
+        score: Optional[float] = None,
+    ) -> bool:
+        now = time.time()
+
+        def _do(conn):
+            cur = conn.execute(
+                """
+                UPDATE hermes_meta_candidates
+                   SET status = ?,
+                       evidence_json = COALESCE(?, evidence_json),
+                       score = COALESCE(?, score),
+                       updated_at = ?
+                 WHERE id = ?
+                """,
+                (
+                    status,
+                    self._json_text(evidence_json) if evidence_json is not None else None,
+                    score,
+                    now,
+                    candidate_id,
+                ),
+            )
+            return cur.rowcount > 0
+
+        return bool(self._execute_write(_do))
+
     def apply_telegram_topic_migration(self) -> None:
         """Create Telegram DM topic-mode tables on explicit /topic opt-in.
 
@@ -2963,4 +3703,3 @@ class SessionDB:
                 (error[:500], session_id),
             )
         self._execute_write(_do)
-

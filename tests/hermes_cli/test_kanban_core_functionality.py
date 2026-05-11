@@ -23,6 +23,7 @@ from typing import Optional
 import pytest
 
 from hermes_cli import kanban_db as kb
+from hermes_cli.config import load_config, save_config
 from hermes_cli.kanban import run_slash
 
 
@@ -74,6 +75,36 @@ def test_no_idempotency_key_never_collides(kanban_home):
         a = kb.create_task(conn, title="a")
         b = kb.create_task(conn, title="b")
         assert a != b
+    finally:
+        conn.close()
+
+
+def test_memory_required_task_blocks_without_packet(
+    kanban_home,
+    all_assignees_spawnable,
+):
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="memory-gated",
+            assignee="worker",
+            memory_required=True,
+            memory_query="oauth callback",
+            memory_scope="atlas-email-flutter",
+        )
+
+        spawned = []
+
+        def _noop_spawn(task, workspace, board=None):
+            spawned.append(task.id)
+            return None
+
+        res = kb.dispatch_once(conn, spawn_fn=_noop_spawn)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert tid in res.auto_blocked
+        assert spawned == []
     finally:
         conn.close()
 
@@ -316,6 +347,57 @@ def test_max_retries_none_falls_through_to_dispatcher_limit(kanban_home, all_ass
         gave_up = [e for e in events if e.kind == "gave_up"]
         assert gave_up[-1].payload.get("limit_source") == "dispatcher"
         assert gave_up[-1].payload.get("effective_limit") == 4
+    finally:
+        conn.close()
+
+
+def test_gave_up_event_includes_learning_recovery_hint(kanban_home, all_assignees_spawnable):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["recovery_hints"] = [
+        {
+            "id": "metacand_recover_1",
+            "kind": "recovery_hint",
+            "claim": "Retry AWS OAuth callback tasks with the learned redirect URL",
+            "match": "oauth callback",
+            "workspace_kind": "worktree",
+            "score": 0.88,
+            "status": "approved",
+            "evidence_json": {
+                "notes": "Re-run with the AWS callback endpoint and revalidate the redirect",
+            },
+        }
+    ]
+    save_config(cfg)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login on aws",
+            assignee="worker",
+            workspace_kind="worktree",
+        )
+        kb.claim_task(conn, tid)
+        tripped = kb._record_task_failure(
+            conn, tid,
+            error="no redirect",
+            outcome="spawn_failed",
+            failure_limit=1,
+            release_claim=True,
+            end_run=True,
+        )
+        assert tripped is True
+        events = kb.list_events(conn, tid)
+        gave_up = [e for e in events if e.kind == "gave_up"]
+        assert gave_up
+        hint = gave_up[-1].payload.get("learning_recovery_hint")
+        assert hint is not None
+        assert hint["match"] == "oauth callback"
+        assert hint["workspace_kind"] == "worktree"
+        assert "Retry AWS OAuth callback tasks" in hint["claim"]
     finally:
         conn.close()
 
@@ -2677,6 +2759,63 @@ def test_default_spawn_auto_loads_kanban_worker_skill(kanban_home, monkeypatch):
     assert env.get("HERMES_PROFILE") == "some-profile"
 
 
+def test_default_spawn_exports_matching_validation_recipe(kanban_home, monkeypatch):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["validation_recipes"] = [
+        {
+            "id": "metacand_validation",
+            "kind": "validation_recipe",
+            "claim": "Run the AWS OAuth callback validation before deploy",
+            "match": "oauth callback",
+            "command": "pytest tests/hermes_cli/test_kanban_db.py -q",
+            "tests": ["pytest tests/hermes_cli/test_kanban_db.py -q"],
+            "notes": "Validation recipe should be exported to worker env",
+            "workspace_kind": "scratch",
+            "score": 0.9,
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    captured = {}
+
+    class FakeProc:
+        def __init__(self):
+            self.pid = 1001
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env", {})
+        return FakeProc()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            assignee="some-profile",
+        )
+        task = kb.get_task(conn, tid)
+        workspace = kb.resolve_workspace(task)
+        pid = kb._default_spawn(task, str(workspace))
+        assert pid == 1001
+    finally:
+        conn.close()
+
+    env = captured["env"]
+    assert env["HERMES_LEARNING_VALIDATION_RECIPE_ID"] == "metacand_validation"
+    assert env["HERMES_LEARNING_VALIDATION_RECIPE_MATCH"] == "oauth callback"
+    assert env["HERMES_LEARNING_VALIDATION_RECIPE_COMMAND"] == "pytest tests/hermes_cli/test_kanban_db.py -q"
+    assert env["HERMES_LEARNING_VALIDATION_RECIPE_TESTS"] == "[\"pytest tests/hermes_cli/test_kanban_db.py -q\"]"
+    assert "Validation recipe should be exported to worker env" in env["HERMES_LEARNING_VALIDATION_RECIPE_NOTES"]
+    assert "oauth callback" in env["HERMES_LEARNING_VALIDATION_RECIPE"]
+
+
 
 # ---------------------------------------------------------------------------
 # Per-task force-loaded skills
@@ -3238,6 +3377,78 @@ def _make_create_ns(**overrides):
     for k, v in overrides.items():
         setattr(ns, k, v)
     return ns
+
+
+def test_cli_create_json_includes_routing_hint(kanban_home, monkeypatch, capsys):
+    from hermes_cli import kanban as kb_cli
+
+    cfg = {
+        "supervisor": {
+            "learning": {
+                "auto_route_tasks": True,
+                "routing_hints": [
+                    {
+                        "match": "oauth callback",
+                        "assignee": "jules",
+                        "workspace_kind": "worktree",
+                        "kind": "routing_hint",
+                        "claim": "Use jules for oauth callback work",
+                        "status": "approved",
+                        "score": 0.9,
+                    }
+                ],
+            }
+        }
+    }
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: cfg)
+    ns = _make_create_ns(
+        title="Fix oauth callback flow",
+        assignee=None,
+        workspace="worktree",
+        json=True,
+    )
+    assert kb_cli._cmd_create(ns) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["assignee"] == "jules"
+    assert data["routing_hint"]["match"] == "oauth callback"
+    assert data["routing_hint"]["assignee"] == "jules"
+    assert data["routing_hint"]["workspace_kind"] == "worktree"
+
+
+def test_cli_create_plain_text_includes_routing_hint(kanban_home, monkeypatch, capsys):
+    from hermes_cli import kanban as kb_cli
+
+    cfg = {
+        "supervisor": {
+            "learning": {
+                "auto_route_tasks": True,
+                "routing_hints": [
+                    {
+                        "match": "oauth callback",
+                        "assignee": "jules",
+                        "workspace_kind": "worktree",
+                        "kind": "routing_hint",
+                        "claim": "Use jules for oauth callback work",
+                        "status": "approved",
+                        "score": 0.9,
+                    }
+                ],
+            }
+        }
+    }
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: cfg)
+    ns = _make_create_ns(
+        title="Fix oauth callback flow",
+        assignee=None,
+        workspace="worktree",
+        json=False,
+    )
+    assert kb_cli._cmd_create(ns) == 0
+    out = capsys.readouterr().out
+    assert "Created" in out
+    assert "routing:" in out
+    assert "match=oauth callback" in out
+    assert "workspace=worktree" in out
 
 
 def test_cli_create_warns_when_no_gateway(kanban_home, monkeypatch, capsys):

@@ -10614,7 +10614,9 @@ Examples:
             "Available providers: honcho, openviking, mem0, hindsight,\n"
             "holographic, retaindb, byterover.\n\n"
             "Only one external provider can be active at a time.\n"
-            "Built-in memory (MEMORY.md/USER.md) is always active."
+            "Built-in memory (MEMORY.md/USER.md) is always active.\n\n"
+            "Supervisor memory readiness and compact packet generation are\n"
+            "also available here for Hermes orchestration."
         ),
     )
     memory_sub = memory_parser.add_subparsers(dest="memory_command")
@@ -10623,6 +10625,128 @@ Examples:
     )
     memory_sub.add_parser("status", help="Show current memory provider config")
     memory_sub.add_parser("off", help="Disable external provider (built-in only)")
+    readiness_parser = memory_sub.add_parser(
+        "readiness",
+        help="Check supervisor memory readiness",
+        description="Run the Hermes supervisor memory readiness gate and show the current state.",
+    )
+    readiness_parser.add_argument("--query", default="", help="Memory lookup query")
+    readiness_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    readiness_parser.add_argument("--repo-id", default="", help="Repository scope")
+    readiness_parser.add_argument("--job-id", default="", help="Job scope")
+    readiness_parser.add_argument("--task-id", default="", help="Task scope")
+    readiness_parser.add_argument(
+        "--scope",
+        action="append",
+        default=[],
+        help="Additional scope label to include in the readiness probe",
+    )
+    readiness_parser.add_argument(
+        "--required",
+        action="store_true",
+        help="Treat the probe as required-memory work",
+    )
+    readiness_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    packet_parser = memory_sub.add_parser(
+        "packet",
+        help="Create compact memory packets",
+        description="Build and persist a compact supervisor memory packet from repo-scoped candidates.",
+    )
+    packet_sub = packet_parser.add_subparsers(dest="memory_packet_command")
+    packet_create = packet_sub.add_parser(
+        "create",
+        help="Create a compact memory packet",
+    )
+    packet_create.add_argument("--query", required=True, help="Lookup query for memory search")
+    packet_create.add_argument("--tenant-id", default="", help="Tenant scope")
+    packet_create.add_argument("--repo-id", default="", help="Repository scope")
+    packet_create.add_argument("--job-id", default="", help="Job scope")
+    packet_create.add_argument("--task-id", default="", help="Task scope")
+    packet_create.add_argument(
+        "--scope",
+        action="append",
+        default=[],
+        help="Additional scope label to attach to the packet",
+    )
+    packet_create.add_argument(
+        "--required",
+        action="store_true",
+        help="Mark the packet as required-memory work",
+    )
+    packet_create.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    learn_parser = memory_sub.add_parser(
+        "learn",
+        help="Run the background learning rollup",
+        description="Scan curated memory artifacts and synthesize compact learning candidates.",
+    )
+    learn_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    learn_parser.add_argument("--repo-id", default="", help="Repository scope")
+    learn_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    monitor_parser = memory_sub.add_parser(
+        "monitor",
+        help="Inspect learning health metrics",
+        description="Report the current self-learning monitor state without blocking execution.",
+    )
+    monitor_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    monitor_parser.add_argument("--repo-id", default="", help="Repository scope")
+    monitor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    candidates_parser = memory_sub.add_parser(
+        "candidates",
+        help="Review and apply meta-learning candidates",
+        description="Approve, apply, reject, or list HyperAgent-style improvement candidates.",
+    )
+    candidates_sub = candidates_parser.add_subparsers(dest="memory_candidates_command")
+    candidates_list = candidates_sub.add_parser("list", help="List proposed/approved candidates")
+    candidates_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    candidates_list.add_argument("--repo-id", default="", help="Repository scope")
+    candidates_list.add_argument("--status", default="", help="Filter by status")
+    candidates_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    candidates_approve = candidates_sub.add_parser("approve", help="Approve a candidate")
+    candidates_approve.add_argument("candidate_id", help="Meta-candidate id")
+    candidates_approve.add_argument("--tenant-id", default="", help="Tenant scope")
+    candidates_approve.add_argument("--repo-id", default="", help="Repository scope")
+    candidates_approve.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the candidate to runtime config after approval",
+    )
+    candidates_approve.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    candidates_reject = candidates_sub.add_parser("reject", help="Reject a candidate")
+    candidates_reject.add_argument("candidate_id", help="Meta-candidate id")
+    candidates_reject.add_argument(
+        "--reason",
+        default="rejected by policy",
+        help="Rejection reason",
+    )
+    candidates_reject.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
     _reset_parser = memory_sub.add_parser(
         "reset",
         help="Erase all built-in memory (MEMORY.md and USER.md)",
@@ -10697,6 +10821,182 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
+        elif sub in {"readiness", "packet", "learn", "monitor", "candidates"}:
+            from hermes_cli.config import load_config
+            from hermes_cli.supervisor_memory import (
+                approve_meta_candidate,
+                create_memory_packet,
+                evaluate_memory_readiness,
+                monitor_learning,
+                reject_meta_candidate,
+                rollup_learning_candidates,
+            )
+            from hermes_state import SessionDB
+
+            config = load_config()
+            db = SessionDB()
+            try:
+                tenant_id = getattr(args, "tenant_id", "") or None
+                repo_id = getattr(args, "repo_id", "") or None
+                job_id = getattr(args, "job_id", "") or None
+                task_id = getattr(args, "task_id", "") or None
+                scopes = getattr(args, "scope", []) or []
+                if sub == "readiness":
+                    result = evaluate_memory_readiness(
+                        db,
+                        query=getattr(args, "query", "") or "",
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        job_id=job_id,
+                        task_id=task_id,
+                        required=getattr(args, "required", False),
+                        scopes=scopes,
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        scope_text = ", ".join(result.scopes) if result.scopes else "global"
+                        print(
+                            f"\n  memory readiness: {result.status}"
+                            f"  scope: {scope_text}"
+                            f"  candidates: {result.candidate_count}"
+                            f"  evidence: {result.evidence_count}"
+                        )
+                        if result.packet_id:
+                            print(f"  packet: {result.packet_id}")
+                        print(f"  reason: {result.reason}\n")
+                elif sub == "packet":
+                    packet_sub = getattr(args, "memory_packet_command", None)
+                    if packet_sub != "create":
+                        print("  Use: hermes memory packet create --query <text>\n")
+                        return
+                    result = create_memory_packet(
+                        db,
+                        query=getattr(args, "query", "") or "",
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        job_id=job_id,
+                        task_id=task_id,
+                        scopes=scopes,
+                        required=getattr(args, "required", False),
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        scope_text = ", ".join(result.scopes) if result.scopes else "global"
+                        print(
+                            f"\n  memory packet created: {result.packet_id}"
+                            f"  status: {result.status}"
+                            f"  scope: {scope_text}"
+                            f"  claims: {len(result.claims)}"
+                            f"  evidence: {len(result.evidence)}\n"
+                        )
+                elif sub == "learn":
+                    result = rollup_learning_candidates(
+                        db,
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  learning run: {result.run_id}"
+                            f"  status: {result.status}"
+                            f"  scanned: {result.records_scanned}"
+                            f"  created: {result.candidates_created}"
+                            f"  updated: {result.candidates_updated}\n"
+                        )
+                elif sub == "monitor":
+                    result = monitor_learning(
+                        db,
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  learning monitor: {result.status}"
+                            f"  runs: {result.runs_observed}"
+                            f"  candidates: {result.candidates_observed}"
+                            f"  ready: {result.ready_packets}"
+                            f"  blocked: {result.blocked_packets}"
+                            f"  degraded: {result.degraded_packets}\n"
+                        )
+                else:
+                    cand_cmd = getattr(args, "memory_candidates_command", None) or "list"
+                    if cand_cmd == "list":
+                        rows = db.list_meta_candidates(
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            limit=50,
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(rows, indent=2, ensure_ascii=False))
+                        else:
+                            if not rows:
+                                print("\n  no meta-learning candidates found\n")
+                            else:
+                                print("\n  meta-learning candidates:")
+                                for row in rows:
+                                    claim = str(row.get("claim") or "")
+                                    evidence = row.get("evidence_json")
+                                    if not isinstance(evidence, dict):
+                                        evidence = {}
+                                    extras = []
+                                    for label, key in (
+                                        ("match", "match"),
+                                        ("assignee", "assignee"),
+                                        ("workspace", "workspace_kind"),
+                                    ):
+                                        value = row.get(key) or evidence.get(key)
+                                        if value:
+                                            extras.append(f"{label}={value}")
+                                    extra_text = f"  ({', '.join(extras)})" if extras else ""
+                                    print(
+                                        f"  - {row['id']} [{row['kind']}] "
+                                        f"{row['status']} score={row.get('score')!r} "
+                                        f"{claim[:120]}{extra_text}"
+                                    )
+                                print()
+                    elif cand_cmd == "approve":
+                        result = approve_meta_candidate(
+                            db,
+                            candidate_id=getattr(args, "candidate_id"),
+                            apply=getattr(args, "apply", False),
+                            config=config,
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  candidate {result.candidate_id} {result.status}"
+                                f"  applied: {result.applied}"
+                                f"  targets: {', '.join(result.config_targets) if result.config_targets else 'none'}\n"
+                            )
+                    elif cand_cmd == "reject":
+                        result = reject_meta_candidate(
+                            db,
+                            candidate_id=getattr(args, "candidate_id"),
+                            reason=getattr(args, "reason", "rejected by policy"),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  candidate {result.candidate_id} rejected"
+                                f"  reason: {result.notes}\n"
+                            )
+                    else:
+                        print("  Use: hermes memory candidates list|approve|reject\n")
+            finally:
+                db.close()
         else:
             from hermes_cli.memory_setup import memory_command
 

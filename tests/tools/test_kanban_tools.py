@@ -917,6 +917,13 @@ def test_kanban_guidance_prompt_size_bounded(monkeypatch, tmp_path):
     )
 
 
+def test_kanban_guidance_mentions_learning_context():
+    from agent.prompt_builder import KANBAN_GUIDANCE
+
+    assert "Supervisor learning context" in KANBAN_GUIDANCE
+    assert "validation recipes" in KANBAN_GUIDANCE
+
+
 # ---------------------------------------------------------------------------
 # Worker task-ownership enforcement (regression tests for #19534)
 # ---------------------------------------------------------------------------
