@@ -77,6 +77,13 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["sidecar"]["run_on_start"] is True
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
+            tools = config["supervisor"]["tools"]["registry"]
+            assert tools["exa.search"]["runtime"] == "api"
+            assert "EXA_API_KEY" in tools["exa.search"]["required_secrets"]
+            assert tools["browser_use.run"]["sandbox_required"] is True
+            assert tools["tinyfish.run"]["sandbox_required"] is True
+            assert config["supervisor"]["dgm_h"]["enabled"] is False
+            assert config["supervisor"]["dgm_h"]["allow_runtime_code_changes"] is False
 
     def test_legacy_root_level_max_turns_migrates_to_agent_config(self, tmp_path):
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):

@@ -11083,6 +11083,165 @@ Examples:
     memory_parser.set_defaults(func=cmd_memory)
 
     # =========================================================================
+    # dgm command — controlled DGM-H experiment lane
+    # =========================================================================
+    dgm_parser = subparsers.add_parser(
+        "dgm",
+        help="Manage the sandboxed DGM-H experiment lane",
+        description=(
+            "Create and evaluate DGM-H variants without mutating production "
+            "supervisor behavior."
+        ),
+    )
+    dgm_sub = dgm_parser.add_subparsers(dest="dgm_command")
+
+    dgm_tools = dgm_sub.add_parser("tools", help="List DGM-H evaluation tool profiles")
+    dgm_tools.add_argument("--profile", default="", help="Filter to one tool profile")
+    dgm_tools.add_argument("--json", action="store_true", help="Print JSON")
+
+    dgm_variants = dgm_sub.add_parser("variants", help="List DGM-H variants")
+    dgm_variants.add_argument("--tenant-id", default="", help="Tenant scope")
+    dgm_variants.add_argument("--repo-id", default="", help="Repository scope")
+    dgm_variants.add_argument("--status", default="", help="Variant status")
+    dgm_variants.add_argument("--json", action="store_true", help="Print JSON")
+
+    dgm_create = dgm_sub.add_parser("create", help="Create a DGM-H variant")
+    dgm_create.add_argument("--tenant-id", default="", help="Tenant scope")
+    dgm_create.add_argument("--repo-id", default="", help="Repository scope")
+    dgm_create.add_argument("--parent-id", default="", help="Parent variant id")
+    dgm_create.add_argument("--kind", default="playbook", help="Variant kind")
+    dgm_create.add_argument("--body", required=True, help="Variant proposal body")
+    dgm_create.add_argument("--tool-profile", default="", help="Evaluation tool profile")
+    dgm_create.add_argument("--json", action="store_true", help="Print JSON")
+
+    dgm_evaluate = dgm_sub.add_parser("evaluate", help="Record a fixed evaluation result")
+    dgm_evaluate.add_argument("variant_id", help="Variant id")
+    dgm_evaluate.add_argument("--tenant-id", default="", help="Tenant scope")
+    dgm_evaluate.add_argument("--repo-id", default="", help="Repository scope")
+    dgm_evaluate.add_argument("--task-set", default="", help="Evaluation task set")
+    dgm_evaluate.add_argument("--tool-profile", default="", help="Evaluation tool profile")
+    dgm_evaluate.add_argument("--score", type=float, default=None, help="Evaluation score")
+    dgm_evaluate.add_argument("--metrics-json", default="", help="Evaluation metrics JSON object")
+    dgm_evaluate.add_argument("--artifact-uri", default="", help="Evaluation artifact URI")
+    dgm_evaluate.add_argument(
+        "--create-candidate",
+        action="store_true",
+        help="Create a reviewed meta-learning candidate from this evaluation",
+    )
+    dgm_evaluate.add_argument("--json", action="store_true", help="Print JSON")
+
+    def cmd_dgm(args):
+        from hermes_cli.config import load_config
+        from hermes_cli.dgm_h import (
+            create_dgm_variant,
+            get_tool_profile_tools,
+            parse_metrics_json,
+            record_dgm_evaluation,
+        )
+        from hermes_state import SessionDB
+
+        action = getattr(args, "dgm_command", None)
+        config = load_config()
+        if action == "tools":
+            profile = getattr(args, "profile", "") or None
+            tools_cfg = config.get("supervisor", {}).get("tools", {})
+            profiles = tools_cfg.get("profiles", {}) if isinstance(tools_cfg, dict) else {}
+            if profile:
+                result = get_tool_profile_tools(profile, config=config).to_dict()
+            else:
+                result = {
+                    name: get_tool_profile_tools(name, config=config).to_dict()
+                    for name in sorted(profiles)
+                }
+            if getattr(args, "json", False):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                print("\n  DGM-H tool profiles:")
+                rows = result.items() if isinstance(result, dict) and profile is None else [(profile or "", result)]
+                for name, row in rows:
+                    tools = row.get("tools", []) if isinstance(row, dict) else []
+                    names = ", ".join(str(t.get("name")) for t in tools if isinstance(t, dict))
+                    print(f"  - {name}: {names or '(none)'}")
+                print()
+            return
+
+        db = SessionDB()
+        try:
+            tenant_id = getattr(args, "tenant_id", "") or None
+            repo_id = getattr(args, "repo_id", "") or None
+            if action == "create":
+                result = create_dgm_variant(
+                    db,
+                    kind=getattr(args, "kind", "playbook") or "playbook",
+                    body=getattr(args, "body"),
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    parent_id=getattr(args, "parent_id", "") or None,
+                    tool_profile=getattr(args, "tool_profile", "") or None,
+                    config=config,
+                )
+                if getattr(args, "json", False):
+                    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                else:
+                    print(
+                        f"\n  DGM-H variant created: {result.variant_id}"
+                        f"  kind: {result.kind}"
+                        f"  tool profile: {result.tool_profile}\n"
+                    )
+            elif action == "evaluate":
+                metrics = parse_metrics_json(getattr(args, "metrics_json", "") or "")
+                result = record_dgm_evaluation(
+                    db,
+                    variant_id=getattr(args, "variant_id"),
+                    score=getattr(args, "score", None),
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    task_set=getattr(args, "task_set", "") or None,
+                    tool_profile=getattr(args, "tool_profile", "") or None,
+                    metrics=metrics,
+                    artifact_uri=getattr(args, "artifact_uri", "") or None,
+                    create_candidate=bool(getattr(args, "create_candidate", False)),
+                )
+                if getattr(args, "json", False):
+                    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                else:
+                    candidate = f"  candidate: {result.meta_candidate_id}" if result.meta_candidate_id else ""
+                    print(
+                        f"\n  DGM-H evaluation recorded: {result.evaluation_id}"
+                        f"  variant: {result.variant_id}"
+                        f"  score: {result.score!r}"
+                        f"{candidate}\n"
+                    )
+            elif action == "variants":
+                rows = db.list_dgm_variants(
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    status=getattr(args, "status", "") or None,
+                    limit=50,
+                )
+                if getattr(args, "json", False):
+                    print(json.dumps(rows, indent=2, ensure_ascii=False))
+                else:
+                    if not rows:
+                        print("\n  no DGM-H variants found\n")
+                    else:
+                        print("\n  DGM-H variants:")
+                        for row in rows:
+                            body = str(row.get("body") or "")
+                            print(
+                                f"  - {row['id']} [{row['kind']}] {row['status']} "
+                                f"score={row.get('score')!r} profile={row.get('tool_profile') or ''} "
+                                f"{body[:100]}"
+                            )
+                        print()
+            else:
+                print("  Use: hermes dgm tools|variants|create|evaluate\n")
+        finally:
+            db.close()
+
+    dgm_parser.set_defaults(func=cmd_dgm)
+
+    # =========================================================================
     # tools command
     # =========================================================================
     tools_parser = subparsers.add_parser(

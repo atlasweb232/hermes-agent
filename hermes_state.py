@@ -368,6 +368,50 @@ CREATE INDEX IF NOT EXISTS idx_hermes_meta_candidates_scope
 CREATE INDEX IF NOT EXISTS idx_hermes_meta_candidates_status
     ON hermes_meta_candidates(status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS hermes_dgm_variants (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT,
+    repo_id TEXT,
+    parent_id TEXT,
+    kind TEXT NOT NULL,
+    body TEXT,
+    tool_profile TEXT,
+    status TEXT NOT NULL,
+    score REAL,
+    metadata_json TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    FOREIGN KEY (parent_id) REFERENCES hermes_dgm_variants(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_dgm_variants_scope
+    ON hermes_dgm_variants(tenant_id, repo_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_dgm_variants_status
+    ON hermes_dgm_variants(status, score DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_dgm_variants_parent
+    ON hermes_dgm_variants(parent_id);
+
+CREATE TABLE IF NOT EXISTS hermes_dgm_evaluations (
+    id TEXT PRIMARY KEY,
+    variant_id TEXT NOT NULL,
+    tenant_id TEXT,
+    repo_id TEXT,
+    task_set TEXT,
+    tool_profile TEXT,
+    score REAL,
+    metrics_json TEXT,
+    artifact_uri TEXT,
+    status TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    FOREIGN KEY (variant_id) REFERENCES hermes_dgm_variants(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_hermes_dgm_evaluations_variant
+    ON hermes_dgm_evaluations(variant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hermes_dgm_evaluations_scope
+    ON hermes_dgm_evaluations(tenant_id, repo_id, status, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
@@ -3123,6 +3167,220 @@ class SessionDB:
             return cur.rowcount > 0
 
         return bool(self._execute_write(_do))
+
+    def upsert_dgm_variant(
+        self,
+        *,
+        variant_id: str,
+        kind: str,
+        body: Optional[str] = None,
+        parent_id: Optional[str] = None,
+        tool_profile: Optional[str] = None,
+        status: str = "proposed",
+        score: Optional[float] = None,
+        metadata_json: Optional[Any] = None,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_dgm_variants (
+                    id, tenant_id, repo_id, parent_id, kind, body,
+                    tool_profile, status, score, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    parent_id = excluded.parent_id,
+                    kind = excluded.kind,
+                    body = excluded.body,
+                    tool_profile = excluded.tool_profile,
+                    status = excluded.status,
+                    score = excluded.score,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    variant_id,
+                    tenant_id,
+                    repo_id,
+                    parent_id,
+                    kind,
+                    body,
+                    tool_profile,
+                    status,
+                    score,
+                    self._json_text(metadata_json),
+                    now,
+                    now,
+                ),
+            )
+
+        self._execute_write(_do)
+        return variant_id
+
+    def list_dgm_variants(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("kind", kind),
+            ("status", status),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_dgm_variants
+                {where}
+                ORDER BY COALESCE(score, -1.0) DESC, created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata_json"] = self._json_value(item.get("metadata_json"))
+            parsed.append(item)
+        return parsed
+
+    def get_dgm_variant(self, variant_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM hermes_dgm_variants WHERE id = ?",
+                (variant_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["metadata_json"] = self._json_value(item.get("metadata_json"))
+        return item
+
+    def record_dgm_evaluation(
+        self,
+        *,
+        evaluation_id: str,
+        variant_id: str,
+        task_set: Optional[str] = None,
+        tool_profile: Optional[str] = None,
+        score: Optional[float] = None,
+        metrics_json: Optional[Any] = None,
+        artifact_uri: Optional[str] = None,
+        status: str = "evaluated",
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+    ) -> str:
+        now = time.time()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO hermes_dgm_evaluations (
+                    id, variant_id, tenant_id, repo_id, task_set,
+                    tool_profile, score, metrics_json, artifact_uri,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    variant_id = excluded.variant_id,
+                    tenant_id = excluded.tenant_id,
+                    repo_id = excluded.repo_id,
+                    task_set = excluded.task_set,
+                    tool_profile = excluded.tool_profile,
+                    score = excluded.score,
+                    metrics_json = excluded.metrics_json,
+                    artifact_uri = excluded.artifact_uri,
+                    status = excluded.status,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    evaluation_id,
+                    variant_id,
+                    tenant_id,
+                    repo_id,
+                    task_set,
+                    tool_profile,
+                    score,
+                    self._json_text(metrics_json),
+                    artifact_uri,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+            if score is not None:
+                conn.execute(
+                    """
+                    UPDATE hermes_dgm_variants
+                       SET score = ?,
+                           status = CASE
+                               WHEN status IN ('proposed', 'evaluating') THEN 'evaluated'
+                               ELSE status
+                           END,
+                           updated_at = ?
+                     WHERE id = ?
+                    """,
+                    (score, now, variant_id),
+                )
+
+        self._execute_write(_do)
+        return evaluation_id
+
+    def list_dgm_evaluations(
+        self,
+        *,
+        variant_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        repo_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        for key, value in (
+            ("variant_id", variant_id),
+            ("tenant_id", tenant_id),
+            ("repo_id", repo_id),
+            ("status", status),
+        ):
+            if value is not None:
+                clauses.append(f"{key} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT *
+                FROM hermes_dgm_evaluations
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        parsed: List[Dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metrics_json"] = self._json_value(item.get("metrics_json"))
+            parsed.append(item)
+        return parsed
 
     def apply_telegram_topic_migration(self) -> None:
         """Create Telegram DM topic-mode tables on explicit /topic opt-in.

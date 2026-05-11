@@ -1449,6 +1449,8 @@ class TestSchemaInit:
         assert "hermes_memory_evidence" in tables
         assert "hermes_learning_runs" in tables
         assert "hermes_meta_candidates" in tables
+        assert "hermes_dgm_variants" in tables
+        assert "hermes_dgm_evaluations" in tables
 
     def test_schema_version(self, db):
         cursor = db._conn.execute("SELECT version FROM schema_version")
@@ -1517,6 +1519,39 @@ class TestSchemaInit:
         assert records[0]["payload_json"] == {"source": "repo-note"}
         readiness = db.list_memory_readiness(repo_id="atlas-email-flutter", limit=5)
         assert readiness[0]["packet_id"] == "mempkt_test"
+
+    def test_dgm_variant_and_evaluation_roundtrip(self, db):
+        variant_id = db.upsert_dgm_variant(
+            variant_id="dgmvar_test",
+            kind="validation_recipe",
+            body="Run browser OAuth smoke test before deploy",
+            tool_profile="research_browser_eval",
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            metadata_json={"source": "unit-test"},
+        )
+        evaluation_id = db.record_dgm_evaluation(
+            evaluation_id="dgmeval_test",
+            variant_id=variant_id,
+            task_set="oauth-browser",
+            tool_profile="research_browser_eval",
+            score=0.82,
+            metrics_json={"passed": 3, "failed": 0},
+            artifact_uri="artifact://eval/oauth-browser.json",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        variant = db.get_dgm_variant(variant_id)
+        assert variant["score"] == 0.82
+        assert variant["status"] == "evaluated"
+        assert variant["metadata_json"]["source"] == "unit-test"
+        variants = db.list_dgm_variants(repo_id="atlas-email-flutter")
+        assert variants[0]["id"] == variant_id
+        evaluations = db.list_dgm_evaluations(variant_id=variant_id)
+        assert evaluations[0]["id"] == evaluation_id
+        assert evaluations[0]["metrics_json"]["passed"] == 3
 
     def test_topic_mode_schema_is_not_auto_migrated_on_open(self, tmp_path):
         """Opening an old DB should not add topic-mode columns until /topic opts in.

@@ -539,6 +539,56 @@ DEFAULT_CONFIG = {
             # How many recent runs to include in the learning monitor rollup.
             "recent_runs": 20,
         },
+        "tools": {
+            "registry": {
+                "exa.search": {
+                    "enabled": False,
+                    "runtime": "api",
+                    "capability": "search",
+                    "required_secrets": ["EXA_API_KEY"],
+                    "allowed_profiles": ["search_eval", "research_browser_eval"],
+                    "sandbox_required": False,
+                },
+                "browser_use.run": {
+                    "enabled": False,
+                    "runtime": "cli",
+                    "capability": "browser_automation",
+                    "command": "browser-use",
+                    "required_secrets": [],
+                    "allowed_profiles": ["browser_eval", "research_browser_eval"],
+                    "sandbox_required": True,
+                },
+                "tinyfish.run": {
+                    "enabled": False,
+                    "runtime": "cli",
+                    "capability": "browser_test",
+                    "command": "tinyfish",
+                    "required_secrets": [],
+                    "allowed_profiles": ["browser_eval", "research_browser_eval"],
+                    "sandbox_required": True,
+                },
+            },
+            "profiles": {
+                "search_eval": ["exa.search"],
+                "browser_eval": ["browser_use.run", "tinyfish.run"],
+                "research_browser_eval": ["exa.search", "browser_use.run", "tinyfish.run"],
+            },
+        },
+        "dgm_h": {
+            "enabled": False,
+            "allow_runtime_code_changes": False,
+            "default_tool_profile": "repo_eval",
+            "max_parents": 3,
+            "promotion_requires_approval": True,
+            "blocked_targets": [
+                "supervisor_source",
+                "tenant_policy",
+                "secret_policy",
+                "sandbox_escape",
+                "production_deploy",
+                "git_push",
+            ],
+        },
     },
     
     "terminal": {
