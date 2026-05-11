@@ -123,6 +123,7 @@ class LearningPolicyResult:
 
 @dataclass
 class LearningSidecarTickResult:
+    rollup: Dict[str, Any]
     monitor: Dict[str, Any]
     policy: Dict[str, Any]
     errors: List[str] = field(default_factory=list)
@@ -237,9 +238,30 @@ def build_learning_metrics(
     candidates = db.list_meta_candidates(tenant_id=tenant_id, repo_id=repo_id, limit=recent_runs)
     readiness = db.list_memory_readiness(tenant_id=tenant_id, repo_id=repo_id, limit=recent_runs)
     packets = db.list_memory_packets(tenant_id=tenant_id, repo_id=repo_id, limit=recent_runs)
+    outcome_records = db.list_memory_records(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        kind="task_outcome",
+        limit=recent_runs,
+    )
     ready_packets = sum(1 for p in packets if p.get("status") == "ready")
     blocked_packets = sum(1 for p in packets if p.get("status") == "blocked")
     degraded_packets = sum(1 for p in packets if p.get("status") == "degraded")
+    completed_outcomes = 0
+    blocked_outcomes = 0
+    failure_outcomes = 0
+    memory_packet_used = 0
+    for record in outcome_records:
+        payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+        event_kind = str(payload.get("event_kind") or "")
+        if event_kind == "completed":
+            completed_outcomes += 1
+        elif event_kind == "blocked":
+            blocked_outcomes += 1
+        elif event_kind in {"gave_up", "crashed", "timed_out", "spawn_failed", "completion_blocked_hallucination"}:
+            failure_outcomes += 1
+        if payload.get("memory_packet_id"):
+            memory_packet_used += 1
     avg_candidate_score = 0.0
     scored = [float(c.get("score") or 0.0) for c in candidates if c.get("score") is not None]
     if scored:
@@ -254,6 +276,21 @@ def build_learning_metrics(
         "ready_ratio": (ready_packets / len(packets)) if packets else 0.0,
         "blocked_ratio": (blocked_packets / len(packets)) if packets else 0.0,
         "avg_candidate_score": avg_candidate_score,
+        "task_outcomes_observed": len(outcome_records),
+        "completed_outcomes": completed_outcomes,
+        "blocked_outcomes": blocked_outcomes,
+        "failure_outcomes": failure_outcomes,
+        "memory_packet_used": memory_packet_used,
+        "task_success_ratio": (
+            completed_outcomes / len(outcome_records)
+            if outcome_records
+            else 0.0
+        ),
+        "memory_packet_use_ratio": (
+            memory_packet_used / len(outcome_records)
+            if outcome_records
+            else 0.0
+        ),
     }
 
 
@@ -430,6 +467,8 @@ def monitor_learning(
     status = "healthy"
     if metrics["blocked_ratio"] > 0.5 and metrics["ready_ratio"] == 0:
         status = "degraded"
+    if metrics.get("task_outcomes_observed", 0) and metrics.get("task_success_ratio", 1.0) < 0.25:
+        status = "degraded"
     return LearningMonitorResult(
         status=status,
         runs_observed=metrics["runs_observed"],
@@ -568,6 +607,7 @@ def run_learning_sidecar(
     interval_seconds: float = 300.0,
     once: bool = False,
     stop_event: Any = None,
+    rollup_fn: Callable[..., LearningRollupResult] = rollup_learning_candidates,
     monitor_fn: Callable[..., LearningMonitorResult] = monitor_learning,
     reconcile_fn: Callable[..., LearningPolicyResult] = reconcile_learning_candidates,
     sleep_fn: Callable[[float], None] = time.sleep,
@@ -577,8 +617,10 @@ def run_learning_sidecar(
 
     The sidecar is intentionally thin: it reuses the existing monitor and
     policy reconciliation paths rather than inventing a parallel control
-    plane. ``once=True`` runs a single tick and exits; otherwise the loop
-    sleeps for ``interval_seconds`` between ticks until ``stop_event`` is set.
+    plane. Each tick performs rollup -> monitor -> reconcile so task-event
+    captures can become candidates without a separate manual command.
+    ``once=True`` runs a single tick and exits; otherwise the loop sleeps for
+    ``interval_seconds`` between ticks until ``stop_event`` is set.
     """
     if db_factory is None:
         db_factory = SessionDB
@@ -590,6 +632,12 @@ def run_learning_sidecar(
         tick_errors: List[str] = []
         try:
             with contextlib.closing(db_factory()) as db:
+                rollup = rollup_fn(
+                    db,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    config=config,
+                )
                 monitor = monitor_fn(
                     db,
                     tenant_id=tenant_id,
@@ -603,6 +651,7 @@ def run_learning_sidecar(
                     config=config,
                 )
                 last_tick = LearningSidecarTickResult(
+                    rollup=rollup.to_dict(),
                     monitor=monitor.to_dict(),
                     policy=policy.to_dict(),
                     errors=[],
@@ -612,6 +661,7 @@ def run_learning_sidecar(
             tick_errors.append(err)
             errors.append(err)
             last_tick = LearningSidecarTickResult(
+                rollup={"status": "error"},
                 monitor={"status": "error"},
                 policy={"status": "error"},
                 errors=list(tick_errors),

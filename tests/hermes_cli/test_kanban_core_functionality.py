@@ -109,6 +109,48 @@ def test_memory_required_task_blocks_without_packet(
         conn.close()
 
 
+def test_completed_event_captures_memory_record_for_learning(kanban_home):
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Deploy oauth callback",
+            body="Validate AWS OAuth callback routing",
+            tenant="atlas",
+            memory_scope="atlas-email-flutter",
+        )
+        assert kb.complete_task(
+            conn,
+            tid,
+            result="deployed",
+            summary="OAuth callback deployed and validation passed",
+            metadata={"tests": ["pytest tests/hermes_cli/test_kanban_db.py -q"]},
+        )
+
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            records = db.list_memory_records(
+                tenant_id="atlas",
+                repo_id="atlas-email-flutter",
+                kind="task_outcome",
+                limit=5,
+            )
+        finally:
+            db.close()
+        assert records
+        record = records[0]
+        assert record["task_id"] == tid
+        assert record["status"] == "active"
+        assert record["payload_json"]["event_kind"] == "completed"
+        assert record["payload_json"]["payload"]["summary"] == (
+            "OAuth callback deployed and validation passed"
+        )
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Spawn-failure circuit breaker
 # ---------------------------------------------------------------------------

@@ -1917,6 +1917,115 @@ def _append_event(
         "VALUES (?, ?, ?, ?, ?)",
         (task_id, run_id, kind, pl, now),
     )
+    event_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    _capture_task_event_memory_record(
+        conn,
+        event_id=event_id,
+        task_id=task_id,
+        kind=kind,
+        payload=payload,
+        run_id=run_id,
+        created_at=now,
+    )
+
+
+_MEMORY_CAPTURE_EVENT_KINDS = {
+    "completed",
+    "blocked",
+    "gave_up",
+    "crashed",
+    "timed_out",
+    "spawn_failed",
+    "reclaimed",
+    "completion_blocked_hallucination",
+}
+
+
+def _capture_task_event_memory_record(
+    conn: sqlite3.Connection,
+    *,
+    event_id: int,
+    task_id: str,
+    kind: str,
+    payload: Optional[dict],
+    run_id: Optional[int],
+    created_at: int,
+) -> None:
+    """Mirror bounded task lifecycle events into state.db for learning rollup."""
+    if kind not in _MEMORY_CAPTURE_EVENT_KINDS:
+        return
+    try:
+        row = conn.execute(
+            """
+            SELECT id, title, body, assignee, tenant, status, workspace_kind,
+                   memory_scope, memory_query
+              FROM tasks
+             WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            return
+        from hermes_state import SessionDB
+
+        tenant_id = row["tenant"]
+        repo_id = row["memory_scope"] or row["tenant"] or row["workspace_kind"]
+        payload_dict = dict(payload or {})
+        summary = payload_dict.get("summary") or payload_dict.get("reason") or payload_dict.get("error")
+        if not summary and kind == "completed":
+            summary = "task completed"
+        elif not summary:
+            summary = kind.replace("_", " ")
+        score = {
+            "completed": 0.8,
+            "blocked": 0.45,
+            "gave_up": 0.35,
+            "completion_blocked_hallucination": 0.25,
+        }.get(kind, 0.4)
+        packet_id = (
+            payload_dict.get("packet_id")
+            or os.environ.get("HERMES_MEMORY_PACKET_ID", "").strip()
+            or None
+        )
+        record_payload = {
+            "event_id": event_id,
+            "event_kind": kind,
+            "task_id": task_id,
+            "run_id": run_id,
+            "assignee": row["assignee"],
+            "task_status": row["status"],
+            "workspace_kind": row["workspace_kind"],
+            "memory_query": row["memory_query"],
+            "payload": payload_dict,
+            "captured_at": created_at,
+            "memory_packet_id": packet_id,
+        }
+        with contextlib.closing(SessionDB()) as memory_db:
+            record_id = f"kanban_event_{event_id}"
+            memory_db.upsert_memory_record(
+                record_id=record_id,
+                kind="task_outcome",
+                title=f"{kind}: {row['title']}",
+                body=str(summary)[:1000] if summary else None,
+                payload_json=record_payload,
+                status="active" if kind == "completed" else "ready",
+                score=score,
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+                job_id=task_id,
+                task_id=task_id,
+                packet_id=packet_id,
+                evidence_uri=f"kanban://task/{task_id}/event/{event_id}",
+            )
+            memory_db.add_memory_evidence(
+                record_id=record_id,
+                packet_id=packet_id,
+                uri=f"kanban://task/{task_id}/event/{event_id}",
+                mime_type="application/vnd.hermes.kanban-event+json",
+                excerpt=str(summary)[:400] if summary else None,
+            )
+    except Exception:
+        return
 
 
 def _end_run(
@@ -4629,7 +4738,10 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
             return s
         return s[:limit] + f"… [truncated, {len(s) - limit} chars omitted]"
 
-    def _format_learning_entries(entries: Any) -> list[str]:
+    learning_entry_limit = 3
+    learning_total_budget = 6000
+
+    def _format_learning_entries(entries: Any, *, limit: int = 3) -> list[str]:
         lines: list[str] = []
         if not isinstance(entries, list):
             return lines
@@ -4644,7 +4756,7 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
                     return str(value)
             return str(value)
 
-        for entry in entries[:5]:
+        for entry in entries[:max(0, limit)]:
             if not isinstance(entry, dict):
                 continue
             claim = _cap(str(entry.get("claim") or ""), 180)
@@ -4703,6 +4815,20 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
         cfg = load_config()
         learning_cfg = cfg.get("supervisor", {}).get("learning", {})
         if isinstance(learning_cfg, dict):
+            try:
+                learning_entry_limit = max(
+                    0,
+                    int(learning_cfg.get("context_max_entries_per_bucket", 3) or 3),
+                )
+            except Exception:
+                learning_entry_limit = 3
+            try:
+                learning_total_budget = max(
+                    1000,
+                    int(learning_cfg.get("context_max_total_chars", 6000) or 6000),
+                )
+            except Exception:
+                learning_total_budget = 6000
             approved = learning_cfg.get("approved_candidates") or []
             applied = learning_cfg.get("applied_candidates") or []
             routing_hints = learning_cfg.get("routing_hints") or []
@@ -4712,6 +4838,7 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
             recovery_hints = learning_cfg.get("recovery_hints") or []
             playbooks = learning_cfg.get("playbooks") or []
             if any((approved, applied, routing_hints, validation_recipes, hook_rules, memory_rules, recovery_hints, playbooks)):
+                learning_start = len(lines)
                 lines.append("## Supervisor learning context")
                 if approved:
                     lines.append(f"Approved candidates: {len(approved)}")
@@ -4726,7 +4853,7 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
                     ("Playbooks", playbooks),
                 ]
                 for label, entries in sections:
-                    rendered = _format_learning_entries(entries)
+                    rendered = _format_learning_entries(entries, limit=learning_entry_limit)
                     if rendered:
                         lines.append(f"{label}:")
                         lines.extend(rendered)
@@ -4787,6 +4914,19 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
                         lines.append(f"{label}:")
                         lines.extend(f"- {line}" for line in _render_learning_guidance(entry))
                 lines.append("")
+                learning_lines = lines[learning_start:]
+                if learning_total_budget and len("\n".join(learning_lines)) > learning_total_budget:
+                    kept: list[str] = []
+                    total = 0
+                    for line in learning_lines:
+                        total += len(line) + 1
+                        if total > learning_total_budget:
+                            kept.append(
+                                f"[Supervisor learning context truncated at {learning_total_budget} chars]"
+                            )
+                            break
+                        kept.append(line)
+                    lines = lines[:learning_start] + kept
     except Exception:
         pass
 

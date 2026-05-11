@@ -342,6 +342,11 @@ def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
     try:
         monitor_calls = []
         reconcile_calls = []
+        rollup_calls = []
+
+        def fake_rollup(db_obj, **kwargs):
+            rollup_calls.append(kwargs)
+            return rollup_learning_candidates(db_obj, **kwargs)
 
         def fake_monitor(db_obj, **kwargs):
             monitor_calls.append(kwargs)
@@ -357,6 +362,7 @@ def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
             repo_id="atlas-email-flutter",
             once=True,
             interval_seconds=0.01,
+            rollup_fn=fake_rollup,
             monitor_fn=fake_monitor,
             reconcile_fn=fake_reconcile,
             sleep_fn=lambda _s: None,
@@ -364,8 +370,11 @@ def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
 
         assert result.status in {"completed", "completed_with_errors"}
         assert result.ticks == 1
+        assert len(rollup_calls) == 1
         assert len(monitor_calls) == 1
         assert len(reconcile_calls) == 1
+        assert result.last_tick is not None
+        assert result.last_tick.rollup["status"] in {"completed", "disabled"}
     finally:
         db.close()
 

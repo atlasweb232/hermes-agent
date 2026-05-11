@@ -585,6 +585,11 @@ DEFAULT_CONFIG = {
             # If true, routing hints may auto-fill assignees for new
             # tasks that do not specify one explicitly.
             "auto_route_tasks": True,
+            # Worker context budget for approved/applied learning guidance.
+            # Active per-task matches are always shown separately; these caps
+            # keep broad historical guidance from bloating worker prompts.
+            "context_max_entries_per_bucket": 3,
+            "context_max_total_chars": 6000,
             # Promotion policy: candidates must clear these thresholds
             # before being auto-approved / auto-applied.
             "promotion": {
