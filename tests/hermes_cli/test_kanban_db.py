@@ -178,6 +178,8 @@ def test_build_worker_context_includes_supervisor_learning_context(kanban_home):
     assert "Tests: [\"pytest tests/hermes_cli/test_kanban_db.py -q\"]" in ctx
     assert "Hook rule:" in ctx
     assert "Command: hermes memory learn --repo-id atlas-email-flutter" in ctx
+    assert "Recovery hint:" in ctx
+    assert "Notes: Restart the handoff with the learned AWS callback route" in ctx
     assert "Recovery hints:" in ctx
     assert "Retry OAuth callback tasks with the AWS redirect URL" in ctx
     with kb.connect() as conn:

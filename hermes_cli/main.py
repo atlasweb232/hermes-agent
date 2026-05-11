@@ -11230,6 +11230,41 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    sidecar_parser = memory_sub.add_parser(
+        "sidecar",
+        help="Run the optional learning sidecar loop",
+        description="Continuously monitor and reconcile learned candidates in a standalone loop.",
+    )
+    sidecar_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    sidecar_parser.add_argument("--repo-id", default="", help="Repository scope")
+    sidecar_parser.add_argument(
+        "--interval",
+        type=float,
+        default=None,
+        help="Seconds between sidecar ticks (defaults to config)",
+    )
+    sidecar_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single sidecar tick and exit",
+    )
+    sidecar_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    reconcile_parser = memory_sub.add_parser(
+        "reconcile",
+        help="Promote or roll back learned guidance by policy",
+        description="Apply promotion thresholds and rollback rules to learned candidates.",
+    )
+    reconcile_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    reconcile_parser.add_argument("--repo-id", default="", help="Repository scope")
+    reconcile_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
     candidates_parser = memory_sub.add_parser(
         "candidates",
         help="Review and apply meta-learning candidates",
@@ -11345,7 +11380,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -11353,6 +11388,8 @@ Examples:
                 evaluate_memory_readiness,
                 monitor_learning,
                 reject_meta_candidate,
+                reconcile_learning_candidates,
+                run_learning_sidecar,
                 rollup_learning_candidates,
             )
             from hermes_state import SessionDB
@@ -11451,6 +11488,47 @@ Examples:
                             f"  ready: {result.ready_packets}"
                             f"  blocked: {result.blocked_packets}"
                             f"  degraded: {result.degraded_packets}\n"
+                        )
+                elif sub == "sidecar":
+                    sidecar_cfg = config.get("supervisor", {}).get("learning", {}).get("sidecar", {})
+                    if not isinstance(sidecar_cfg, dict):
+                        sidecar_cfg = {}
+                    interval = getattr(args, "interval", None)
+                    if interval is None:
+                        interval = float(sidecar_cfg.get("interval_seconds", 300) or 300)
+                    once = bool(getattr(args, "once", False))
+                    result = run_learning_sidecar(
+                        SessionDB,
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        config=config,
+                        interval_seconds=float(interval),
+                        once=once,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  learning sidecar: {result.status}"
+                            f"  ticks: {result.ticks}"
+                            f"  interval: {result.interval_seconds}"
+                            f"  once: {result.once}\n"
+                        )
+                elif sub == "reconcile":
+                    result = reconcile_learning_candidates(
+                        db,
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  learning policy: {result.status}"
+                            f"  promoted: {result.promoted}"
+                            f"  applied: {result.applied}"
+                            f"  rolled back: {result.rolled_back}\n"
                         )
                 else:
                     cand_cmd = getattr(args, "memory_candidates_command", None) or "list"

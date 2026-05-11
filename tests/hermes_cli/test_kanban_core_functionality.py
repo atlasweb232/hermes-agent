@@ -2818,6 +2818,112 @@ def test_default_spawn_exports_matching_validation_recipe(kanban_home, monkeypat
     assert "oauth callback" in env["HERMES_LEARNING_VALIDATION_RECIPE"]
 
 
+def test_default_spawn_exports_matching_hook_rule(kanban_home, monkeypatch):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["hook_rules"] = [
+        {
+            "id": "metacand_hook",
+            "kind": "hook_rule",
+            "claim": "Capture task-failure hook details for oauth callback work",
+            "match": "oauth callback",
+            "notes": "Hook rules should be exported to worker env",
+            "workspace_kind": "scratch",
+            "score": 0.75,
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    captured = {}
+
+    class FakeProc:
+        def __init__(self):
+            self.pid = 1002
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env", {})
+        return FakeProc()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            assignee="some-profile",
+        )
+        task = kb.get_task(conn, tid)
+        workspace = kb.resolve_workspace(task)
+        pid = kb._default_spawn(task, str(workspace))
+        assert pid == 1002
+    finally:
+        conn.close()
+
+    env = captured["env"]
+    assert env["HERMES_LEARNING_HOOK_RULE_ID"] == "metacand_hook"
+    assert env["HERMES_LEARNING_HOOK_RULE_MATCH"] == "oauth callback"
+    assert "Hook rules should be exported to worker env" in env["HERMES_LEARNING_HOOK_RULE_NOTES"]
+    assert "oauth callback" in env["HERMES_LEARNING_HOOK_RULE"]
+
+
+def test_default_spawn_exports_matching_recovery_hint(kanban_home, monkeypatch):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["recovery_hints"] = [
+        {
+            "id": "metacand_recovery",
+            "kind": "recovery_hint",
+            "claim": "Retry the AWS callback route after reclaiming oauth work",
+            "match": "oauth callback",
+            "notes": "Recovery hints should be exported to worker env",
+            "workspace_kind": "scratch",
+            "score": 0.7,
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    captured = {}
+
+    class FakeProc:
+        def __init__(self):
+            self.pid = 1003
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env", {})
+        return FakeProc()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            assignee="some-profile",
+        )
+        task = kb.get_task(conn, tid)
+        workspace = kb.resolve_workspace(task)
+        pid = kb._default_spawn(task, str(workspace))
+        assert pid == 1003
+    finally:
+        conn.close()
+
+    env = captured["env"]
+    assert env["HERMES_LEARNING_RECOVERY_HINT_ID"] == "metacand_recovery"
+    assert env["HERMES_LEARNING_RECOVERY_HINT_MATCH"] == "oauth callback"
+    assert "Recovery hints should be exported to worker env" in env["HERMES_LEARNING_RECOVERY_HINT_NOTES"]
+    assert "oauth callback" in env["HERMES_LEARNING_RECOVERY_HINT"]
+
+
 
 # ---------------------------------------------------------------------------
 # Per-task force-loaded skills
@@ -3656,6 +3762,47 @@ def test_complete_with_created_cards_all_verified_records_manifest(kanban_home):
         conn.close()
 
 
+def test_complete_task_includes_learning_hook_rule_payload(kanban_home):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["hook_rules"] = [
+        {
+            "id": "metacand_hook_complete",
+            "kind": "hook_rule",
+            "claim": "Capture completion metadata for oauth callback work",
+            "match": "oauth callback",
+            "notes": "The completed event should carry the matched hook rule",
+            "workspace_kind": "scratch",
+            "score": 0.8,
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            assignee="alice",
+        )
+        ok = kb.complete_task(conn, tid, summary="done")
+        assert ok is True
+        evs = list(conn.execute(
+            "SELECT kind, payload FROM task_events WHERE task_id=? ORDER BY id",
+            (tid,),
+        ))
+        completed = [e for e in evs if e["kind"] == "completed"]
+        assert len(completed) == 1
+        payload = json.loads(completed[0]["payload"])
+        assert payload["learning_hook_rule"]["candidate_id"] == "metacand_hook_complete"
+        assert payload["learning_hook_rule"]["match"] == "oauth callback"
+    finally:
+        conn.close()
+
+
 def test_complete_with_phantom_created_cards_raises_and_audits(kanban_home):
     """A completion claiming a card id that doesn't exist raises
     HallucinatedCardsError, leaves the task in its prior state, and
@@ -3951,6 +4098,45 @@ def test_reclaim_task_returns_false_for_already_ready(kanban_home):
     try:
         t = kb.create_task(conn, title="ready task", assignee="x")
         assert kb.reclaim_task(conn, t) is False
+    finally:
+        conn.close()
+
+
+def test_reclaim_task_includes_learning_recovery_hint_payload(kanban_home):
+    cfg = load_config()
+    supervisor = cfg.setdefault("supervisor", {})
+    learning = supervisor.setdefault("learning", {})
+    learning["recovery_hints"] = [
+        {
+            "id": "metacand_reclaim",
+            "kind": "recovery_hint",
+            "claim": "Use the AWS callback route after reclaiming",
+            "match": "oauth callback",
+            "notes": "Reclaim payload should carry the matched recovery hint",
+            "workspace_kind": "scratch",
+            "score": 0.8,
+            "status": "approved",
+        }
+    ]
+    save_config(cfg)
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="Fix oauth callback flow",
+            body="microsoft login",
+            assignee="alice",
+        )
+        kb.claim_task(conn, tid)
+        assert kb.reclaim_task(conn, tid, reason="operator retry") is True
+        events = kb.list_events(conn, tid)
+        reclaimed = [e for e in events if e.kind == "reclaimed"]
+        assert reclaimed
+        hint = reclaimed[-1].payload.get("learning_recovery_hint")
+        assert hint is not None
+        assert hint["candidate_id"] == "metacand_reclaim"
+        assert hint["match"] == "oauth callback"
     finally:
         conn.close()
 

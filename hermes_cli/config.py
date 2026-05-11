@@ -585,6 +585,31 @@ DEFAULT_CONFIG = {
             # If true, routing hints may auto-fill assignees for new
             # tasks that do not specify one explicitly.
             "auto_route_tasks": True,
+            # Promotion policy: candidates must clear these thresholds
+            # before being auto-approved / auto-applied.
+            "promotion": {
+                "enabled": True,
+                "min_score": 0.7,
+                "min_ready_ratio": 0.5,
+                "auto_apply": False,
+                "apply_min_score": 0.85,
+                "max_candidates": 5,
+            },
+            # Rollback policy: remove applied guidance when the monitor
+            # reports degraded health at or above these thresholds.
+            "rollback": {
+                "enabled": True,
+                "blocked_ratio": 0.5,
+                "degraded_statuses": ["degraded"],
+                "revert_statuses": ["applied"],
+            },
+            "sidecar": {
+                "enabled": False,
+                # Run the sidecar on a conservative cadence; operators can
+                # override this when wiring a separate process or service.
+                "interval_seconds": 300,
+                "run_on_start": True,
+            },
         },
         "monitoring": {
             "enabled": True,

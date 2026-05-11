@@ -8,12 +8,13 @@ readiness persistence in state.db.
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from hermes_cli.config import load_config
 from hermes_state import SessionDB
@@ -104,6 +105,49 @@ class LearningMonitorResult:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class LearningPolicyResult:
+    run_id: str
+    status: str
+    promoted: int = 0
+    applied: int = 0
+    rolled_back: int = 0
+    notes: str = ""
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LearningSidecarTickResult:
+    monitor: Dict[str, Any]
+    policy: Dict[str, Any]
+    errors: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class LearningSidecarResult:
+    status: str
+    ticks: int
+    interval_seconds: float
+    once: bool
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    last_tick: Optional[LearningSidecarTickResult] = None
+    errors: List[str] = field(default_factory=list)
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        if self.last_tick is not None:
+            data["last_tick"] = self.last_tick.to_dict()
+        return data
 
 
 @dataclass
@@ -396,6 +440,310 @@ def monitor_learning(
         degraded_packets=metrics["degraded_packets"],
         metrics=metrics,
     )
+
+
+def reconcile_learning_candidates(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> LearningPolicyResult:
+    if config is None:
+        config = load_config()
+    supervisor_cfg = config.get("supervisor", {})
+    learning_policy = supervisor_cfg.get("learning", {})
+    if not isinstance(learning_policy, dict):
+        learning_policy = {}
+    promotion_policy = learning_policy.get("promotion", {})
+    if not isinstance(promotion_policy, dict):
+        promotion_policy = {}
+    rollback_policy = learning_policy.get("rollback", {})
+    if not isinstance(rollback_policy, dict):
+        rollback_policy = {}
+
+    run_id = f"policy_{uuid.uuid4().hex[:16]}"
+    metrics = build_learning_metrics(
+        db,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        recent_runs=int((supervisor_cfg.get("monitoring", {}) or {}).get("recent_runs", 20) or 20),
+    )
+    monitor = monitor_learning(db, tenant_id=tenant_id, repo_id=repo_id, config=config)
+
+    promotion_enabled = bool(promotion_policy.get("enabled", True))
+    rollback_enabled = bool(rollback_policy.get("enabled", True))
+    min_score = float(promotion_policy.get("min_score", 0.7) or 0.7)
+    min_ready_ratio = float(promotion_policy.get("min_ready_ratio", 0.5) or 0.5)
+    auto_apply = bool(promotion_policy.get("auto_apply", False))
+    apply_min_score = float(promotion_policy.get("apply_min_score", max(min_score, 0.85)) or max(min_score, 0.85))
+    max_candidates = int(promotion_policy.get("max_candidates", 5) or 5)
+    blocked_ratio_threshold = float(rollback_policy.get("blocked_ratio", 0.5) or 0.5)
+    degraded_statuses = {str(s) for s in (rollback_policy.get("degraded_statuses") or ["degraded"]) if s}
+
+    promoted = 0
+    applied = 0
+    rolled_back = 0
+
+    if promotion_enabled and monitor.status not in degraded_statuses and metrics["ready_ratio"] >= min_ready_ratio:
+        candidates = db.list_meta_candidates(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            status="proposed",
+            limit=max_candidates,
+        )
+        for candidate in candidates:
+            score = float(candidate.get("score") or 0.0)
+            if score < min_score:
+                continue
+            apply_candidate = auto_apply and score >= apply_min_score
+            approve_meta_candidate(
+                db,
+                candidate_id=candidate["id"],
+                apply=apply_candidate,
+                config=config,
+            )
+            promoted += 1
+            if apply_candidate:
+                applied += 1
+    if rollback_enabled and (monitor.status in degraded_statuses or metrics["blocked_ratio"] >= blocked_ratio_threshold):
+        candidate_rows = db.list_meta_candidates(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            status="applied",
+            limit=max_candidates,
+        )
+        candidate_ids = [row["id"] for row in candidate_rows]
+        if candidate_ids:
+            rollback_targets = rollback_applied_candidates(
+                db,
+                candidate_ids=candidate_ids,
+                config=config,
+                reason=(
+                    f"monitor={monitor.status} blocked_ratio={metrics['blocked_ratio']:.2f}"
+                ),
+            )
+            rolled_back = len(rollback_targets)
+
+    db.record_learning_run(
+        run_id=run_id,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        status="completed",
+        metrics_json={
+            "monitor": monitor.to_dict(),
+            "metrics": metrics,
+            "promotion_enabled": promotion_enabled,
+            "rollback_enabled": rollback_enabled,
+            "min_score": min_score,
+            "min_ready_ratio": min_ready_ratio,
+            "apply_min_score": apply_min_score,
+            "blocked_ratio_threshold": blocked_ratio_threshold,
+            "promoted": promoted,
+            "applied": applied,
+            "rolled_back": rolled_back,
+        },
+        notes="learning policy reconciliation completed",
+    )
+    return LearningPolicyResult(
+        run_id=run_id,
+        status="completed",
+        promoted=promoted,
+        applied=applied,
+        rolled_back=rolled_back,
+        notes="learning policy reconciliation completed",
+        metrics={
+            "monitor": monitor.to_dict(),
+            "metrics": metrics,
+        },
+    )
+
+
+def run_learning_sidecar(
+    db_factory: Optional[Callable[[], SessionDB]] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+    interval_seconds: float = 300.0,
+    once: bool = False,
+    stop_event: Any = None,
+    monitor_fn: Callable[..., LearningMonitorResult] = monitor_learning,
+    reconcile_fn: Callable[..., LearningPolicyResult] = reconcile_learning_candidates,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    on_tick: Optional[Callable[[LearningSidecarTickResult], None]] = None,
+) -> LearningSidecarResult:
+    """Run the optional learning sidecar loop.
+
+    The sidecar is intentionally thin: it reuses the existing monitor and
+    policy reconciliation paths rather than inventing a parallel control
+    plane. ``once=True`` runs a single tick and exits; otherwise the loop
+    sleeps for ``interval_seconds`` between ticks until ``stop_event`` is set.
+    """
+    if db_factory is None:
+        db_factory = SessionDB
+
+    ticks = 0
+    errors: List[str] = []
+    last_tick: Optional[LearningSidecarTickResult] = None
+    while True:
+        tick_errors: List[str] = []
+        try:
+            with contextlib.closing(db_factory()) as db:
+                monitor = monitor_fn(
+                    db,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    config=config,
+                )
+                policy = reconcile_fn(
+                    db,
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    config=config,
+                )
+                last_tick = LearningSidecarTickResult(
+                    monitor=monitor.to_dict(),
+                    policy=policy.to_dict(),
+                    errors=[],
+                )
+        except Exception as exc:
+            err = str(exc)
+            tick_errors.append(err)
+            errors.append(err)
+            last_tick = LearningSidecarTickResult(
+                monitor={"status": "error"},
+                policy={"status": "error"},
+                errors=list(tick_errors),
+            )
+        ticks += 1
+        if on_tick is not None and last_tick is not None:
+            try:
+                on_tick(last_tick)
+            except Exception as exc:
+                err = str(exc)
+                tick_errors.append(err)
+                errors.append(err)
+                last_tick.errors.append(err)
+        if once:
+            break
+        if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
+            break
+        try:
+            sleep_fn(max(0.0, float(interval_seconds)))
+        except Exception as exc:
+            err = str(exc)
+            tick_errors.append(err)
+            errors.append(err)
+            if once:
+                break
+    status = "completed" if not errors else "completed_with_errors"
+    return LearningSidecarResult(
+        status=status,
+        ticks=ticks,
+        interval_seconds=float(interval_seconds),
+        once=bool(once),
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        last_tick=last_tick,
+        errors=errors,
+        metrics={
+            "ticks": ticks,
+            "errors": len(errors),
+        },
+    )
+
+
+def _remove_candidate_refs_from_bucket(bucket: List[Dict[str, Any]], candidate_ids: set[str]) -> int:
+    removed = 0
+    kept: List[Dict[str, Any]] = []
+    for entry in bucket:
+        if not isinstance(entry, dict):
+            kept.append(entry)
+            continue
+        entry_id = str(entry.get("candidate_id") or entry.get("id") or "").strip()
+        if entry_id and entry_id in candidate_ids:
+            removed += 1
+            continue
+        kept.append(entry)
+    bucket[:] = kept
+    return removed
+
+
+def rollback_applied_candidates(
+    db: SessionDB,
+    *,
+    candidate_ids: Iterable[str],
+    config: Optional[Dict[str, Any]] = None,
+    reason: str = "learning monitor degraded",
+) -> List[str]:
+    if config is None:
+        config = load_config()
+    candidate_id_set = {str(cid).strip() for cid in candidate_ids if str(cid).strip()}
+    if not candidate_id_set:
+        return []
+    supervisor = config.setdefault("supervisor", {})
+    if not isinstance(supervisor, dict):
+        supervisor = {}
+        config["supervisor"] = supervisor
+    learning = supervisor.setdefault("learning", {})
+    if not isinstance(learning, dict):
+        learning = {}
+        supervisor["learning"] = learning
+
+    active_buckets = [
+        "approved_candidates",
+        "applied_candidates",
+        "routing_hints",
+        "validation_recipes",
+        "hook_rules",
+        "memory_rules",
+        "recovery_hints",
+        "playbooks",
+    ]
+    rolled_back: List[str] = []
+    for bucket_name in active_buckets:
+        bucket = learning.get(bucket_name)
+        if isinstance(bucket, list):
+            _remove_candidate_refs_from_bucket(bucket, candidate_id_set)
+
+    history = learning.setdefault("rolled_back_candidates", [])
+    if not isinstance(history, list):
+        history = []
+        learning["rolled_back_candidates"] = history
+
+    now = _now()
+    for candidate_id in candidate_id_set:
+        candidate = db.get_meta_candidate(candidate_id)
+        if candidate is None:
+            continue
+        db.update_meta_candidate_status(
+            candidate_id,
+            status="rolled_back",
+            evidence_json={
+                "rolled_back_at": now,
+                "reason": reason,
+            },
+        )
+        rolled_back.append(candidate_id)
+        _append_unique_entry(
+            history,
+            {
+                "id": candidate_id,
+                "kind": candidate.get("kind"),
+                "claim": candidate.get("claim"),
+                "score": candidate.get("score"),
+                "status": "rolled_back",
+                "rolled_back_at": now,
+                "reason": reason,
+            },
+        )
+
+    if rolled_back:
+        from hermes_cli.config import save_config
+
+        save_config(config)
+    return rolled_back
 
 
 def _candidate_targets(candidate: Dict[str, Any]) -> List[str]:
