@@ -11130,10 +11130,21 @@ Examples:
     )
     dgm_evaluate.add_argument("--json", action="store_true", help="Print JSON")
 
+    dgm_evolve = dgm_sub.add_parser("evolve", help="Generate child variants from the archive")
+    dgm_evolve.add_argument("--tenant-id", default="", help="Tenant scope")
+    dgm_evolve.add_argument("--repo-id", default="", help="Repository scope")
+    dgm_evolve.add_argument("--objective", required=True, help="Evolution objective")
+    dgm_evolve.add_argument("--kind", default="playbook", help="Child variant kind")
+    dgm_evolve.add_argument("--children", type=int, default=1, help="Number of children to generate")
+    dgm_evolve.add_argument("--tool-profile", default="", help="Evaluation tool profile")
+    dgm_evolve.add_argument("--dry-score", type=float, default=None, help="Record a dry evaluation score")
+    dgm_evolve.add_argument("--json", action="store_true", help="Print JSON")
+
     def cmd_dgm(args):
         from hermes_cli.config import load_config
         from hermes_cli.dgm_h import (
             create_dgm_variant,
+            evolve_dgm_variants,
             get_tool_profile_tools,
             parse_metrics_json,
             record_dgm_evaluation,
@@ -11212,6 +11223,26 @@ Examples:
                         f"  score: {result.score!r}"
                         f"{candidate}\n"
                     )
+            elif action == "evolve":
+                result = evolve_dgm_variants(
+                    db,
+                    objective=getattr(args, "objective"),
+                    tenant_id=tenant_id,
+                    repo_id=repo_id,
+                    kind=getattr(args, "kind", "playbook") or "playbook",
+                    children=max(1, int(getattr(args, "children", 1) or 1)),
+                    tool_profile=getattr(args, "tool_profile", "") or None,
+                    dry_score=getattr(args, "dry_score", None),
+                    config=config,
+                )
+                if getattr(args, "json", False):
+                    print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                else:
+                    print(
+                        f"\n  DGM-H evolution: {result.status}"
+                        f"  parents: {', '.join(result.parent_ids) if result.parent_ids else 'none'}"
+                        f"  children: {', '.join(result.child_ids) if result.child_ids else 'none'}\n"
+                    )
             elif action == "variants":
                 rows = db.list_dgm_variants(
                     tenant_id=tenant_id,
@@ -11235,7 +11266,7 @@ Examples:
                             )
                         print()
             else:
-                print("  Use: hermes dgm tools|variants|create|evaluate\n")
+                print("  Use: hermes dgm tools|variants|create|evaluate|evolve\n")
         finally:
             db.close()
 

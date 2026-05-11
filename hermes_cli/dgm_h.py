@@ -54,6 +54,18 @@ class ToolProfileResult:
         return asdict(self)
 
 
+@dataclass
+class DgmEvolutionResult:
+    status: str
+    objective: str
+    parent_ids: List[str]
+    child_ids: List[str]
+    evaluations: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 def get_supervisor_tool_registry(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = config or load_config()
     registry = cfg.get("supervisor", {}).get("tools", {}).get("registry", {})
@@ -124,6 +136,143 @@ def create_dgm_variant(
         kind=kind,
         tool_profile=str(selected_profile),
         parent_id=parent_id,
+    )
+
+
+def select_dgm_parents(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    limit: int = 3,
+) -> List[Dict[str, Any]]:
+    selected: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for status in ("approved", "evaluated", "proposed"):
+        rows = db.list_dgm_variants(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            status=status,
+            limit=max(limit * 3, limit),
+        )
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                float(row.get("score") if row.get("score") is not None else -1.0),
+                float(row.get("created_at") or 0.0),
+            ),
+            reverse=True,
+        )
+        for row in rows:
+            variant_id = str(row.get("id") or "")
+            if not variant_id or variant_id in seen:
+                continue
+            selected.append(row)
+            seen.add(variant_id)
+            if len(selected) >= limit:
+                return selected
+    return selected
+
+
+def evolve_dgm_variants(
+    db: SessionDB,
+    *,
+    objective: str,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    kind: str = "playbook",
+    children: int = 1,
+    tool_profile: Optional[str] = None,
+    dry_score: Optional[float] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> DgmEvolutionResult:
+    cfg = config or load_config()
+    dgm_cfg = cfg.get("supervisor", {}).get("dgm_h", {})
+    if not isinstance(dgm_cfg, dict):
+        dgm_cfg = {}
+    max_parents = int(dgm_cfg.get("max_parents", 3) or 3)
+    parent_limit = max(1, min(max_parents, max(1, children)))
+    parents = select_dgm_parents(
+        db,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        limit=parent_limit,
+    )
+    selected_profile = tool_profile or dgm_cfg.get("default_tool_profile") or "repo_eval"
+    child_ids: List[str] = []
+    evaluations: List[Dict[str, Any]] = []
+    if not parents:
+        seed = create_dgm_variant(
+            db,
+            kind=kind,
+            body=f"Seed DGM-H variant for objective: {objective}",
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            tool_profile=str(selected_profile),
+            metadata={
+                "objective": objective,
+                "generation": 0,
+                "evolution_role": "seed",
+            },
+            config=cfg,
+        )
+        parents = [db.get_dgm_variant(seed.variant_id) or {"id": seed.variant_id, "body": ""}]
+
+    for index in range(max(1, children)):
+        parent = parents[index % len(parents)]
+        parent_id = str(parent.get("id") or "")
+        parent_body = str(parent.get("body") or parent.get("kind") or "").strip()
+        child_body = (
+            f"Objective: {objective}\n"
+            f"Parent: {parent_id}\n"
+            f"Mutation: refine the parent guidance into a bounded, evidence-backed "
+            f"{kind} variant for future sandbox evaluation.\n"
+            f"Parent body: {parent_body[:1200]}"
+        )
+        child = create_dgm_variant(
+            db,
+            kind=kind,
+            body=child_body,
+            tenant_id=tenant_id or parent.get("tenant_id"),
+            repo_id=repo_id or parent.get("repo_id"),
+            parent_id=parent_id or None,
+            tool_profile=str(selected_profile),
+            metadata={
+                "objective": objective,
+                "generation": int((parent.get("metadata_json") or {}).get("generation", 0) or 0) + 1
+                if isinstance(parent.get("metadata_json"), dict)
+                else 1,
+                "parent_score": parent.get("score"),
+                "evolution_role": "child",
+            },
+            config=cfg,
+        )
+        child_ids.append(child.variant_id)
+        if dry_score is not None:
+            evaluation = record_dgm_evaluation(
+                db,
+                variant_id=child.variant_id,
+                score=dry_score,
+                tenant_id=tenant_id or parent.get("tenant_id"),
+                repo_id=repo_id or parent.get("repo_id"),
+                task_set="dry-evolution",
+                tool_profile=str(selected_profile),
+                metrics={
+                    "dry_run": True,
+                    "objective": objective,
+                    "parent_id": parent_id,
+                },
+                artifact_uri=f"dgm://variant/{child.variant_id}/dry-evaluation",
+                status="dry_evaluated",
+                create_candidate=False,
+            )
+            evaluations.append(evaluation.to_dict())
+    return DgmEvolutionResult(
+        status="completed",
+        objective=objective,
+        parent_ids=[str(parent.get("id") or "") for parent in parents if parent],
+        child_ids=child_ids,
+        evaluations=evaluations,
     )
 
 
