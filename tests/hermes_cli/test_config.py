@@ -75,6 +75,8 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["sidecar"]["enabled"] is False
             assert config["supervisor"]["learning"]["sidecar"]["interval_seconds"] == 300
             assert config["supervisor"]["learning"]["sidecar"]["run_on_start"] is True
+            assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
+            assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
 
     def test_legacy_root_level_max_turns_migrates_to_agent_config(self, tmp_path):
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
