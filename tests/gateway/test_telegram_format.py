@@ -759,6 +759,32 @@ class TestEditMessageStreamingSafety:
             "text": "final **bold**",
         }
 
+    @pytest.mark.asyncio
+    async def test_message_too_long_returns_failure_not_silent_truncation(self):
+        """When edit_message_text exceeds Telegram's 4096 UTF-16 limit, the
+        adapter must return success=False with error='message_too_long' so the
+        stream consumer's fallback path delivers the remainder as a fresh
+        continuation message.  Previously the adapter best-effort truncated
+        the content with '…' and returned success=True, causing the consumer
+        to drop everything past the truncation boundary (#19537)."""
+        adapter = TelegramAdapter(PlatformConfig(enabled=True, token="fake-token"))
+        adapter._bot = MagicMock()
+
+        class _BadRequestTooLong(Exception):
+            def __str__(self):
+                return "Bad Request: message_too_long"
+
+        adapter._bot.edit_message_text = AsyncMock(
+            side_effect=_BadRequestTooLong(),
+        )
+
+        # Trigger the overflow by sending content > MAX_MESSAGE_LENGTH.
+        oversized = "x" * (TelegramAdapter.MAX_MESSAGE_LENGTH + 100)
+        result = await adapter.edit_message("123", "456", oversized, finalize=False)
+
+        assert result.success is False
+        assert result.error == "message_too_long"
+
 # =========================================================================
 # Telegram guest mention gating
 # =========================================================================
