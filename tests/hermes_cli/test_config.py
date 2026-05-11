@@ -72,6 +72,9 @@ class TestLoadConfigDefaults:
             assert config["display"]["interim_assistant_messages"] is True
             assert config["supervisor"]["memory"]["enabled"] is True
             assert config["supervisor"]["memory"]["block_on_missing_packet"] is True
+            assert config["supervisor"]["learning"]["sidecar"]["enabled"] is False
+            assert config["supervisor"]["learning"]["sidecar"]["interval_seconds"] == 300
+            assert config["supervisor"]["learning"]["sidecar"]["run_on_start"] is True
 
     def test_legacy_root_level_max_turns_migrates_to_agent_config(self, tmp_path):
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):

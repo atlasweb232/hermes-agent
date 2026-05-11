@@ -13,6 +13,8 @@ from hermes_cli.supervisor_memory import (
     evaluate_memory_readiness,
     monitor_learning,
     reject_meta_candidate,
+    reconcile_learning_candidates,
+    run_learning_sidecar,
     rollup_learning_candidates,
 )
 from hermes_state import SessionDB
@@ -179,6 +181,55 @@ def test_learning_monitor_reports_metrics(tmp_path, monkeypatch):
         db.close()
 
 
+def test_reconcile_learning_candidates_promotes_threshold_hits(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_ready",
+            query="oauth callback",
+            status="ready",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            scopes=["atlas-email-flutter"],
+            claims_json=[{"record_id": "rec-1", "title": "claim", "score": 0.9}],
+            evidence_json=[{"uri": "artifact://evidence.txt"}],
+            contradictions_json=[],
+            freshness_json={"policy": "fresh"},
+            confidence=0.9,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_promote",
+            kind="routing_hint",
+            claim="Use aws oauth callback",
+            evidence_json={
+                "record_id": "rec-promote",
+                "match": "oauth callback",
+                "assignee": "jules",
+                "workspace_kind": "scratch",
+            },
+            score=0.95,
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+        assert result.status == "completed"
+        assert result.promoted >= 1
+        row = db.get_meta_candidate("metacand_promote")
+        assert row["status"] == "approved"
+    finally:
+        db.close()
+
+
 def test_approve_meta_candidate_applies_to_config(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -227,6 +278,122 @@ def test_approve_meta_candidate_applies_to_config(tmp_path, monkeypatch):
         assert hint["evidence_json"]["record_id"] == "rec-apply"
     finally:
         db.close()
+
+
+def test_reconcile_learning_candidates_rolls_back_degraded_apply(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_blocked",
+            query="oauth callback",
+            status="blocked",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            scopes=["atlas-email-flutter"],
+            claims_json=[],
+            evidence_json=[],
+            contradictions_json=[],
+            freshness_json={"policy": "weak"},
+            confidence=0.1,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_rollback",
+            kind="routing_hint",
+            claim="Use oauth.atlasweb.info for AWS callbacks",
+            evidence_json={
+                "record_id": "rec-rollback",
+                "match": "oauth callback",
+                "assignee": "jules",
+                "workspace_kind": "worktree",
+            },
+            score=0.9,
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+        approve_meta_candidate(
+            db,
+            candidate_id="metacand_rollback",
+            apply=True,
+            config={"supervisor": {"learning": {}}},
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+        assert result.status == "completed"
+        assert result.rolled_back >= 1
+        row = db.get_meta_candidate("metacand_rollback")
+        assert row["status"] == "rolled_back"
+    finally:
+        db.close()
+
+
+def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        monitor_calls = []
+        reconcile_calls = []
+
+        def fake_monitor(db_obj, **kwargs):
+            monitor_calls.append(kwargs)
+            return monitor_learning(db_obj, **kwargs)
+
+        def fake_reconcile(db_obj, **kwargs):
+            reconcile_calls.append(kwargs)
+            return reconcile_learning_candidates(db_obj, **kwargs)
+
+        result = run_learning_sidecar(
+            lambda: db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            once=True,
+            interval_seconds=0.01,
+            monitor_fn=fake_monitor,
+            reconcile_fn=fake_reconcile,
+            sleep_fn=lambda _s: None,
+        )
+
+        assert result.status in {"completed", "completed_with_errors"}
+        assert result.ticks == 1
+        assert len(monitor_calls) == 1
+        assert len(reconcile_calls) == 1
+    finally:
+        db.close()
+
+
+def test_cli_learning_sidecar_once_smoke(tmp_path, monkeypatch, capsys):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    argv = [
+        "hermes",
+        "memory",
+        "sidecar",
+        "--tenant-id",
+        "atlas",
+        "--repo-id",
+        "atlas-email-flutter",
+        "--once",
+        "--json",
+    ]
+
+    from hermes_cli import main as hermes_main
+
+    with patch.object(sys, "argv", argv):
+        hermes_main.main()
+
+    out = capsys.readouterr().out.strip()
+    data = json.loads(out)
+    assert data["once"] is True
+    assert data["ticks"] == 1
 
 
 def test_reject_meta_candidate_marks_status(tmp_path, monkeypatch):

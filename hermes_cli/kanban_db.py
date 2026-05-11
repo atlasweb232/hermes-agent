@@ -1300,26 +1300,12 @@ def get_learning_recovery_hint(
         if not isinstance(learning, dict):
             return None
         hints = learning.get("recovery_hints") or []
-        if not isinstance(hints, list):
-            return None
-        haystack = f"{title}\n{body or ''}".casefold()
-        for hint in hints:
-            if not isinstance(hint, dict):
-                continue
-            match = str(hint.get("match") or hint.get("claim") or "").strip()
-            hint_workspace_kind = str(hint.get("workspace_kind") or "").strip()
-            if workspace_kind and hint_workspace_kind and hint_workspace_kind != workspace_kind:
-                continue
-            if match and match.casefold() in haystack:
-                return {
-                    "match": match,
-                    "claim": hint.get("claim"),
-                    "notes": hint.get("notes") or hint.get("advice") or hint.get("recommendation"),
-                    "workspace_kind": hint_workspace_kind or None,
-                    "candidate_id": hint.get("candidate_id") or hint.get("id"),
-                    "status": hint.get("status"),
-                    "score": hint.get("score"),
-                }
+        return _match_learning_config_entry(
+            hints,
+            title,
+            body,
+            workspace_kind=workspace_kind,
+        )
     except Exception:
         return None
     return None
@@ -1340,7 +1326,7 @@ def _match_learning_config_entry(
         if not isinstance(hint, dict):
             continue
         evidence = hint.get("evidence_json") if isinstance(hint.get("evidence_json"), dict) else {}
-        match = str(hint.get("match") or hint.get("claim") or evidence.get("match") or "").strip()
+        match = str(evidence.get("match") or hint.get("match") or hint.get("claim") or "").strip()
         hint_workspace_kind = str(hint.get("workspace_kind") or evidence.get("workspace_kind") or "").strip()
         if workspace_kind and hint_workspace_kind and hint_workspace_kind != workspace_kind:
             continue
@@ -1392,7 +1378,6 @@ def get_learning_validation_recipe(
         )
     except Exception:
         return None
-
 
 def get_learning_hook_rule(
     title: str,
@@ -2242,13 +2227,18 @@ def release_stale_claims(
     reclaimed = 0
     host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
     stale = conn.execute(
-        "SELECT id, claim_lock, worker_pid, claim_expires, last_heartbeat_at "
+        "SELECT id, title, body, workspace_kind, claim_lock, worker_pid, claim_expires, last_heartbeat_at "
         "FROM tasks "
         "WHERE status = 'running' AND claim_expires IS NOT NULL "
         "  AND claim_expires < ?",
         (now,),
     ).fetchall()
     for row in stale:
+        recovery_hint = get_learning_recovery_hint(
+            str(row["title"] or ""),
+            row["body"],
+            workspace_kind=str(row["workspace_kind"] or ""),
+        )
         lock = row["claim_lock"] or ""
         host_local = lock.startswith(host_prefix)
         if host_local and row["worker_pid"] and _pid_alive(row["worker_pid"]):
@@ -2321,6 +2311,8 @@ def release_stale_claims(
                 "now": now,
                 "host_local": host_local,
             }
+            if recovery_hint:
+                payload["learning_recovery_hint"] = recovery_hint
             payload.update(termination)
             _append_event(
                 conn, row["id"], "reclaimed",
@@ -2350,7 +2342,7 @@ def reclaim_task(
     reclaimable state (not running, or doesn't exist).
     """
     row = conn.execute(
-        "SELECT status, claim_lock, worker_pid FROM tasks WHERE id = ?",
+        "SELECT status, title, body, workspace_kind, claim_lock, worker_pid FROM tasks WHERE id = ?",
         (task_id,),
     ).fetchone()
     if not row:
@@ -2358,6 +2350,11 @@ def reclaim_task(
     if row["status"] != "running" and row["claim_lock"] is None:
         # Nothing to reclaim — already ready / blocked / done.
         return False
+    recovery_hint = get_learning_recovery_hint(
+        str(row["title"] or ""),
+        row["body"],
+        workspace_kind=str(row["workspace_kind"] or ""),
+    )
     prev_lock = row["claim_lock"]
     termination = _terminate_reclaimed_worker(
         row["worker_pid"], prev_lock, signal_fn=signal_fn,
@@ -2386,6 +2383,8 @@ def reclaim_task(
             "reason": reason,
             "prev_lock": prev_lock,
         }
+        if recovery_hint:
+            payload["learning_recovery_hint"] = recovery_hint
         payload.update(termination)
         _append_event(
             conn, task_id, "reclaimed",
@@ -2602,6 +2601,20 @@ def complete_task(
     and never blocks.
     """
     now = int(time.time())
+    hook_rule = None
+    try:
+        row = conn.execute(
+            "SELECT title, body, workspace_kind FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if row is not None:
+            hook_rule = get_learning_hook_rule(
+                str(row["title"] or ""),
+                row["body"],
+                workspace_kind=str(row["workspace_kind"] or ""),
+            )
+    except Exception:
+        hook_rule = None
 
     # Gate: verify created_cards BEFORE the main write txn. A rejected
     # completion still needs an auditable event, so we emit it in a
@@ -2691,6 +2704,8 @@ def complete_task(
             "result_len": len(result) if result else 0,
             "summary": ev_summary or None,
         }
+        if hook_rule:
+            completed_payload["learning_hook_rule"] = hook_rule
         if verified_cards:
             completed_payload["verified_cards"] = verified_cards
         _append_event(
@@ -2804,6 +2819,20 @@ def block_task(
     expected_run_id: Optional[int] = None,
 ) -> bool:
     """Transition ``running -> blocked``."""
+    hook_rule = None
+    try:
+        row = conn.execute(
+            "SELECT title, body, workspace_kind FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if row is not None:
+            hook_rule = get_learning_hook_rule(
+                str(row["title"] or ""),
+                row["body"],
+                workspace_kind=str(row["workspace_kind"] or ""),
+            )
+    except Exception:
+        hook_rule = None
     with write_txn(conn):
         if expected_run_id is None:
             cur = conn.execute(
@@ -2847,7 +2876,10 @@ def block_task(
                 outcome="blocked",
                 summary=reason,
             )
-        _append_event(conn, task_id, "blocked", {"reason": reason}, run_id=run_id)
+        payload = {"reason": reason}
+        if hook_rule:
+            payload["learning_hook_rule"] = hook_rule
+        _append_event(conn, task_id, "blocked", payload, run_id=run_id)
         return True
 
 
@@ -3399,7 +3431,7 @@ def enforce_max_runtime(
     host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
 
     rows = conn.execute(
-        "SELECT t.id, t.worker_pid, "
+        "SELECT t.id, t.title, t.body, t.workspace_kind, t.worker_pid, "
         "       COALESCE(r.started_at, t.started_at) AS active_started_at, "
         "       t.max_runtime_seconds, t.claim_lock "
         "FROM tasks t "
@@ -3409,6 +3441,11 @@ def enforce_max_runtime(
         "  AND t.worker_pid IS NOT NULL"
     ).fetchall()
     for row in rows:
+        recovery_hint = get_learning_recovery_hint(
+            str(row["title"] or ""),
+            row["body"],
+            workspace_kind=str(row["workspace_kind"] or ""),
+        )
         lock = row["claim_lock"] or ""
         if not lock.startswith(host_prefix):
             continue
@@ -3462,6 +3499,8 @@ def enforce_max_runtime(
                     "limit_seconds": int(row["max_runtime_seconds"]),
                     "sigkill": killed,
                 }
+                if recovery_hint:
+                    payload["learning_recovery_hint"] = recovery_hint
                 run_id = _end_run(
                     conn, tid,
                     outcome="timed_out", status="timed_out",
@@ -3533,11 +3572,16 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # (task_id, pid, claimer, protocol_violation, error_text)
     with write_txn(conn):
         rows = conn.execute(
-            "SELECT id, worker_pid, claim_lock FROM tasks "
+            "SELECT id, title, body, workspace_kind, worker_pid, claim_lock FROM tasks "
             "WHERE status = 'running' AND worker_pid IS NOT NULL"
         ).fetchall()
         host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
         for row in rows:
+            recovery_hint = get_learning_recovery_hint(
+                str(row["title"] or ""),
+                row["body"],
+                workspace_kind=str(row["workspace_kind"] or ""),
+            )
             # Only check liveness for claims owned by this host.
             lock = row["claim_lock"] or ""
             if not lock.startswith(host_prefix):
@@ -3576,6 +3620,8 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 if code is not None and kind != "unknown":
                     event_payload["exit_kind"] = kind
                     event_payload["exit_code"] = code
+            if recovery_hint:
+                event_payload["learning_recovery_hint"] = recovery_hint
 
             cur = conn.execute(
                 "UPDATE tasks SET status = 'ready', claim_lock = NULL, "
@@ -4329,6 +4375,56 @@ def _default_spawn(
                     )
                 except Exception:
                     pass
+            hook_rule = get_learning_hook_rule(
+                task.title,
+                task.body,
+                workspace_kind=task.workspace_kind,
+            )
+            if hook_rule:
+                env["HERMES_LEARNING_HOOK_RULE_ID"] = str(
+                    hook_rule.get("candidate_id")
+                    or hook_rule.get("id")
+                    or "",
+                )
+                env["HERMES_LEARNING_HOOK_RULE_MATCH"] = str(
+                    hook_rule.get("match") or "",
+                )
+                notes_value = hook_rule.get("notes")
+                if notes_value not in (None, ""):
+                    env["HERMES_LEARNING_HOOK_RULE_NOTES"] = str(notes_value)
+                try:
+                    env["HERMES_LEARNING_HOOK_RULE"] = json.dumps(
+                        hook_rule,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except Exception:
+                    pass
+            recovery_hint = get_learning_recovery_hint(
+                task.title,
+                task.body,
+                workspace_kind=task.workspace_kind,
+            )
+            if recovery_hint:
+                env["HERMES_LEARNING_RECOVERY_HINT_ID"] = str(
+                    recovery_hint.get("candidate_id")
+                    or recovery_hint.get("id")
+                    or "",
+                )
+                env["HERMES_LEARNING_RECOVERY_HINT_MATCH"] = str(
+                    recovery_hint.get("match") or "",
+                )
+                notes_value = recovery_hint.get("notes")
+                if notes_value not in (None, ""):
+                    env["HERMES_LEARNING_RECOVERY_HINT_NOTES"] = str(notes_value)
+                try:
+                    env["HERMES_LEARNING_RECOVERY_HINT"] = json.dumps(
+                        recovery_hint,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except Exception:
+                    pass
         finally:
             memory_db.close()
     except Exception:
@@ -4617,6 +4713,13 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
                 )
                 if hook_rule:
                     active_guidance.append(("Hook rule", hook_rule))
+                recovery_hint = get_learning_recovery_hint(
+                    task.title,
+                    task.body,
+                    workspace_kind=task.workspace_kind,
+                )
+                if recovery_hint:
+                    active_guidance.append(("Recovery hint", recovery_hint))
                 if active_guidance:
                     lines.append("## Active learning guidance")
 
