@@ -77,7 +77,6 @@ from gateway.platforms.base import (
     SUPPORTED_VIDEO_TYPES,
     SUPPORTED_DOCUMENT_TYPES,
     utf16_len,
-    _prefix_within_utf16_limit,
 )
 from gateway.platforms.telegram_network import (
     TelegramFallbackTransport,
@@ -1559,10 +1558,18 @@ class TelegramAdapter(BasePlatformAdapter):
             
         except Exception as e:
             logger.error("[%s] Failed to send Telegram message: %s", self.name, e, exc_info=True)
+            err_str = str(e).lower()
+            # Message too long — content exceeded 4096 chars. Return failure so
+            # stream consumer enters fallback mode and sends the remainder.
+            if "message_too_long" in err_str or "too long" in err_str:
+                logger.debug(
+                    "[%s] send() content too long, falling back to new-message continuation",
+                    self.name,
+                )
+                return SendResult(success=False, error="message_too_long")
             # TimedOut means the request may have reached Telegram —
             # mark as non-retryable so _send_with_retry() doesn't re-send.
             _to = locals().get("_TimedOut")
-            err_str = str(e).lower()
             is_timeout = (_to and isinstance(e, _to)) or "timed out" in err_str
             return SendResult(success=False, error=str(e), retryable=not is_timeout)
 
@@ -1611,21 +1618,19 @@ class TelegramAdapter(BasePlatformAdapter):
             if "not modified" in err_str:
                 return SendResult(success=True, message_id=message_id)
             # Message too long — content exceeded 4096 chars (e.g. during
-            # streaming).  Truncate and succeed so the stream consumer can
-            # split the overflow into a new message instead of dying.
+            # streaming).  Return failure so the stream consumer enters
+            # fallback mode and sends the remainder as a fresh message.
+            # Previously this truncated and returned success=True, but that
+            # made the stream consumer believe the edit was fully delivered
+            # when only the truncated prefix reached the user — leaving the
+            # rest of the response unsent (the "cut-off" bug).
             if "message_too_long" in err_str or "too long" in err_str:
-                truncated = _prefix_within_utf16_limit(
-                    content, self.MAX_MESSAGE_LENGTH - 20
-                ) + "…"
-                try:
-                    await self._bot.edit_message_text(
-                        chat_id=int(chat_id),
-                        message_id=int(message_id),
-                        text=truncated,
-                    )
-                except Exception:
-                    pass  # best-effort truncation
-                return SendResult(success=True, message_id=message_id)
+                logger.debug(
+                    "[%s] edit_message content too long (%d codepoints > %d UTF-16), "
+                    "falling back to new-message continuation",
+                    self.name, utf16_len(content), self.MAX_MESSAGE_LENGTH,
+                )
+                return SendResult(success=False, error="message_too_long")
             # Flood control / RetryAfter — short waits are retried inline,
             # long waits return a failure immediately so streaming can fall back
             # to a normal final send instead of leaving a truncated partial.
