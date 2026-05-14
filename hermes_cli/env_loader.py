@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -10,11 +12,18 @@ from dotenv import load_dotenv
 from utils import atomic_replace
 
 
+logger = logging.getLogger(__name__)
+
+
 # Env var name suffixes that indicate credential values.  These are the
 # only env vars whose values we sanitize on load — we must not silently
 # alter arbitrary user env vars, but credentials are known to require
 # pure ASCII (they become HTTP header values).
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_KEY")
+
+_MODEL_API_KEY_ENV = "HERMES_MODEL_API_KEY"
+_MODEL_API_KEY_SECRET_ID_ENV = "HERMES_MODEL_API_KEY_SECRET_ID"
+_MODEL_API_KEY_SECRET_REGION_ENV = "HERMES_MODEL_API_KEY_SECRET_REGION"
 
 # Names we've already warned about during this process, so repeated
 # load_hermes_dotenv() calls (user env + project env, gateway hot-reload,
@@ -139,6 +148,99 @@ def _sanitize_env_file_if_needed(path: Path) -> None:
         pass  # best-effort — don't block gateway startup
 
 
+def _extract_secret_value(secret_value: str | bytes) -> str:
+    """Return a usable API key from a plain string or JSON secret payload."""
+    if isinstance(secret_value, bytes):
+        secret_value = secret_value.decode("utf-8", errors="replace")
+
+    raw = (secret_value or "").strip()
+    if not raw:
+        return ""
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return raw
+
+    if isinstance(parsed, str):
+        return parsed.strip()
+    if isinstance(parsed, dict):
+        for key in (
+            _MODEL_API_KEY_ENV,
+            "api_key",
+            "apiKey",
+            "secret",
+            "token",
+            "value",
+            "key",
+            "password",
+        ):
+            candidate = parsed.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return ""
+
+
+def _load_model_api_key_from_aws_secret_manager() -> bool:
+    """Populate HERMES_MODEL_API_KEY from AWS Secrets Manager when configured."""
+    if os.getenv(_MODEL_API_KEY_ENV, "").strip():
+        return False
+
+    secret_id = os.getenv(_MODEL_API_KEY_SECRET_ID_ENV, "").strip()
+    if not secret_id:
+        return False
+
+    region = (
+        os.getenv(_MODEL_API_KEY_SECRET_REGION_ENV, "").strip()
+        or os.getenv("AWS_REGION", "").strip()
+        or os.getenv("AWS_DEFAULT_REGION", "").strip()
+        or "us-east-1"
+    )
+
+    try:
+        import boto3
+    except Exception as exc:  # pragma: no cover - depends on optional runtime deps
+        logger.warning(
+            "AWS secret-backed model key is configured, but boto3 is unavailable: %s",
+            exc,
+        )
+        return False
+
+    try:
+        client = boto3.client("secretsmanager", region_name=region)
+        response = client.get_secret_value(SecretId=secret_id)
+        secret_value = response.get("SecretString") or response.get("SecretBinary") or ""
+        api_key = _extract_secret_value(secret_value)
+    except Exception as exc:  # pragma: no cover - network/auth errors are environment-specific
+        logger.warning(
+            "Failed to load Hermes model API key from AWS Secrets Manager "
+            "(secret_id=%s, region=%s): %s",
+            secret_id,
+            region,
+            exc,
+        )
+        return False
+
+    if not api_key:
+        logger.warning(
+            "AWS secret %s did not contain a usable Hermes model API key.",
+            secret_id,
+        )
+        return False
+
+    os.environ[_MODEL_API_KEY_ENV] = api_key
+    logger.info(
+        "Loaded Hermes model API key from AWS Secrets Manager secret %s in %s.",
+        secret_id,
+        region,
+    )
+    return True
+
+
 def load_hermes_dotenv(
     *,
     hermes_home: str | os.PathLike | None = None,
@@ -171,5 +273,8 @@ def load_hermes_dotenv(
     if project_env_path and project_env_path.exists():
         _load_dotenv_with_fallback(project_env_path, override=not loaded)
         loaded.append(project_env_path)
+
+    _load_model_api_key_from_aws_secret_manager()
+    _sanitize_loaded_credentials()
 
     return loaded

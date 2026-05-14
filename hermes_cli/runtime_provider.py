@@ -503,6 +503,7 @@ def _resolve_named_custom_runtime(
             (explicit_api_key or "").strip(),
             os.getenv("OPENAI_API_KEY", "").strip(),
             os.getenv("OPENROUTER_API_KEY", "").strip(),
+            os.getenv("HERMES_MODEL_API_KEY", "").strip(),
         ]
         api_key = next(
             (c for c in api_key_candidates if has_usable_secret(c)),
@@ -542,6 +543,7 @@ def _resolve_named_custom_runtime(
         (explicit_api_key or "").strip(),
         str(custom_provider.get("api_key", "") or "").strip(),
         os.getenv(str(custom_provider.get("key_env", "") or "").strip(), "").strip(),
+        os.getenv("HERMES_MODEL_API_KEY", "").strip(),
         os.getenv("OPENAI_API_KEY", "").strip(),
         os.getenv("OPENROUTER_API_KEY", "").strip(),
     ]
@@ -629,6 +631,7 @@ def _resolve_openrouter_runtime(
         api_key_candidates = [
             explicit_api_key,
             (cfg_api_key if use_config_base_url else ""),
+            os.getenv("HERMES_MODEL_API_KEY", ""),
             (os.getenv("OLLAMA_API_KEY") if _is_ollama_url else ""),
             os.getenv("OPENAI_API_KEY"),
             os.getenv("OPENROUTER_API_KEY"),

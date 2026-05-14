@@ -1,6 +1,9 @@
 """Tests for .env sanitization during load to prevent token duplication (#8908)."""
 
+import os
+import sys
 import tempfile
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -89,3 +92,37 @@ def test_env_loader_sanitizes_before_dotenv():
         assert parsed_token == token
     finally:
         env_path.unlink(missing_ok=True)
+
+
+def test_load_hermes_dotenv_populates_model_api_key_from_aws_secret(monkeypatch):
+    """Startup should hydrate HERMES_MODEL_API_KEY from AWS Secrets Manager."""
+    from hermes_cli.env_loader import load_hermes_dotenv
+
+    class _SecretsManagerClient:
+        def __init__(self):
+            self.requests = []
+
+        def get_secret_value(self, SecretId):
+            self.requests.append(SecretId)
+            return {"SecretString": '{"api_key":"cerebras-secret-123"}'}
+
+    class _Boto3Module(types.SimpleNamespace):
+        def __init__(self):
+            super().__init__()
+            self.client_impl = _SecretsManagerClient()
+
+        def client(self, service_name, region_name=None):
+            assert service_name == "secretsmanager"
+            assert region_name == "us-west-2"
+            return self.client_impl
+
+    monkeypatch.delenv("HERMES_MODEL_API_KEY", raising=False)
+    monkeypatch.setenv("HERMES_MODEL_API_KEY_SECRET_ID", "hermes/cerebras-api-key")
+    monkeypatch.setenv("HERMES_MODEL_API_KEY_SECRET_REGION", "us-west-2")
+    monkeypatch.setitem(sys.modules, "boto3", _Boto3Module())
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        loaded = load_hermes_dotenv(hermes_home=tmpdir)
+
+    assert loaded == []
+    assert os.environ["HERMES_MODEL_API_KEY"] == "cerebras-secret-123"

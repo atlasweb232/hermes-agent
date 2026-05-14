@@ -43,6 +43,11 @@ model:
   
   # API configuration (falls back to OPENROUTER_API_KEY env var)
   # api_key: "your-key-here"  # Uncomment to set here instead of .env
+  #
+  # For AWS-hosted supervisors, keep the runtime key out of config.yaml:
+  #   HERMES_MODEL_API_KEY_SECRET_ID=hermes/cerebras-api-key
+  #   HERMES_MODEL_API_KEY_SECRET_REGION=us-east-1
+  # Hermes loads that secret at startup and exposes it as HERMES_MODEL_API_KEY.
   base_url: "https://openrouter.ai/api/v1"
 
   # ── Token limits — two settings, easy to confuse ──────────────────────────

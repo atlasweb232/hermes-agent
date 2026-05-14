@@ -1464,6 +1464,30 @@ def test_custom_provider_no_key_gets_placeholder(monkeypatch):
     assert resolved["base_url"] == "http://localhost:8080/v1"
 
 
+def test_custom_provider_uses_aws_secret_backed_model_api_key(monkeypatch):
+    """Custom provider resolution should use HERMES_MODEL_API_KEY when present."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_MODEL_API_KEY", raising=False)
+    monkeypatch.setenv("HERMES_MODEL_API_KEY", "aws-backed-cerebras-key")
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "model": {
+                "provider": "custom",
+                "base_url": "https://api.cerebras.ai/v1",
+            }
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="custom")
+
+    assert resolved["provider"] == "custom"
+    assert resolved["base_url"] == "https://api.cerebras.ai/v1"
+    assert resolved["api_key"] == "aws-backed-cerebras-key"
+
+
 def test_auto_detected_nous_auth_failure_falls_through_to_openrouter(monkeypatch):
     """When auto-detect picks Nous but credentials are revoked, fall through to OpenRouter."""
     from hermes_cli.auth import AuthError
