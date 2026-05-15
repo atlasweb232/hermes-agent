@@ -63,6 +63,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WorkerList"
+  /dreaming:
+    get:
+      summary: Read dreaming configuration and state
+      operationId: getControlDreaming
+      responses:
+        "200":
+          description: Dreaming state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DreamingState"
   /config/preview:
     post:
       summary: Preview a config patch or manifest
@@ -134,6 +145,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApplyResult"
+  /dreaming/run:
+    post:
+      summary: Trigger a dreaming pass
+      operationId: runControlDreaming
+      responses:
+        "200":
+          description: Dreaming run accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /dreaming/pause:
+    post:
+      summary: Pause scheduled dreaming
+      operationId: pauseControlDreaming
+      responses:
+        "200":
+          description: Dreaming paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /dreaming/resume:
+    post:
+      summary: Resume scheduled dreaming
+      operationId: resumeControlDreaming
+      responses:
+        "200":
+          description: Dreaming resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /dreaming/review:
+    post:
+      summary: Review or approve a dreaming result
+      operationId: reviewControlDreaming
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DreamingReviewRequest"
+      responses:
+        "200":
+          description: Review accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
   /processes/{name}/restart:
     post:
       summary: Restart a managed process
@@ -219,6 +280,9 @@ components:
       type: object
       additionalProperties: true
     WorkerList:
+      type: object
+      additionalProperties: true
+    DreamingState:
       type: object
       additionalProperties: true
     ConfigApplyRequest:
@@ -309,3 +373,13 @@ components:
         spec:
           type: object
           additionalProperties: true
+    DreamingReviewRequest:
+      type: object
+      properties:
+        dream_id:
+          type: string
+        decision:
+          type: string
+          enum: [approve, reject, defer]
+        notes:
+          type: string

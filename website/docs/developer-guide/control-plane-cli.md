@@ -13,6 +13,7 @@ The rule is simple:
 - `hermes config show/check/edit/set` covers the config lifecycle
 - `hermes status/doctor` covers health and validation
 - `hermes curator`, `hermes memory`, and `hermes dgm` cover the background sidecars
+- `hermes dream` should cover the dreaming loop and memory consolidation controls
 - process control maps to targeted restart/reload operations
 
 ## CLI To API Map
@@ -28,6 +29,11 @@ The rule is simple:
 | `hermes curator run` | `POST /v1/control/processes/curator/reload` or `restart` | Trigger the curator loop depending on backend behavior |
 | `hermes memory status` | `GET /v1/control/sidecars` | Read memory and learning sidecar state |
 | `hermes memory monitor` | `GET /v1/control/events` or a memory-specific status view | Stream memory/consolidation events |
+| `hermes dream status` | `GET /v1/control/dreaming` | Read dreaming config and current dream loop state |
+| `hermes dream run` | `POST /v1/control/dreaming/run` | Trigger a dreaming pass now |
+| `hermes dream pause` | `POST /v1/control/dreaming/pause` | Pause scheduled dreaming |
+| `hermes dream resume` | `POST /v1/control/dreaming/resume` | Resume scheduled dreaming |
+| `hermes dream review` | `POST /v1/control/dreaming/review` | Mark a dream result reviewed/approved |
 | `hermes dgm variants` | `GET /v1/control/processes` and DGM-specific endpoints | Inspect DGM-H variants and runtime state |
 | `hermes doctor` | `GET /v1/control/status` plus validation checks | Diagnose configuration and runtime issues |
 | `hermes gateway status` | `GET /v1/control/processes` | Inspect gateway process state |
@@ -78,6 +84,7 @@ Re-check status and sidecars after the change lands.
 hermes status
 hermes curator status
 hermes memory status
+hermes dream status
 ```
 
 ## When To Use The CLI Instead Of The App

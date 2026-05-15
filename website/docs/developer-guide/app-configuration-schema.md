@@ -85,6 +85,17 @@ curator:
   archive_after_days: 90
   backup:
     enabled: true
+
+dreaming:
+  enabled: true
+  interval_hours: 12
+  run_on_start: false
+  phases:
+    - light
+    - rem
+    - deep
+  promote_to_memory: true
+  write_wiki_candidates: true
 ```
 
 ### 3. Worker Profiles
@@ -166,6 +177,7 @@ The app should reject or warn on:
 
 - secrets entered directly into YAML
 - sidecar promotion without approval gates
+- dreaming runs that promote without review in production-like environments
 - worker profiles that expose unsafe tools by default
 - config changes that require a restart but were not followed by a reload/restart step
 - enabling DGM-H runtime mutation on production targets
@@ -176,6 +188,7 @@ The app should expose at least these tabs or panels:
 
 - Runtime
 - Sidecars
+- Dreaming
 - Workers
 - Memory
 - Tools
@@ -215,6 +228,11 @@ spec:
     curator:
       enabled: true
       interval_hours: 168
+    dreaming:
+      enabled: true
+      interval_hours: 12
+      run_on_start: false
+      phases: [light, rem, deep]
     dgm_h:
       enabled: false
       promotion_requires_approval: true

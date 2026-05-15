@@ -54,6 +54,11 @@ spec:
     curator:
       enabled: true
       interval_hours: 168
+    dreaming:
+      enabled: true
+      interval_hours: 12
+      run_on_start: false
+      phases: [light, rem, deep]
     dgm_h:
       enabled: false
       promotion_requires_approval: true
@@ -136,6 +141,7 @@ The control plane should refuse or warn on:
 
 - manifests that try to embed secret values directly
 - runtime changes that enable unsafe tools by default
+- dreaming changes that skip approval in production-like environments
 - DGM-H changes that allow uncontrolled production mutation
 - learning or curator changes that skip approval in production-like environments
 - worker profiles that omit sandbox boundaries

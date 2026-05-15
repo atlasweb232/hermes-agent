@@ -11,6 +11,7 @@ Hermes already exposes an OpenAI-compatible API server for chat and runs. This d
 OpenAPI fragment: [`/api/control-plane.openapi.yaml`](/api/control-plane.openapi.yaml)
 
 For the CLI mapping that mirrors this contract, see [Control Plane CLI](./control-plane-cli.md).
+For the dreaming-specific control plane, see [Dreaming Control Plane](./dreaming-control-plane.md).
 
 The control-plane API should be treated as a thin, structured layer over the same Hermes state used by:
 
@@ -74,6 +75,7 @@ Example response:
     "monitoring": {"enabled": true},
     "learning": {"enabled": true, "interval_seconds": 300},
     "curator": {"enabled": true, "interval_hours": 168},
+    "dreaming": {"enabled": true, "interval_hours": 12, "run_on_start": false},
     "dgm_h": {"enabled": false, "promotion_requires_approval": true}
   },
   "workers": {
@@ -110,6 +112,10 @@ Lists sidecars with their current state, cadence, and last run information.
 
 Lists worker profiles and active tool/sandbox policies.
 
+#### `GET /v1/control/dreaming`
+
+Returns the dreaming configuration and current dreaming state.
+
 ### Validate Desired State
 
 #### `POST /v1/control/config/preview`
@@ -129,6 +135,7 @@ Validates a proposed config patch or manifest against Hermes policy:
 
 - secret handling
 - sidecar approval rules
+- dreaming approval rules
 - worker sandbox policy
 - DGM-H runtime mutation rules
 - restart requirements
@@ -167,6 +174,22 @@ This is the preferred route for:
 - repeatable deployment
 - offline recovery
 
+#### `POST /v1/control/dreaming/run`
+
+Triggers a dreaming pass now.
+
+#### `POST /v1/control/dreaming/pause`
+
+Pauses scheduled dreaming.
+
+#### `POST /v1/control/dreaming/resume`
+
+Resumes scheduled dreaming.
+
+#### `POST /v1/control/dreaming/review`
+
+Marks a dreaming result as reviewed or approved for promotion.
+
 ### Process Control
 
 #### `POST /v1/control/processes/{name}/restart`
@@ -199,6 +222,8 @@ Events should include:
 - validation success/failure
 - apply started/completed
 - process restart/reload
+- dreaming started/completed
+- dreaming paused/resumed
 - sidecar tick
 - curator run
 - memory consolidation
@@ -246,6 +271,10 @@ The API should map cleanly to the existing CLI operations:
 - `hermes status` → `GET /v1/control/status`
 - `hermes curator status` → `GET /v1/control/sidecars`
 - `hermes memory status` → `GET /v1/control/sidecars` or a memory-specific view
+- `hermes dream status` → `GET /v1/control/dreaming`
+- `hermes dream run` → `POST /v1/control/dreaming/run`
+- `hermes dream pause` → `POST /v1/control/dreaming/pause`
+- `hermes dream resume` → `POST /v1/control/dreaming/resume`
 - `hermes dgm variants` → `GET /v1/control/processes` plus DGM-specific endpoints
 
 That mapping keeps the app, CLI, and manifests aligned on the same behavior.
