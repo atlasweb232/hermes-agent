@@ -43,6 +43,8 @@ class TestEnsureHermesHome:
             assert (tmp_path / "cron").is_dir()
             assert (tmp_path / "sessions").is_dir()
             assert (tmp_path / "logs").is_dir()
+            assert (tmp_path / "logs" / "curator").is_dir()
+            assert (tmp_path / "logs" / "dreaming").is_dir()
             assert (tmp_path / "memories").is_dir()
 
     def test_creates_default_soul_md_if_missing(self, tmp_path):
@@ -77,6 +79,10 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["sidecar"]["run_on_start"] is True
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
+            assert config["dreaming"]["enabled"] is True
+            assert config["dreaming"]["interval_hours"] == 24
+            assert config["dreaming"]["run_on_start"] is False
+            assert config["dreaming"]["phases"] == ["light", "rem", "deep"]
             tools = config["supervisor"]["tools"]["registry"]
             assert tools["exa.search"]["runtime"] == "api"
             assert "EXA_API_KEY" in tools["exa.search"]["required_secrets"]
@@ -93,6 +99,22 @@ class TestLoadConfigDefaults:
             config = load_config()
             assert config["agent"]["max_turns"] == 42
             assert "max_turns" not in config
+
+
+class TestDreamingMigration:
+    def test_version_23_upgrade_seeds_dreaming_and_logs_dir(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.safe_dump({"_config_version": 23}))
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            migrate_config(interactive=False, quiet=True)
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+        assert raw["_config_version"] == DEFAULT_CONFIG["_config_version"]
+        assert raw["dreaming"]["enabled"] is True
+        assert raw["dreaming"]["interval_hours"] == 24
+        assert raw["dreaming"]["run_on_start"] is False
+        assert (tmp_path / "logs" / "dreaming").is_dir()
 
 
 class TestSaveAndLoadRoundtrip:

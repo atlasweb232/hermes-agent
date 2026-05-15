@@ -9155,6 +9155,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "acp", "auth", "backup", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
+        "dream", "dgm",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "kanban", "login", "logout", "logs", "mcp", "memory", "model",
         "pairing", "plugins", "profile", "sessions", "setup", "skills",
@@ -10602,6 +10603,25 @@ Examples:
         _register_curator_cli(curator_parser)
     except Exception as _exc:
         logging.getLogger(__name__).debug("curator CLI wiring failed: %s", _exc)
+
+    # =========================================================================
+    # dream command — bounded post-task consolidation
+    # =========================================================================
+    dream_parser = subparsers.add_parser(
+        "dream",
+        help="Bounded post-task consolidation and review",
+        description=(
+            "Manage Hermes dreaming: a lightweight post-task consolidation "
+            "loop that can be scheduled, paused, reviewed, and later "
+            "backed by richer orchestration."
+        ),
+    )
+    try:
+        from hermes_cli.dream import register_cli as _register_dream_cli
+
+        _register_dream_cli(dream_parser)
+    except Exception as _exc:
+        logging.getLogger(__name__).debug("dream CLI wiring failed: %s", _exc)
 
     # =========================================================================
     # memory command
