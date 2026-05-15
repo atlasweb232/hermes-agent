@@ -14,6 +14,16 @@ If you want to drive Hermes from an app, dashboard, or remote control plane, do 
 
 The app should expose the config in a few clear sections instead of one giant form.
 
+## Delivery Modes
+
+The same app-facing schema should support three ways of applying changes:
+
+1. **Orchestration time** - a supervisor or control-plane job submits a config patch while planning a task or provisioning a tenant.
+2. **Later through CLI** - an operator edits config first, then applies the change with Hermes validation/status commands and a targeted restart or reload.
+3. **Through manifests** - a YAML manifest declares the desired runtime shape, and the app or orchestrator translates it into `config.yaml` and `.env` updates.
+
+These are not separate configuration systems. They are different delivery paths for the same desired state.
+
 ## Recommended Sections
 
 ### 1. Core Runtime
@@ -142,6 +152,12 @@ The app should follow this sequence:
 7. Restart or reload only the processes that need it.
 8. Confirm the updated state with `hermes status`, `hermes curator status`, `hermes memory status`, and `hermes dgm variants`.
 
+If the configuration is being applied during orchestration, the orchestration layer should stage the patch first, run validation, and only then activate the new runtime values for the job or tenant that requested them.
+
+If the configuration is being applied later through CLI, the operator flow is the same but human-driven: edit, validate, restart/reload as needed, then confirm status.
+
+If the configuration is coming from a manifest, the app should parse the manifest into the same internal schema, not bypass validation or secret handling.
+
 ## Validation Rules
 
 The app should reject or warn on:
@@ -166,3 +182,56 @@ The app should expose at least these tabs or panels:
 - Process Control
 
 That keeps the control plane understandable and makes it possible to manage Hermes without inventing a parallel config model.
+
+## Manifest Shape
+
+A manifest should be a portable declaration of the same settings the app edits in the UI.
+
+```yaml
+apiVersion: hermes/v1
+kind: RuntimeConfig
+metadata:
+  name: team-alpha
+  tenant: atlasweb
+  repo: hermes-agent
+spec:
+  runtime:
+    model:
+      default: gpt-oss-120b
+      provider: custom
+      base_url: https://api.cerebras.ai/v1
+      api_key_ref: aws-secrets://atlasweb/cerebras-api-key
+    terminal:
+      backend: ssh
+      cwd: /home/rakib/git/hermes-agent
+      timeout: 300
+      persistent_shell: true
+  sidecars:
+    learning:
+      enabled: true
+      interval_seconds: 300
+    curator:
+      enabled: true
+      interval_hours: 168
+    dgm_h:
+      enabled: false
+      promotion_requires_approval: true
+  workers:
+    docker:
+      image: nikolaik/python-nodejs:python3.11-nodejs20
+      mount_cwd_to_workspace: true
+  memory:
+    enabled: true
+    memory_char_limit: 2200
+    user_char_limit: 1375
+  apply:
+    mode: orchestration-time   # orchestration-time | cli | manifest
+    restart_policy: selective  # selective | full
+```
+
+Important rules:
+
+- `api_key_ref` is a reference, not the secret value.
+- A manifest should never be able to bypass validation.
+- Sidecar and worker changes should be applied selectively when possible.
+- DGM-H or learning-sidecar changes that affect runtime behavior should require explicit approval in production-like environments.

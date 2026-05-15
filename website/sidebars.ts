@@ -236,6 +236,7 @@ const sidebars: SidebarsConfig = {
             'developer-guide/cron-internals',
             'developer-guide/environments',
             'developer-guide/app-configuration-schema',
+            'developer-guide/orchestration-manifests',
             'developer-guide/trajectory-format',
           ],
         },
