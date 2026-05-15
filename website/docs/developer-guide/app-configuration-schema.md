@@ -158,6 +158,8 @@ If the configuration is being applied later through CLI, the operator flow is th
 
 If the configuration is coming from a manifest, the app should parse the manifest into the same internal schema, not bypass validation or secret handling.
 
+For the HTTP contract that backs these flows, see [Control Plane API](./control-plane-api.md).
+
 ## Validation Rules
 
 The app should reject or warn on:
