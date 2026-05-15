@@ -42,6 +42,8 @@ hermes config set OPENROUTER_API_KEY sk-or-...  # Saves to .env
 The `hermes config set` command automatically routes values to the right file — API keys are saved to `.env`, everything else to `config.yaml`.
 :::
 
+If you want to drive Hermes from an app or dashboard, keep that app as a thin UI over the same config files and runtime controls. Use `config.yaml` for structured settings, `.env` for secrets, and the normal Hermes validation/reload commands for safe apply flows. See [App Configuration Schema](/docs/developer-guide/app-configuration-schema) for the recommended control-plane, sidecar, and worker split.
+
 ## Configuration Precedence
 
 Settings are resolved in this order (highest priority first):
