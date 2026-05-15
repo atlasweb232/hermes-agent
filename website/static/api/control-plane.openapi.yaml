@@ -1,0 +1,311 @@
+openapi: 3.1.0
+info:
+  title: Hermes Control Plane API
+  version: 0.1.0
+  description: >
+    Structured control-plane contract for reading, validating, applying, and
+    observing Hermes config and orchestration state.
+servers:
+  - url: /v1/control
+paths:
+  /config:
+    get:
+      summary: Read current structured config state
+      operationId: getControlConfig
+      responses:
+        "200":
+          description: Current configuration snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlConfig"
+  /status:
+    get:
+      summary: Read compact runtime status
+      operationId: getControlStatus
+      responses:
+        "200":
+          description: Runtime status summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlStatus"
+  /processes:
+    get:
+      summary: List managed processes
+      operationId: listControlProcesses
+      responses:
+        "200":
+          description: Managed process list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessList"
+  /sidecars:
+    get:
+      summary: List sidecar state
+      operationId: listControlSidecars
+      responses:
+        "200":
+          description: Sidecar list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SidecarList"
+  /workers:
+    get:
+      summary: List worker profiles and tool policies
+      operationId: listControlWorkers
+      responses:
+        "200":
+          description: Worker profile list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerList"
+  /config/preview:
+    post:
+      summary: Preview a config patch or manifest
+      operationId: previewControlConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigApplyRequest"
+      responses:
+        "200":
+          description: Preview result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPreviewResponse"
+  /config/validate:
+    post:
+      summary: Validate a config patch or manifest
+      operationId: validateControlConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigApplyRequest"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResult"
+  /config/apply:
+    post:
+      summary: Apply a structured config patch
+      operationId: applyControlConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigApplyRequest"
+      responses:
+        "200":
+          description: Apply result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyResult"
+  /manifests/apply:
+    post:
+      summary: Apply a runtime manifest
+      operationId: applyControlManifest
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              $ref: "#/components/schemas/RuntimeManifest"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeManifest"
+      responses:
+        "200":
+          description: Apply result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyResult"
+  /processes/{name}/restart:
+    post:
+      summary: Restart a managed process
+      operationId: restartControlProcess
+      parameters:
+        - $ref: "#/components/parameters/ProcessName"
+      responses:
+        "200":
+          description: Restart accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /processes/{name}/reload:
+    post:
+      summary: Reload a managed process
+      operationId: reloadControlProcess
+      parameters:
+        - $ref: "#/components/parameters/ProcessName"
+      responses:
+        "200":
+          description: Reload accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /processes/{name}/stop:
+    post:
+      summary: Stop a managed process
+      operationId: stopControlProcess
+      parameters:
+        - $ref: "#/components/parameters/ProcessName"
+      responses:
+        "200":
+          description: Stop accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /processes/{name}/start:
+    post:
+      summary: Start a managed process
+      operationId: startControlProcess
+      parameters:
+        - $ref: "#/components/parameters/ProcessName"
+      responses:
+        "200":
+          description: Start accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /events:
+    get:
+      summary: Stream control-plane events
+      operationId: streamControlEvents
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ControlEvent"
+components:
+  parameters:
+    ProcessName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    ControlConfig:
+      type: object
+      additionalProperties: true
+    ControlStatus:
+      type: object
+      additionalProperties: true
+    ProcessList:
+      type: object
+      additionalProperties: true
+    SidecarList:
+      type: object
+      additionalProperties: true
+    WorkerList:
+      type: object
+      additionalProperties: true
+    ConfigApplyRequest:
+      type: object
+      required: [apply_mode]
+      properties:
+        apply_mode:
+          type: string
+          enum: [orchestration-time, cli, manifest]
+        restart_policy:
+          type: string
+          enum: [selective, full]
+        scope:
+          type: string
+          enum: [profile, tenant, repo, job]
+        patch:
+          type: object
+          additionalProperties: true
+        manifest:
+          $ref: "#/components/schemas/RuntimeManifest"
+    ConfigPreviewResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        diff:
+          type: object
+          additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+        errors:
+          type: array
+          items:
+            type: string
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+        errors:
+          type: array
+          items:
+            type: string
+    ApplyResult:
+      type: object
+      properties:
+        applied:
+          type: boolean
+        restart_policy:
+          type: string
+        changed:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    ActionResult:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+        name:
+          type: string
+        action:
+          type: string
+    ControlEvent:
+      type: object
+      additionalProperties: true
+    RuntimeManifest:
+      type: object
+      required: [apiVersion, kind, spec]
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        spec:
+          type: object
+          additionalProperties: true

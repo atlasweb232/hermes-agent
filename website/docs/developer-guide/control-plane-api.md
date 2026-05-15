@@ -8,6 +8,8 @@ description: "A control-plane contract for reading, validating, applying, and ob
 
 Hermes already exposes an OpenAI-compatible API server for chat and runs. This document defines the **control-plane** surface for apps, orchestrators, and manifest-driven automation that need to manage runtime config, sidecars, workers, and processes.
 
+OpenAPI fragment: [`/api/control-plane.openapi.yaml`](/api/control-plane.openapi.yaml)
+
 The control-plane API should be treated as a thin, structured layer over the same Hermes state used by:
 
 - `~/.hermes/config.yaml`
