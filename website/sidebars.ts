@@ -238,6 +238,7 @@ const sidebars: SidebarsConfig = {
             'developer-guide/app-configuration-schema',
             'developer-guide/orchestration-manifests',
             'developer-guide/control-plane-api',
+            'developer-guide/control-plane-cli',
             'developer-guide/trajectory-format',
           ],
         },

@@ -10,6 +10,8 @@ Hermes already exposes an OpenAI-compatible API server for chat and runs. This d
 
 OpenAPI fragment: [`/api/control-plane.openapi.yaml`](/api/control-plane.openapi.yaml)
 
+For the CLI mapping that mirrors this contract, see [Control Plane CLI](./control-plane-cli.md).
+
 The control-plane API should be treated as a thin, structured layer over the same Hermes state used by:
 
 - `~/.hermes/config.yaml`
