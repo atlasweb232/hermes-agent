@@ -621,6 +621,24 @@ DEFAULT_CONFIG = {
             # How many recent runs to include in the learning monitor rollup.
             "recent_runs": 20,
         },
+        "completion_gate": {
+            "enabled": True,
+            # Run deterministic repository validators after delegate_task so
+            # worker prose cannot be treated as proof of completion.
+            "run_after_delegate_task": True,
+            # If no git repository can be inferred from the task text/current
+            # workspace, skip the gate instead of blocking ordinary chats.
+            "fail_on_missing_repo": False,
+            "required_checks": [
+                "git_unmerged_paths",
+                "conflict_markers",
+                "diff_check",
+            ],
+            # Optional project-specific validators, for example:
+            # ["dotnet build atlas-email-desktop/src/AtlasDesktop/AtlasDesktop.csproj"]
+            "build_commands": [],
+            "max_output_chars": 8000,
+        },
     },
     
     "terminal": {
