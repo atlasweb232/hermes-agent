@@ -1352,6 +1352,7 @@ class AIAgent:
         self._delegate_depth = 0        # 0 = top-level agent, incremented for children
         self._active_children = []      # Running child AIAgents (for interrupt propagation)
         self._active_children_lock = threading.Lock()
+        self._last_completion_gate = None
         
         # Store OpenRouter provider preferences
         self.providers_allowed = providers_allowed
@@ -10233,7 +10234,7 @@ class AIAgent:
         invocation paths (concurrent, sequential, inline).
         """
         from tools.delegate_tool import delegate_task as _delegate_task
-        return _delegate_task(
+        delegate_result = _delegate_task(
             goal=function_args.get("goal"),
             context=function_args.get("context"),
             toolsets=function_args.get("toolsets"),
@@ -10244,6 +10245,47 @@ class AIAgent:
             role=function_args.get("role"),
             parent_agent=self,
         )
+        try:
+            from hermes_cli.completion_gate import (
+                append_gate_to_delegate_payload,
+                load_completion_gate_config,
+                resolve_repo_path_from_texts,
+                run_completion_gate,
+            )
+            from hermes_cli.config import load_config
+
+            config = load_config()
+            gate_config = load_completion_gate_config(config)
+            if not gate_config.get("run_after_delegate_task", True):
+                return delegate_result
+            repo_path = resolve_repo_path_from_texts(
+                [
+                    function_args.get("goal"),
+                    function_args.get("context"),
+                    json.dumps(function_args.get("tasks"), ensure_ascii=False)
+                    if function_args.get("tasks") is not None
+                    else None,
+                ],
+                cwd=os.getenv("TERMINAL_CWD") or os.getcwd(),
+            )
+            gate = run_completion_gate(repo_path=repo_path, config=config)
+            self._last_completion_gate = gate
+            return append_gate_to_delegate_payload(delegate_result, gate)
+        except Exception:
+            logger.debug("completion gate after delegate_task failed", exc_info=True)
+            return delegate_result
+
+    def _apply_completion_gate_to_final_response(self, final_response: str) -> str:
+        try:
+            from hermes_cli.completion_gate import enforce_final_response_gate
+
+            return enforce_final_response_gate(
+                final_response,
+                getattr(self, "_last_completion_gate", None),
+            )
+        except Exception:
+            logger.debug("completion gate final-response guard failed", exc_info=True)
+            return final_response
 
     def _invoke_tool(self, function_name: str, function_args: dict, effective_task_id: str,
                      tool_call_id: Optional[str] = None, messages: list = None,
@@ -11438,6 +11480,8 @@ class AIAgent:
         # Guard stdio against OSError from broken pipes (systemd/headless/daemon).
         # Installed once, transparent when streams are healthy, prevents crash on write.
         _install_safe_stdio()
+
+        self._last_completion_gate = None
 
         self._ensure_db_session()
 
@@ -14959,9 +15003,21 @@ class AIAgent:
                     "— requesting summary..."
                 )
             final_response = self._handle_max_iterations(messages, api_call_count)
+
+        if final_response is not None:
+            _pre_gate_final_response = final_response
+            final_response = self._apply_completion_gate_to_final_response(final_response)
+            if final_response != _pre_gate_final_response:
+                for _msg in reversed(messages):
+                    if _msg.get("role") == "assistant" and not _msg.get("tool_calls"):
+                        _msg["content"] = final_response
+                        break
         
         # Determine if conversation completed successfully
         completed = final_response is not None and api_call_count < self.max_iterations
+        _gate = getattr(self, "_last_completion_gate", None)
+        if _gate is not None and getattr(_gate, "enabled", False) and getattr(_gate, "status", "") == "blocked":
+            completed = False
 
         # Save trajectory if enabled.  ``user_message`` may be a multimodal
         # list of parts; the trajectory format wants a plain string.
@@ -15107,6 +15163,11 @@ class AIAgent:
         }
         if self._tool_guardrail_halt_decision is not None:
             result["guardrail"] = self._tool_guardrail_halt_decision.to_metadata()
+        if _gate is not None:
+            try:
+                result["completion_gate"] = _gate.to_dict()
+            except Exception:
+                pass
         # If a /steer landed after the final assistant turn (no more tool
         # batches to drain into), hand it back to the caller so it can be
         # delivered as the next user turn instead of being silently lost.
