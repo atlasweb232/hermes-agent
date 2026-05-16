@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes Learning Sidecar
+After=network-online.target hermes-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rakib/.hermes/hermes-agent
+Environment=HERMES_HOME=/home/rakib/.hermes
+Environment=VIRTUAL_ENV=/home/rakib/.hermes/hermes-agent/venv
+Environment=PATH=/home/rakib/.hermes/hermes-agent/venv/bin:/home/rakib/.hermes/hermes-agent/node_modules/.bin:/home/rakib/.npm-global/bin:/home/rakib/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/rakib/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main memory sidecar --interval 300
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
