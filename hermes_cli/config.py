@@ -639,6 +639,20 @@ DEFAULT_CONFIG = {
             "build_commands": [],
             "max_output_chars": 8000,
         },
+        # Offline curator role. This is independent from the primary chat
+        # model and worker models. Curator output is advisory unless a
+        # deterministic validator and approval step promote it.
+        "curator": {
+            "enabled": True,
+            "provider": "ollama",
+            "model": "gemma2:2b",
+            "base_url": "http://127.0.0.1:11434",
+            "mode": "advisory",
+            "approval_required": True,
+            "timeout_seconds": 120,
+            "max_records": 10,
+            "min_score": 0.5,
+        },
     },
     
     "terminal": {

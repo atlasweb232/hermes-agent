@@ -14,6 +14,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+import json
 
 
 def _fmt_ts(ts: Optional[str]) -> str:
@@ -215,6 +216,126 @@ def _cmd_run(args) -> int:
                 "`hermes curator status` and run `hermes curator run` (no flag) to apply."
             )
     return 0
+
+
+def _cmd_config(args) -> int:
+    from hermes_cli.config import load_config
+    from hermes_cli.curator_runtime import load_curator_config
+
+    cfg = load_curator_config(load_config())
+    if getattr(args, "json", False):
+        print(json.dumps(cfg.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+    print("curator model role:")
+    print(f"  enabled:           {cfg.enabled}")
+    print(f"  provider:          {cfg.provider}")
+    print(f"  model:             {cfg.model}")
+    print(f"  base_url:          {cfg.base_url or '(provider default)'}")
+    print(f"  mode:              {cfg.mode}")
+    print(f"  approval_required: {cfg.approval_required}")
+    print(f"  timeout_seconds:   {cfg.timeout_seconds:g}")
+    print(f"  max_records:       {cfg.max_records}")
+    print(f"  min_score:         {cfg.min_score:g}")
+    print()
+    print("set with: hermes curator model --provider ollama --model gemma2:2b --base-url http://127.0.0.1:11434")
+    return 0
+
+
+def _cmd_model(args) -> int:
+    from hermes_cli.config import load_config, save_config
+
+    config = load_config()
+    supervisor = config.setdefault("supervisor", {})
+    if not isinstance(supervisor, dict):
+        supervisor = {}
+        config["supervisor"] = supervisor
+    curator = supervisor.setdefault("curator", {})
+    if not isinstance(curator, dict):
+        curator = {}
+        supervisor["curator"] = curator
+
+    provider = getattr(args, "provider", None)
+    model = getattr(args, "model", None)
+    base_url = getattr(args, "base_url", None)
+    enabled = getattr(args, "enabled", None)
+    timeout = getattr(args, "timeout", None)
+
+    if provider:
+        curator["provider"] = provider
+    if model:
+        curator["model"] = model
+    if base_url is not None:
+        curator["base_url"] = base_url
+    if enabled is not None:
+        curator["enabled"] = bool(enabled)
+    if timeout is not None:
+        curator["timeout_seconds"] = float(timeout)
+
+    if not any(value is not None for value in (provider, model, base_url, enabled, timeout)):
+        print("curator provider presets:")
+        print("  ollama:   hermes curator model --provider ollama --model gemma2:2b --base-url http://127.0.0.1:11434")
+        print("  cerebras: hermes curator model --provider custom --model gpt-oss-120b --base-url https://api.cerebras.ai/v1")
+        print("  codex:    hermes curator model --provider codex --model codex")
+        print("  deepseek: hermes curator model --provider custom --model deepseek/deepseek-v4-pro --base-url <openai-compatible-url>")
+        return 0
+
+    save_config(config)
+    print("curator model updated")
+    return _cmd_config(args)
+
+
+def _cmd_test(args) -> int:
+    from hermes_cli.config import load_config
+    from hermes_cli.curator_runtime import call_curator_model, load_curator_config
+
+    cfg = load_curator_config(load_config())
+    prompt = getattr(args, "prompt", None) or "Reply with only: curator-ok"
+    try:
+        output = call_curator_model(cfg, prompt)
+    except Exception as exc:
+        print(f"curator test failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": True, "output": output, "config": cfg.to_dict()}, indent=2, ensure_ascii=False))
+    else:
+        print(output)
+    return 0
+
+
+def _cmd_policy_run(args) -> int:
+    from hermes_cli.config import load_config
+    from hermes_cli.curator_runtime import run_curator_policy_pass
+    from hermes_state import SessionDB
+
+    config = load_config()
+    db = SessionDB()
+    try:
+        result = run_curator_policy_pass(
+            db,
+            config=config,
+            tenant_id=getattr(args, "tenant_id", "") or None,
+            repo_id=getattr(args, "repo_id", "") or None,
+        )
+    finally:
+        db.close()
+    if getattr(args, "json", False):
+        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+        return 0 if result.status in {"completed", "disabled"} else 1
+    print(f"curator policy pass: {result.status}")
+    print(f"  records scanned:    {result.records_scanned}")
+    print(f"  candidates created: {result.candidates_created}")
+    for candidate in result.candidates:
+        print(
+            f"  - {candidate.candidate_id} [{candidate.validation.status}] "
+            f"score={candidate.score:g} {candidate.claim}"
+        )
+        for warning in candidate.validation.warnings:
+            print(f"      warning: {warning.get('code')} - {warning.get('reason')}")
+        for error in candidate.validation.errors:
+            print(f"      error: {error.get('code')} - {error.get('reason')}")
+    for error in result.errors:
+        print(f"  error: {error}")
+    return 0 if result.status in {"completed", "disabled"} else 1
 
 
 def _cmd_pause(args) -> int:
@@ -485,6 +606,33 @@ def register_cli(parent: argparse.ArgumentParser) -> None:
     """
     parent.set_defaults(func=lambda a: (parent.print_help(), 0)[1])
     subs = parent.add_subparsers(dest="curator_command")
+
+    p_config = subs.add_parser("config", help="Show curator model-role configuration")
+    p_config.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    p_config.set_defaults(func=_cmd_config)
+
+    p_model = subs.add_parser("model", help="Configure the curator model/provider")
+    p_model.add_argument("--provider", help="Curator provider, e.g. ollama, custom, codex")
+    p_model.add_argument("--model", help="Curator model name")
+    p_model.add_argument("--base-url", dest="base_url", help="Provider base URL")
+    p_model.add_argument("--timeout", type=float, help="Curator request timeout in seconds")
+    p_model.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
+    p_model.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    p_model.set_defaults(func=_cmd_model)
+
+    p_test = subs.add_parser("test", help="Run a one-shot curator model smoke test")
+    p_test.add_argument("--prompt", default=None, help="Prompt to send to the curator model")
+    p_test.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    p_test.set_defaults(func=_cmd_test)
+
+    p_policy = subs.add_parser(
+        "policy-run",
+        help="Generate advisory command-repair policy candidates from runtime lessons",
+    )
+    p_policy.add_argument("--tenant-id", default="", help="Tenant scope")
+    p_policy.add_argument("--repo-id", default="", help="Repository scope")
+    p_policy.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    p_policy.set_defaults(func=_cmd_policy_run)
 
     p_status = subs.add_parser("status", help="Show curator status and skill stats")
     p_status.set_defaults(func=_cmd_status)
