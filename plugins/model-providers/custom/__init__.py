@@ -12,6 +12,11 @@ from providers import register_provider
 from providers.base import ProviderProfile
 
 
+def _is_cerebras_base_url(base_url: Any) -> bool:
+    normalized = str(base_url or "").strip().rstrip("/").lower()
+    return "api.cerebras.ai" in normalized
+
+
 class CustomProfile(ProviderProfile):
     """Custom/Ollama local provider — think=false and num_ctx support."""
 
@@ -29,6 +34,12 @@ class CustomProfile(ProviderProfile):
             options = extra_body.get("options", {})
             options["num_ctx"] = ollama_num_ctx
             extra_body["options"] = options
+
+        # Cerebras rejects any ``think`` field outright, even when reasoning
+        # is disabled. Keep the generic custom provider behavior for local
+        # Ollama-like endpoints, but suppress the field for Cerebras.
+        if _is_cerebras_base_url(ctx.get("base_url")):
+            return extra_body, {}
 
         # Disable thinking when reasoning is turned off
         if reasoning_config and isinstance(reasoning_config, dict):

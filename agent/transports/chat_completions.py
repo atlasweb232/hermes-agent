@@ -99,6 +99,13 @@ def _is_gemini_openai_compat_base_url(base_url: Any) -> bool:
     return normalized.endswith("/openai")
 
 
+def _is_cerebras_openai_compat_base_url(base_url: Any) -> bool:
+    normalized = str(base_url or "").strip().rstrip("/").lower()
+    if not normalized:
+        return False
+    return "api.cerebras.ai" in normalized
+
+
 class ChatCompletionsTransport(ProviderTransport):
     """Transport for api_mode='chat_completions'.
 
@@ -112,17 +119,26 @@ class ChatCompletionsTransport(ProviderTransport):
     def convert_messages(
         self, messages: list[dict[str, Any]], **kwargs
     ) -> list[dict[str, Any]]:
-        """Messages are already in OpenAI format — sanitize Codex leaks only.
+        """Messages are already in OpenAI format — sanitize provider leaks.
 
         Strips Codex Responses API fields (``codex_reasoning_items`` /
         ``codex_message_items`` on the message, ``call_id``/``response_item_id``
         on tool_calls) that strict chat-completions providers reject with 400/422.
+        For Cerebras, also strips Hermes reasoning metadata because the
+        OpenAI-compatible endpoint rejects ``reasoning_content`` and friends.
         """
+        base_url = kwargs.get("base_url")
+        is_cerebras = _is_cerebras_openai_compat_base_url(base_url)
+
         needs_sanitize = False
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
-            if "codex_reasoning_items" in msg or "codex_message_items" in msg:
+            if (
+                "codex_reasoning_items" in msg
+                or "codex_message_items" in msg
+                or (is_cerebras and any(k in msg for k in ("reasoning", "reasoning_content", "reasoning_details")))
+            ):
                 needs_sanitize = True
                 break
             tool_calls = msg.get("tool_calls")
@@ -145,6 +161,10 @@ class ChatCompletionsTransport(ProviderTransport):
                 continue
             msg.pop("codex_reasoning_items", None)
             msg.pop("codex_message_items", None)
+            if is_cerebras:
+                msg.pop("reasoning", None)
+                msg.pop("reasoning_content", None)
+                msg.pop("reasoning_details", None)
             tool_calls = msg.get("tool_calls")
             if isinstance(tool_calls, list):
                 for tc in tool_calls:
@@ -209,7 +229,7 @@ class ChatCompletionsTransport(ProviderTransport):
             extra_body_additions: dict | None
         """
         # Codex sanitization: drop reasoning_items / call_id / response_item_id
-        sanitized = self.convert_messages(messages)
+        sanitized = self.convert_messages(messages, base_url=params.get("base_url"))
 
         # ── Provider profile: single-path when present ──────────────────
         _profile = params.get("provider_profile")
@@ -350,7 +370,11 @@ class ChatCompletionsTransport(ProviderTransport):
 
         # Reasoning. LM Studio is handled above via top-level reasoning_effort,
         # so skip emitting extra_body.reasoning for it.
-        if params.get("supports_reasoning", False) and not params.get("is_lmstudio", False):
+        if (
+            params.get("supports_reasoning", False)
+            and not params.get("is_lmstudio", False)
+            and not _is_cerebras_openai_compat_base_url(base_url)
+        ):
             if is_github_models:
                 gh_reasoning = params.get("github_reasoning_extra")
                 if gh_reasoning is not None:
@@ -462,6 +486,7 @@ class ChatCompletionsTransport(ProviderTransport):
                 supports_reasoning=params.get("supports_reasoning", False),
                 qwen_session_metadata=params.get("qwen_session_metadata"),
                 model=model,
+                base_url=params.get("base_url"),
                 ollama_num_ctx=params.get("ollama_num_ctx"),
                 session_id=params.get("session_id"),
             )

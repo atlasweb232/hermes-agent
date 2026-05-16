@@ -257,3 +257,37 @@ class TestCustomOllamaParity:
             reasoning_config={"enabled": False, "effort": "none"},
         )
         assert kw["extra_body"]["think"] is False
+
+    def test_cerebras_skips_think_field(self, transport):
+        kw = transport.build_kwargs(
+            model="gpt-oss-120b",
+            messages=_simple_messages(),
+            tools=None,
+            provider_profile=get_provider_profile("custom"),
+            reasoning_config={"enabled": False, "effort": "none"},
+            base_url="https://api.cerebras.ai/v1",
+        )
+        assert "think" not in kw.get("extra_body", {})
+
+
+    def test_cerebras_strips_reasoning_metadata(self, transport):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "hello",
+                "reasoning_content": "internal notes",
+                "reasoning": "internal notes",
+                "reasoning_details": [{"type": "summary", "summary": "internal notes"}],
+            },
+        ]
+        kw = transport.build_kwargs(
+            model="gpt-oss-120b",
+            messages=messages,
+            tools=None,
+            provider_profile=get_provider_profile("custom"),
+            base_url="https://api.cerebras.ai/v1",
+        )
+        assert "reasoning_content" not in kw["messages"][1]
+        assert "reasoning" not in kw["messages"][1]
+        assert "reasoning_details" not in kw["messages"][1]
