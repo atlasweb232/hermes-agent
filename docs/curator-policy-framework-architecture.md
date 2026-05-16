@@ -48,8 +48,7 @@ Codex runs as an external advisory worker:
 
 ```bash
 codex exec --skip-git-repo-check --sandbox read-only \
-  --ask-for-approval never --ignore-rules \
-  --output-last-message <tmpfile> -
+  --ignore-rules --output-last-message <tmpfile> -
 ```
 
 The prompt is passed on stdin. The final response is read from the temp file so

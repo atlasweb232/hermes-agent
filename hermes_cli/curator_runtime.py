@@ -214,8 +214,6 @@ def _call_codex(
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
             "--ignore-rules",
             "--output-last-message",
             str(output_path),

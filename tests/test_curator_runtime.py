@@ -119,6 +119,6 @@ def test_codex_curator_adapter_uses_read_only_exec(monkeypatch):
     assert "--skip-git-repo-check" in cmd
     assert "--ignore-rules" in cmd
     assert cmd[cmd.index("--sandbox") + 1] == "read-only"
-    assert cmd[cmd.index("--ask-for-approval") + 1] == "never"
+    assert "--ask-for-approval" not in cmd
     assert cmd[-1] == "-"
     assert kwargs["input"] == "structured evidence"
