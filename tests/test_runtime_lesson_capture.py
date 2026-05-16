@@ -75,6 +75,31 @@ def test_observer_does_not_emit_without_successful_alternative():
     ) is None
 
 
+def test_observer_counts_hermes_worker_router_wrapper_failures():
+    observer = RuntimeLessonObserver(min_failures=3)
+    for command in (
+        'hermes worker-router claude "two plus two"',
+        'worker-router claude "two plus two"',
+        'hermes worker-router claude --help',
+    ):
+        assert observer.observe(
+            ToolOutcome(tool_name="terminal", command=command, failed=True)
+        ) is None
+
+    lesson = observer.observe(
+        ToolOutcome(
+            tool_name="terminal",
+            command='claude -p "two plus two" --model sonnet',
+            failed=False,
+            result_excerpt="4",
+        )
+    )
+
+    assert lesson is not None
+    assert lesson.evidence["failure_count"] == 3
+    assert lesson.evidence["working_command"] == 'claude -p "two plus two" --model sonnet'
+
+
 def test_persist_runtime_lesson_writes_memory_and_candidate(tmp_path):
     observer = RuntimeLessonObserver(min_failures=1)
     observer.observe(

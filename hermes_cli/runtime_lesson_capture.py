@@ -94,7 +94,14 @@ def _command_tokens(command: str) -> list[str]:
 
 def _is_failed_claude_router(command: str) -> bool:
     tokens = _command_tokens(command)
-    return len(tokens) >= 2 and tokens[0] == "worker-router" and tokens[1] == "claude"
+    if len(tokens) >= 2 and tokens[0] == "worker-router" and tokens[1] == "claude":
+        return True
+    return (
+        len(tokens) >= 3
+        and tokens[0] == "hermes"
+        and tokens[1] == "worker-router"
+        and tokens[2] == "claude"
+    )
 
 
 def _is_successful_direct_claude(command: str) -> bool:
