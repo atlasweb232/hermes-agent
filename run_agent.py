@@ -10822,6 +10822,53 @@ class AIAgent:
             logger.debug("completion gate final-response guard failed", exc_info=True)
             return final_response
 
+    def _observe_runtime_lesson(
+        self,
+        function_name: str,
+        function_args: dict,
+        function_result,
+        failed: bool,
+    ):
+        """Capture deterministic runtime lessons from observed tool outcomes."""
+        try:
+            if function_name != "terminal":
+                return function_result
+            command = str(function_args.get("command") or "").strip()
+            if not command:
+                return function_result
+            from hermes_cli.runtime_lesson_capture import (
+                RuntimeLessonObserver,
+                ToolOutcome,
+                append_lesson_capture_note,
+                persist_runtime_lesson,
+                redact_sensitive_text,
+            )
+            from hermes_state import SessionDB
+
+            observer = getattr(self, "_runtime_lesson_observer", None)
+            if observer is None:
+                observer = RuntimeLessonObserver()
+                self._runtime_lesson_observer = observer
+            lesson = observer.observe(
+                ToolOutcome(
+                    tool_name=function_name,
+                    command=command,
+                    failed=bool(failed),
+                    result_excerpt=redact_sensitive_text(str(function_result or ""), max_chars=800),
+                    session_id=getattr(self, "session_id", None),
+                    cwd=str(function_args.get("workdir") or os.getenv("TERMINAL_CWD") or os.getcwd()),
+                )
+            )
+            if lesson is None:
+                return function_result
+            db = getattr(self, "_session_db", None) or SessionDB()
+            capture = persist_runtime_lesson(db, lesson)
+            self._last_runtime_lesson_capture = capture
+            return append_lesson_capture_note(function_result, capture)
+        except Exception:
+            logger.debug("runtime lesson capture failed", exc_info=True)
+            return function_result
+
     def _invoke_tool(self, function_name: str, function_args: dict, effective_task_id: str,
                      tool_call_id: Optional[str] = None, messages: list = None,
                      pre_tool_block_checked: bool = False) -> str:
@@ -11255,6 +11302,9 @@ class AIAgent:
                         )
                     except Exception as _ver_err:
                         logging.debug("file-mutation verifier record failed: %s", _ver_err)
+                    function_result = self._observe_runtime_lesson(
+                        function_name, function_args, function_result, is_error,
+                    )
 
                 if not blocked and self.tool_progress_callback:
                     try:
@@ -11689,6 +11739,9 @@ class AIAgent:
                     )
                 except Exception as _ver_err:
                     logging.debug("file-mutation verifier record failed: %s", _ver_err)
+                function_result = self._observe_runtime_lesson(
+                    function_name, function_args, function_result, _is_error_result,
+                )
 
             if not _execution_blocked and self.tool_progress_callback:
                 try:

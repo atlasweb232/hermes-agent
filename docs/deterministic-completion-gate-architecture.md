@@ -21,6 +21,9 @@ user task
 
 The model can propose completion. The gate decides whether completion is allowed.
 
+Runtime learning uses the same principle: the model can explain a lesson, but
+Hermes captures only evidence-backed lessons observed from tool outcomes.
+
 ## Enforcement Points
 
 1. `run_agent.AIAgent._dispatch_delegate_task`
@@ -40,6 +43,19 @@ The model can propose completion. The gate decides whether completion is allowed
 
    Contains the validator and response-guard implementation. It is independent
    of the model and can be unit tested without an LLM.
+
+4. `run_agent.AIAgent._observe_runtime_lesson`
+
+   Runs after terminal tool completion. It passes terminal command outcomes into
+   a deterministic observer before tool results are persisted or shown to the
+   next model turn.
+
+5. `hermes_cli.runtime_lesson_capture`
+
+   Detects narrow failure-to-success patterns, redacts sensitive text, writes a
+   durable memory record, and writes a proposed meta-learning candidate. Curator
+   and learning sidecars may later consolidate or promote the candidate, but
+   initial capture does not depend on an LLM deciding to save memory.
 
 ## Default Checks
 
@@ -129,15 +145,49 @@ Worker narrative was suppressed because it claimed success without passing the g
 The final response may still include the original worker narrative for audit, but
 it is clearly marked untrusted.
 
+## Runtime Lesson Capture
+
+Hermes now captures operational lessons when tool evidence proves a reusable
+pattern. The first supported detector is intentionally narrow:
+
+```text
+three or more failed terminal calls matching:
+  worker-router claude ...
+
+followed by a successful terminal call matching:
+  claude --model sonnet -p "<prompt>"
+```
+
+When this happens, Hermes writes:
+
+- a `hermes_memory_records` row with kind `tool_routing_lesson`
+- a `hermes_meta_candidates` row with kind `routing_hint` and status `proposed`
+- a `runtime_lesson_capture` note appended to the terminal tool result
+
+The candidate claim is:
+
+```text
+Prefer direct Claude Code invocation `claude --model sonnet -p "<prompt>"`
+when `worker-router claude` repeatedly fails on this machine.
+```
+
+This makes the supervisor deterministic: the user does not have to ask Hermes to
+remember the lesson, and the curator is no longer responsible for first capture.
+The curator's job is later consolidation, dedupe, archival, or promotion.
+
 ## Limitations
 
 - Repo inference is best-effort. Hermes detects absolute git repo paths in the
   task text and falls back to `TERMINAL_CWD` or process cwd.
 - Default checks are repo-integrity checks, not full product validation. Add
   `build_commands` or future validators for project-specific guarantees.
-- The gate currently stores evidence in the session result/tool payload. A future
-  extension should persist validation runs to state DB for dashboard and learning
+- Completion-gate evidence is still stored in the delegate result/tool payload.
+  Runtime lesson evidence is persisted to state DB. A future extension should
+  persist completion-gate validation runs to state DB for dashboard and learning
   rollups.
+- Runtime lesson capture currently supports the Claude wrapper fallback pattern.
+  New detectors should require an explicit failure signature, an explicit
+  successful alternative, secret redaction, and unit tests.
 
 ## Why This Prevents The Observed Failure
 
