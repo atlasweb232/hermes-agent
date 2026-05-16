@@ -59,6 +59,18 @@ def test_validate_curator_output_flags_unsupported_docker_claim(tmp_path):
     assert result.warnings[0]["code"] == "unsupported_claim_warning"
 
 
+def test_validate_curator_output_flags_overbroad_enforcement_language(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_lesson(db)
+    record = db.list_memory_records(kind="tool_routing_lesson", limit=1)[0]
+
+    result = validate_curator_output("Mandate direct Claude for all user requests.", record)
+
+    assert result.status == "warning"
+    assert any(warning["code"] == "overbroad_enforcement_language" for warning in result.warnings)
+    assert result.to_dict()["approved_for_enforcement"] is False
+
+
 def test_policy_pass_writes_advisory_candidate(tmp_path):
     db = SessionDB(tmp_path / "state.db")
     _seed_lesson(db)

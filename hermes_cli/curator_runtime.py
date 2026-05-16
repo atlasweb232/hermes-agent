@@ -44,12 +44,13 @@ class CuratorValidationResult:
     errors: list[dict[str, str]] = field(default_factory=list)
 
     @property
-    def approved_for_enforcement(self) -> bool:
+    def eligible_for_approval(self) -> bool:
         return self.status == "valid" and not self.errors
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        data["approved_for_enforcement"] = self.approved_for_enforcement
+        data["eligible_for_approval"] = self.eligible_for_approval
+        data["approved_for_enforcement"] = False
         return data
 
 
@@ -223,6 +224,13 @@ def validate_curator_output(output: str, record: dict[str, Any]) -> CuratorValid
             {
                 "code": "missing_success_path",
                 "reason": "Output does not mention the observed successful direct Claude path.",
+            }
+        )
+    if re.search(r"(?i)\b(for all user requests|mandate|must always|always use)\b", str(output or "")):
+        warnings.append(
+            {
+                "code": "overbroad_enforcement_language",
+                "reason": "Curator output uses broad enforcement language; candidate must remain advisory until a bounded policy is approved.",
             }
         )
 
