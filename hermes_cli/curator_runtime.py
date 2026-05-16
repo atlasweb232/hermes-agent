@@ -12,9 +12,12 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 
@@ -135,11 +138,12 @@ def call_curator_model(curator_config: CuratorConfig, prompt: str) -> str:
         return _call_ollama(curator_config, prompt)
     if provider in {"custom", "openai-compatible", "openai_compatible", "cerebras"}:
         return _call_openai_compatible(curator_config, prompt)
-    if provider in {"codex", "openai-codex", "deepseek"}:
+    if provider in {"codex", "openai-codex"}:
+        return _call_codex(curator_config, prompt)
+    if provider == "deepseek":
         raise RuntimeError(
-            f"curator provider '{curator_config.provider}' is configurable but "
-            "does not have an in-process adapter yet; use provider=custom with "
-            "an OpenAI-compatible base_url or run it via a worker integration."
+            "curator provider 'deepseek' should be configured as provider=custom "
+            "with an OpenAI-compatible base_url."
         )
     raise RuntimeError(f"unsupported curator provider: {curator_config.provider}")
 
@@ -187,6 +191,61 @@ def _call_openai_compatible(curator_config: CuratorConfig, prompt: str) -> str:
         return ""
     message = choices[0].get("message") if isinstance(choices[0], dict) else {}
     return str((message or {}).get("content") or "").strip()
+
+
+def _call_codex(
+    curator_config: CuratorConfig,
+    prompt: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    """Run Codex as an external advisory curator worker.
+
+    Codex is launched in read-only, non-interactive mode. It receives only the
+    structured curator prompt on stdin and writes the final response to a temp
+    file so logs/events on stdout do not contaminate the candidate text.
+    """
+    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as tmp:
+        output_path = Path(tmp.name)
+    try:
+        cmd = [
+            "codex",
+            "exec",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--ask-for-approval",
+            "never",
+            "--ignore-rules",
+            "--output-last-message",
+            str(output_path),
+        ]
+        if curator_config.model and curator_config.model not in {"codex", "default", "auto"}:
+            cmd.extend(["--model", curator_config.model])
+        cmd.append("-")
+        completed = runner(
+            cmd,
+            input=prompt,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=curator_config.timeout_seconds,
+            check=False,
+        )
+        output = ""
+        if output_path.exists():
+            output = output_path.read_text(encoding="utf-8").strip()
+        if completed.returncode != 0:
+            stderr = (completed.stderr or "").strip()
+            stdout = (completed.stdout or "").strip()
+            detail = stderr or stdout or f"exit code {completed.returncode}"
+            raise RuntimeError(f"codex curator failed: {detail[:1000]}")
+        return output or (completed.stdout or "").strip()
+    finally:
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def validate_curator_output(output: str, record: dict[str, Any]) -> CuratorValidationResult:

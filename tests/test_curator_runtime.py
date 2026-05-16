@@ -1,10 +1,13 @@
 from hermes_cli.curator_runtime import (
     build_command_repair_prompt,
+    _call_codex,
     load_curator_config,
     run_curator_policy_pass,
     validate_curator_output,
+    CuratorConfig,
 )
 from hermes_state import SessionDB
+import subprocess
 
 
 def _seed_lesson(db):
@@ -92,3 +95,30 @@ def test_policy_pass_writes_advisory_candidate(tmp_path):
     assert rows[0]["status"] == "proposed"
     assert rows[0]["evidence_json"]["mode"] == "advisory"
     assert rows[0]["evidence_json"]["validation"]["status"] == "valid"
+
+
+def test_codex_curator_adapter_uses_read_only_exec(monkeypatch):
+    calls = []
+
+    def fake_runner(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        output_path = cmd[cmd.index("--output-last-message") + 1]
+        with open(output_path, "w", encoding="utf-8") as fh:
+            fh.write("codex candidate")
+        return subprocess.CompletedProcess(cmd, 0, stdout="event output", stderr="")
+
+    output = _call_codex(
+        CuratorConfig(provider="codex", model="codex", timeout_seconds=3),
+        "structured evidence",
+        runner=fake_runner,
+    )
+
+    assert output == "codex candidate"
+    cmd, kwargs = calls[0]
+    assert cmd[:2] == ["codex", "exec"]
+    assert "--skip-git-repo-check" in cmd
+    assert "--ignore-rules" in cmd
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+    assert cmd[cmd.index("--ask-for-approval") + 1] == "never"
+    assert cmd[-1] == "-"
+    assert kwargs["input"] == "structured evidence"

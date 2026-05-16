@@ -36,17 +36,27 @@ supervisor:
 Initial supported runtime adapter:
 
 - `ollama` via `POST /api/generate`
+- `codex` via non-interactive `codex exec`
 
 Framework placeholders:
 
 - `custom` / OpenAI-compatible endpoint
-- `codex`
 - `deepseek`
 - Cerebras `gpt-oss-120b` via OpenAI-compatible `base_url`
 
-Codex and DeepSeek are explicit configuration choices, but in-process adapters
-are intentionally not auto-wired yet. They should be added as worker-backed
-curator providers or OpenAI-compatible clients with explicit authentication.
+Codex runs as an external advisory worker:
+
+```bash
+codex exec --skip-git-repo-check --sandbox read-only \
+  --ask-for-approval never --ignore-rules \
+  --output-last-message <tmpfile> -
+```
+
+The prompt is passed on stdin. The final response is read from the temp file so
+Codex event output does not contaminate the candidate text.
+
+DeepSeek should be configured through the OpenAI-compatible `custom` provider
+unless a dedicated worker adapter is added.
 
 ## CLI Surface
 
