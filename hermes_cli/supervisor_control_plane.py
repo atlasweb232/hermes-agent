@@ -70,6 +70,7 @@ class SupervisorTaskLedgerEntry:
     retry_count: int = 0
     spec_kit_refs: List[str] = field(default_factory=list)
     git_refs: List[str] = field(default_factory=list)
+    goal_json: Dict[str, Any] = field(default_factory=dict)
     metadata_json: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=_now)
     updated_at: float = field(default_factory=_now)
@@ -145,6 +146,21 @@ class ConvergenceAssessment:
         return asdict(self)
 
 
+@dataclass
+class TaskGoalContinuationDecision:
+    task_id: str
+    status: str
+    should_continue: bool
+    verdict: str
+    reason: str
+    continuation_prompt: Optional[str] = None
+    goal_json: Dict[str, Any] = field(default_factory=dict)
+    guard: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 def ensure_supervisor_control_schema(db: SessionDB) -> None:
     def _do(conn):
         conn.execute(
@@ -164,12 +180,19 @@ def ensure_supervisor_control_schema(db: SessionDB) -> None:
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 spec_kit_refs_json TEXT,
                 git_refs_json TEXT,
+                goal_json TEXT,
                 metadata_json TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
             """
         )
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(hermes_supervisor_tasks)").fetchall()
+        }
+        if "goal_json" not in columns:
+            conn.execute("ALTER TABLE hermes_supervisor_tasks ADD COLUMN goal_json TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS hermes_supervisor_heartbeats (
@@ -247,6 +270,7 @@ def _row_to_task(row: Any) -> SupervisorTaskLedgerEntry:
         retry_count=int(row["retry_count"] or 0),
         spec_kit_refs=[str(x) for x in _list_json_loads(row["spec_kit_refs_json"])],
         git_refs=[str(x) for x in _list_json_loads(row["git_refs_json"])],
+        goal_json=_json_loads(row["goal_json"]),
         metadata_json=_json_loads(row["metadata_json"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -283,6 +307,8 @@ def create_task_ledger_entry(
     retry_budget: int = 3,
     spec_kit_refs: Optional[List[str]] = None,
     git_refs: Optional[List[str]] = None,
+    goal: Optional[str] = None,
+    goal_max_turns: int = 20,
     metadata: Optional[Dict[str, Any]] = None,
     now: Optional[float] = None,
 ) -> SupervisorTaskLedgerEntry:
@@ -299,8 +325,8 @@ def create_task_ledger_entry(
                 task_id, tenant_id, repo_id, state, worker_id, worker_kind,
                 task_description, lease_owner, lease_expires_at, heartbeat_at,
                 retry_budget, retry_count, spec_kit_refs_json, git_refs_json,
-                metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?)
+                goal_json, metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) DO UPDATE SET
                 tenant_id = excluded.tenant_id,
                 repo_id = excluded.repo_id,
@@ -312,6 +338,12 @@ def create_task_ledger_entry(
                 retry_budget = excluded.retry_budget,
                 spec_kit_refs_json = excluded.spec_kit_refs_json,
                 git_refs_json = excluded.git_refs_json,
+                goal_json = CASE
+                    WHEN excluded.goal_json IS NOT NULL
+                         AND excluded.goal_json NOT IN ('{}', 'null', '')
+                    THEN excluded.goal_json
+                    ELSE hermes_supervisor_tasks.goal_json
+                END,
                 metadata_json = excluded.metadata_json,
                 updated_at = excluded.updated_at
             """,
@@ -328,6 +360,7 @@ def create_task_ledger_entry(
                 int(retry_budget),
                 _json_dumps(spec_kit_refs or []),
                 _json_dumps(git_refs or []),
+                _json_dumps(_initial_task_goal(goal, goal_max_turns, now=current) if goal else {}),
                 _json_dumps(metadata or {}),
                 current,
                 current,
@@ -338,6 +371,55 @@ def create_task_ledger_entry(
     entry = get_task_ledger_entry(db, tid)
     assert entry is not None
     return entry
+
+
+def _initial_task_goal(goal: Optional[str], max_turns: int = 20, now: Optional[float] = None) -> Dict[str, Any]:
+    text = (goal or "").strip()
+    if not text:
+        return {}
+    current = _now() if now is None else float(now)
+    return {
+        "goal": text,
+        "status": "active",
+        "turns_used": 0,
+        "max_turns": int(max_turns or 20),
+        "last_verdict": None,
+        "last_reason": None,
+        "judge": "auxiliary.goal_judge",
+        "continuation_count": 0,
+        "history": [],
+        "updated_at": current,
+    }
+
+
+def set_task_goal(
+    db: SessionDB,
+    *,
+    task_id: str,
+    goal: str,
+    max_turns: int = 20,
+) -> SupervisorTaskLedgerEntry:
+    ensure_supervisor_control_schema(db)
+    entry = get_task_ledger_entry(db, task_id)
+    if entry is None:
+        raise ValueError(f"unknown supervisor task: {task_id}")
+    current = _now()
+    goal_payload = _initial_task_goal(goal, max_turns, now=current)
+
+    def _do(conn):
+        conn.execute(
+            """
+            UPDATE hermes_supervisor_tasks
+               SET goal_json = ?, updated_at = ?
+             WHERE task_id = ?
+            """,
+            (_json_dumps(goal_payload), current, task_id),
+        )
+
+    db._execute_write(_do)
+    updated = get_task_ledger_entry(db, task_id)
+    assert updated is not None
+    return updated
 
 
 def get_task_ledger_entry(db: SessionDB, task_id: str) -> Optional[SupervisorTaskLedgerEntry]:
@@ -713,4 +795,140 @@ def goal_continuation_allowed(db: SessionDB, *, task_id: str) -> Dict[str, Any]:
             "reason": f"supervisor_state_blocks_goal_continuation:{entry.state}",
             "state": entry.state,
         }
-    return {"task_id": task_id, "allowed": True, "reason": "goal_is_metadata_only", "state": entry.state}
+    if not entry.goal_json or not entry.goal_json.get("goal"):
+        return {"task_id": task_id, "allowed": False, "reason": "no_task_goal", "state": entry.state}
+    return {"task_id": task_id, "allowed": True, "reason": "goal_is_supervisor_owned", "state": entry.state}
+
+
+def evaluate_task_goal_continuation(
+    db: SessionDB,
+    *,
+    task_id: str,
+    last_response: str,
+    judge_fn: Optional[Any] = None,
+) -> TaskGoalContinuationDecision:
+    """Evaluate task-level goal continuation under supervisor ledger gates.
+
+    The judge is an auxiliary sidecar role: by default it reuses upstream
+    ``hermes_cli.goals.judge_goal`` and therefore the configured
+    ``auxiliary.goal_judge`` model. It cannot override blocked/reclaimed
+    supervisor states.
+    """
+    ensure_supervisor_control_schema(db)
+    entry = get_task_ledger_entry(db, task_id)
+    if entry is None:
+        raise ValueError(f"unknown supervisor task: {task_id}")
+    guard = goal_continuation_allowed(db, task_id=task_id)
+    goal_state = dict(entry.goal_json or {})
+    if not guard.get("allowed"):
+        return TaskGoalContinuationDecision(
+            task_id=task_id,
+            status="blocked",
+            should_continue=False,
+            verdict="blocked",
+            reason=str(guard.get("reason")),
+            goal_json=goal_state,
+            guard=guard,
+        )
+    if goal_state.get("status") != "active":
+        return TaskGoalContinuationDecision(
+            task_id=task_id,
+            status=str(goal_state.get("status") or "inactive"),
+            should_continue=False,
+            verdict="inactive",
+            reason=f"task goal is {goal_state.get('status')}",
+            goal_json=goal_state,
+            guard=guard,
+        )
+
+    judge = judge_fn
+    if judge is None:
+        from hermes_cli.goals import judge_goal as judge
+
+    verdict, reason, parse_failed = judge(str(goal_state.get("goal") or ""), last_response)
+    turns_used = int(goal_state.get("turns_used") or 0) + 1
+    max_turns = int(goal_state.get("max_turns") or 20)
+    goal_state["turns_used"] = turns_used
+    goal_state["last_verdict"] = verdict
+    goal_state["last_reason"] = reason
+    goal_state["last_parse_failed"] = bool(parse_failed)
+    goal_state["updated_at"] = _now()
+    history = _list_json_loads(goal_state.get("history"))
+    history.append(
+        {
+            "verdict": verdict,
+            "reason": reason,
+            "parse_failed": bool(parse_failed),
+            "turn": turns_used,
+            "created_at": goal_state["updated_at"],
+        }
+    )
+    goal_state["history"] = history[-10:]
+
+    if verdict == "done":
+        goal_state["status"] = "done"
+        should_continue = False
+        status = "done"
+        prompt = None
+    elif turns_used >= max_turns:
+        goal_state["status"] = "paused"
+        goal_state["paused_reason"] = f"turn budget exhausted ({turns_used}/{max_turns})"
+        should_continue = False
+        status = "paused"
+        prompt = None
+    else:
+        goal_state["status"] = "active"
+        goal_state["continuation_count"] = int(goal_state.get("continuation_count") or 0) + 1
+        should_continue = True
+        status = "continue"
+        prompt = (
+            "[Continuing supervisor task goal]\n"
+            f"Task: {task_id}\n"
+            f"Goal: {goal_state.get('goal')}\n\n"
+            "Continue with the next concrete step, preserving supervisor "
+            "constraints, Spec Kit refs, validation gates, and memory packet refs."
+        )
+
+    current = _now()
+
+    def _do(conn):
+        conn.execute(
+            """
+            UPDATE hermes_supervisor_tasks
+               SET goal_json = ?, updated_at = ?
+             WHERE task_id = ?
+            """,
+            (_json_dumps(goal_state), current, task_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO hermes_supervisor_override_actions (
+                id, task_id, action, operator, reason, previous_state,
+                new_state, worker_id, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"override_{uuid.uuid4().hex[:16]}",
+                task_id,
+                "goal_judge",
+                "supervisor.goal_judge",
+                reason,
+                entry.state,
+                entry.state,
+                entry.worker_id,
+                _json_dumps({"verdict": verdict, "should_continue": should_continue, "goal": goal_state}),
+                current,
+            ),
+        )
+
+    db._execute_write(_do)
+    return TaskGoalContinuationDecision(
+        task_id=task_id,
+        status=status,
+        should_continue=should_continue,
+        verdict=verdict,
+        reason=reason,
+        continuation_prompt=prompt,
+        goal_json=goal_state,
+        guard=guard,
+    )

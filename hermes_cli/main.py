@@ -11211,6 +11211,8 @@ Examples:
     runtime_control_create.add_argument("--tenant-id", default="", help="Tenant id")
     runtime_control_create.add_argument("--repo-id", default="", help="Repository id")
     runtime_control_create.add_argument("--description", default="", help="Task description")
+    runtime_control_create.add_argument("--goal", default="", help="Supervisor-owned task goal")
+    runtime_control_create.add_argument("--goal-max-turns", type=int, default=20)
     runtime_control_create.add_argument("--worker", default="", help="Current worker")
     runtime_control_create.add_argument("--worker-kind", default="worker", help="Worker kind")
     runtime_control_create.add_argument("--lease-seconds", type=float, default=900.0)
@@ -11250,6 +11252,13 @@ Examples:
     runtime_control_override.add_argument("--reason", default="")
     runtime_control_override.add_argument("--worker", default="")
     runtime_control_override.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_goal = runtime_control_sub.add_parser("goal", help="Set or evaluate a supervisor-owned task goal")
+    runtime_control_goal.add_argument("--task-id", required=True)
+    runtime_control_goal.add_argument("--set", dest="goal_text", default="", help="Set goal text")
+    runtime_control_goal.add_argument("--max-turns", type=int, default=20)
+    runtime_control_goal.add_argument("--last-response", default="", help="Evaluate this worker response against the task goal")
+    runtime_control_goal.add_argument("--status", action="store_true", help="Show task goal state without invoking the judge")
+    runtime_control_goal.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     def cmd_runtime(args):
         from hermes_cli.runtime_orchestrator import (
@@ -11412,6 +11421,8 @@ Examples:
                         retry_budget=getattr(args, "retry_budget", 3),
                         spec_kit_refs=getattr(args, "spec_ref", []) or [],
                         git_refs=getattr(args, "git_ref", []) or [],
+                        goal=getattr(args, "goal", "") or None,
+                        goal_max_turns=getattr(args, "goal_max_turns", 20),
                     )
                     _emit(entry.to_dict())
                 elif control_cmd == "heartbeat":
@@ -11453,6 +11464,36 @@ Examples:
                         worker_id=getattr(args, "worker", "") or None,
                     )
                     _emit(action.to_dict())
+                elif control_cmd == "goal":
+                    from hermes_cli.supervisor_control_plane import (
+                        evaluate_task_goal_continuation,
+                        set_task_goal,
+                    )
+
+                    if getattr(args, "goal_text", ""):
+                        entry = set_task_goal(
+                            db,
+                            task_id=getattr(args, "task_id"),
+                            goal=getattr(args, "goal_text"),
+                            max_turns=getattr(args, "max_turns", 20),
+                        )
+                        _emit(entry.to_dict())
+                    elif getattr(args, "last_response", ""):
+                        result = evaluate_task_goal_continuation(
+                            db,
+                            task_id=getattr(args, "task_id"),
+                            last_response=getattr(args, "last_response", "") or "",
+                        )
+                        _emit(result.to_dict())
+                    else:
+                        entry = get_task_ledger_entry(db, getattr(args, "task_id"))
+                        if entry is None:
+                            raise SystemExit(f"unknown supervisor task: {getattr(args, 'task_id')}")
+                        _emit({
+                            "task_id": entry.task_id,
+                            "state": entry.state,
+                            "goal_json": entry.goal_json,
+                        })
                 else:
                     task_id = getattr(args, "task_id", "") or None
                     if task_id:

@@ -242,6 +242,31 @@
 
 ---
 
+## Phase 9A: Native Goal Continuation And Judge Sidecar Integration (Priority: P7)
+
+**Goal**: Pull the useful upstream `/goal` judge behavior into the supervisor control plane so long-running tasks can continue toward a goal without giving the goal loop authority over validation, reassignment, policy, memory, or operator approval.
+
+**Independent Test**: Create a supervisor task with a task-level goal, evaluate a worker response with a fake judge, verify continuation prompts are produced only for healthy active tasks, verify blocked/reclaimed/reassigned tasks stop before the judge runs, and verify `done` does not auto-complete the supervisor ledger.
+
+### Tests for Goal Continuation Integration
+
+- [x] T091A [P] [US7] Add goal prompt tests proving upstream goal judge prompts include current time context in `tests/hermes_cli/test_goals.py`
+- [x] T091B [P] [US7] Add supervisor task goal tests for continuation, blocked-state guardrails, budget pause, done-without-auto-completion, and upsert preservation in `tests/hermes_cli/test_supervisor_control_plane.py`
+- [x] T091C [P] [US7] Add observability tests proving supervisor task line items expose goal status and goal judge references in `tests/hermes_cli/test_observability.py`
+
+### Implementation for Goal Continuation Integration
+
+- [x] T091D [US7] Port upstream goal judge current-time prompt context into `hermes_cli/goals.py`
+- [x] T091E [US7] Add `goal_json` to the supervisor task ledger for task-level goal state, turn budget, judge metadata, and bounded judge history
+- [x] T091F [US7] Add `set_task_goal()` and `evaluate_task_goal_continuation()` helpers that reuse the configured auxiliary goal judge while respecting supervisor ledger gates
+- [x] T091G [US7] Add `hermes runtime control create --goal ...` and `hermes runtime control goal --set|--last-response|--status --json` CLI-compatible surfaces
+- [x] T091H [US7] Surface goal status, last verdict, last reason, and turn budget in observability line items and evidence bundles
+- [x] T091I [US7] Update `docs/curator-policy-framework-architecture.md` with task-level goal continuation, judge sidecar identity, authority boundaries, and error handling
+
+**Checkpoint**: Native goal continuation is available as a supervisor-owned task loop, but completion authority remains with deterministic validation and operator/judge-approved control-plane actions.
+
+---
+
 ## Phase 10: Polish And Integration
 
 - [ ] T092 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`

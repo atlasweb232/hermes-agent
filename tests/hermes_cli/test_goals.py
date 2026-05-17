@@ -686,6 +686,7 @@ class TestJudgeGoalWithSubgoals:
         assert "Additional criteria" in user_msg
         assert "1. write tests" in user_msg
         assert "2. update docs" in user_msg
+        assert "Current time:" in user_msg
         assert "every additional criterion" in user_msg
         assert verdict == "done"
 
@@ -718,6 +719,7 @@ class TestJudgeGoalWithSubgoals:
         sent_messages = captured.get("messages") or []
         user_msg = next((m["content"] for m in sent_messages if m["role"] == "user"), "")
         assert "Additional criteria" not in user_msg
+        assert "Current time:" in user_msg
         assert "ship it" in user_msg
 
 

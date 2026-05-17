@@ -902,6 +902,7 @@ The CLI surface is:
 - `hermes runtime control assess --task-id ... --json`
 - `hermes runtime control recovery --task-id ... --reason ... --json`
 - `hermes runtime control override --task-id ... --action reclaim|reassign|... --json`
+- `hermes runtime control goal --task-id ... --set|--last-response|--status --json`
 
 This phase does not kill OS processes directly. It creates the deterministic
 record and approved recovery action that process managers, worker routers, or
@@ -1267,6 +1268,60 @@ proposal records only. A goal loop may keep working on an already-authorized
 task; dreaming may only propose future work or policy ideas. Dreaming output
 must not be queued as a goal, injected into worker context, or applied as
 policy unless it passes the normal judge/operator gates.
+
+## Supervisor-Owned Task Goals And Judge Sidecar
+
+The upstream `/goal` command remains a session feature, but supervisor
+orchestration needs a task-level variant so continuation is tied to the
+ledger, not to an ephemeral chat transcript. Hermes stores this in
+`hermes_supervisor_tasks.goal_json`.
+
+The task-level workflow is:
+
+```text
+supervisor creates task ledger entry with goal_json
+  -> worker sends heartbeat/result summary
+  -> convergence guard checks task state, lease, retries, and blockers
+  -> auxiliary goal_judge evaluates last worker response
+  -> if continue and budget remains: produce continuation prompt
+  -> if done: mark goal_json.status=done, but do not complete task ledger
+  -> if budget exhausted: pause goal_json and require supervisor/operator action
+```
+
+The judge sidecar is not a new autonomous supervisor and not the curator. It is
+an auxiliary evaluator role backed by the configured `auxiliary.goal_judge`
+model and the same `judge_goal()` contract used by native `/goal`. In current
+test deployments this can be Codex; later it can be a Cerebras/Qwen/GPU model
+if configured. Its job is narrow: decide whether the last worker response
+satisfies the task goal and explain the verdict.
+
+Authority boundaries:
+
+- The judge may recommend continuation by returning a continuation prompt.
+- The judge may mark only `goal_json.status`, not `hermes_supervisor_tasks.state`.
+- The judge cannot complete, merge, reassign, abandon, approve memory, approve
+  policy, write wiki claims, or mutate config.
+- Reclaimed, blocked, validation-failed, reassigned, or abandoned tasks stop
+  before the judge runs.
+- `done` means "goal appears satisfied"; deterministic validation and the
+  supervisor ledger still decide whether the task is completed.
+
+Operational surfaces:
+
+- `hermes runtime control create --goal ... --goal-max-turns N --json`
+- `hermes runtime control goal --task-id ... --set ... --json`
+- `hermes runtime control goal --task-id ... --last-response ... --json`
+- `hermes runtime control goal --task-id ... --status --json`
+- `hermes memory observe list --item-type supervisor_task --json`
+
+Error handling:
+
+- Empty or missing task goals do not invoke the judge.
+- Blocked supervisor states fail closed with a guard reason.
+- Judge parse failures are recorded in `goal_json.last_parse_failed`.
+- Turn budgets pause continuation so an LLM loop cannot drag the environment.
+- Bounded `goal_json.history` preserves recent judge decisions for observability
+  without storing raw transcripts.
 
 ## Dreaming Risk Mitigations
 

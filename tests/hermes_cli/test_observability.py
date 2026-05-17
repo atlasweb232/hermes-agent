@@ -84,6 +84,7 @@ def test_observability_lists_and_details_supervisor_task_ledger(tmp_path):
             worker_id="codex",
             spec_kit_refs=["specs/001-learning-memory-runtime/tasks.md"],
             git_refs=["branch:132-learning-memory-runtime"],
+            goal="recover delegated migration with validation evidence",
             metadata={"supervisor_packet_ref": "packet_1"},
         )
         record_worker_heartbeat(
@@ -102,6 +103,7 @@ def test_observability_lists_and_details_supervisor_task_ledger(tmp_path):
         )
         assert [row.id for row in rows] == ["obs_supervisor_task_task_supervisor"]
         assert rows[0].worker_id == "codex"
+        assert rows[0].summary_json["goal"]["status"] == "active"
 
         bundle = build_evidence_bundle(
             db,
@@ -113,7 +115,8 @@ def test_observability_lists_and_details_supervisor_task_ledger(tmp_path):
         assert bundle.speckit_refs == ["specs/001-learning-memory-runtime/tasks.md"]
         assert bundle.branch_refs == ["branch:132-learning-memory-runtime"]
         assert bundle.event_refs[0]["kind"] == "worker_heartbeat"
-        assert bundle.validation_refs[0]["kind"] == "convergence_assessment"
+        assert bundle.validation_refs[0]["kind"] == "task_goal"
+        assert bundle.validation_refs[1]["kind"] == "convergence_assessment"
         assert bundle.raw_transcript_included is False
     finally:
         db.close()

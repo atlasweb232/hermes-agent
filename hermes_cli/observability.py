@@ -300,6 +300,13 @@ def _supervisor_task_to_line_item(task: Any) -> ObservabilityLineItem:
             "heartbeat_at": task.heartbeat_at,
             "retry_budget": task.retry_budget,
             "retry_count": task.retry_count,
+            "goal": {
+                "status": task.goal_json.get("status"),
+                "turns_used": task.goal_json.get("turns_used"),
+                "max_turns": task.goal_json.get("max_turns"),
+                "last_verdict": task.goal_json.get("last_verdict"),
+                "last_reason": task.goal_json.get("last_reason"),
+            } if task.goal_json else {},
             "metadata": _redacted_json(task.metadata_json),
         },
     )
@@ -428,7 +435,17 @@ def _supervisor_task_evidence_bundle(
         ] if task.worker_id else [],
         speckit_refs=task.spec_kit_refs,
         branch_refs=task.git_refs,
-        validation_refs=[
+        validation_refs=([
+            {
+                "kind": "task_goal",
+                "id": f"goal:{task.task_id}",
+                "status": task.goal_json.get("status"),
+                "last_verdict": task.goal_json.get("last_verdict"),
+                "last_reason": task.goal_json.get("last_reason"),
+                "turns_used": task.goal_json.get("turns_used"),
+                "max_turns": task.goal_json.get("max_turns"),
+            }
+        ] if task.goal_json else []) + [
             {
                 "kind": "convergence_assessment",
                 "id": f"assessment:{task.task_id}",
