@@ -157,6 +157,7 @@ class LearningSidecarTickResult:
     monitor: Dict[str, Any]
     policy: Dict[str, Any]
     housekeeping: Dict[str, Any] = field(default_factory=dict)
+    bus: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -515,6 +516,26 @@ def rollup_learning_candidates(
         if skip_reason:
             mark_skipped(skip_reason)
             continue
+        if record.get("kind") == "task_outcome":
+            try:
+                from hermes_cli.learning_bus import publish_learning_event_safely
+
+                publish_learning_event_safely(
+                    db,
+                    topic="learning.task_outcome.accepted",
+                    payload={
+                        "record_id": record.get("id"),
+                        "status": record.get("status"),
+                        "score": record.get("score"),
+                        "payload": record.get("payload_json"),
+                    },
+                    tenant_id=tenant_id or record.get("tenant_id"),
+                    repo_id=repo_id or record.get("repo_id"),
+                    task_id=record.get("task_id"),
+                    event_key=f"task_outcome:{record.get('id')}",
+                )
+            except Exception:
+                pass
         text = _record_text(record)
         if not text:
             mark_skipped("empty_text")
@@ -586,6 +607,19 @@ def rollup_learning_candidates(
             tenant_id=tenant_id,
             repo_id=repo_id,
         )
+        try:
+            from hermes_cli.learning_bus import publish_learning_event_safely
+
+            publish_learning_event_safely(
+                db,
+                topic="learning.candidate.proposed",
+                payload=candidate,
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+                event_key=f"candidate:{candidate['candidate_id']}",
+            )
+        except Exception:
+            pass
 
     run_id = f"learn_{uuid.uuid4().hex[:16]}"
     metrics = {
@@ -607,6 +641,19 @@ def rollup_learning_candidates(
         metrics_json=metrics,
         notes="learning rollup completed",
     )
+    try:
+        from hermes_cli.learning_bus import publish_learning_event_safely
+
+        publish_learning_event_safely(
+            db,
+            topic="learning.rollup.completed",
+            payload={"run_id": run_id, "metrics": metrics},
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            event_key=f"rollup:{run_id}",
+        )
+    except Exception:
+        pass
     return LearningRollupResult(
         run_id=run_id,
         status="completed",
@@ -782,6 +829,25 @@ def reconcile_learning_candidates(
         },
         notes="learning policy reconciliation completed",
     )
+    try:
+        from hermes_cli.learning_bus import publish_learning_event_safely
+
+        publish_learning_event_safely(
+            db,
+            topic="learning.policy.completed",
+            payload={
+                "run_id": run_id,
+                "promoted": promoted,
+                "applied": applied,
+                "rolled_back": rolled_back,
+                "promotion_skipped": skipped,
+            },
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            event_key=f"policy:{run_id}",
+        )
+    except Exception:
+        pass
     return LearningPolicyResult(
         run_id=run_id,
         status="completed",
@@ -1262,11 +1328,18 @@ def run_learning_sidecar(
                             housekeeping = {"status": "error", "error": str(exc)}
                 else:
                     housekeeping = {"status": "disabled"}
+                try:
+                    from hermes_cli.learning_bus import learning_bus_metrics
+
+                    bus = learning_bus_metrics(db)
+                except Exception as exc:
+                    bus = {"status": "error", "error": str(exc)}
                 last_tick = LearningSidecarTickResult(
                     rollup=rollup.to_dict(),
                     monitor=monitor.to_dict(),
                     policy=policy.to_dict(),
                     housekeeping=housekeeping,
+                    bus=bus,
                     errors=list(tick_errors),
                 )
         except Exception as exc:
@@ -1278,6 +1351,7 @@ def run_learning_sidecar(
                 monitor={"status": "error"},
                 policy={"status": "error"},
                 housekeeping={"status": "error"},
+                bus={"status": "error"},
                 errors=list(tick_errors),
             )
         ticks += 1

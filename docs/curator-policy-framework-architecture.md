@@ -628,6 +628,36 @@ active enforcement require a later operator-approved policy path. The default
 `allow_enforcement_approval: false` prevents judge output alone from applying
 runtime policy.
 
+## Durable Learning Event Bus
+
+Hermes uses a local SQLite event bus for runtime learning events that should
+survive process restarts without introducing Kafka or another service into the
+single-VM deployment. The first bus table stores:
+
+- topic
+- tenant, repo, and task scope
+- payload JSON
+- idempotency key
+- queued, leased, consumed, or dead status
+- lease owner and lease expiry
+- attempt counters and max retry limit
+
+The CLI surface is:
+
+- `hermes memory bus publish --topic ... --payload-json ... --json`
+- `hermes memory bus list --topic ... --status ... --json`
+- `hermes memory bus consume --topic ... --consumer ... --ack --json`
+
+Runtime publication is best-effort. Terminal command policy audit events,
+learning rollup candidate events, and policy reconciliation events publish to
+the bus, but failures are swallowed so command execution and learning sidecars
+do not block on observability. Consumers lease events with expiry, so stale
+leases can be reclaimed after restart. Events that exceed retry limits move to
+`dead` rather than looping forever.
+
+This bus is intentionally not the memory wiki or dreaming layer. It is the
+durable event transport that those later layers can consume.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

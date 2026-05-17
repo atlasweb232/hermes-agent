@@ -11489,6 +11489,34 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    bus_parser = memory_sub.add_parser(
+        "bus",
+        help="Publish and consume durable learning events",
+        description="Inspect the local SQLite learning event bus used by sidecars.",
+    )
+    bus_sub = bus_parser.add_subparsers(dest="memory_bus_command")
+    bus_publish = bus_sub.add_parser("publish", help="Publish a learning event")
+    bus_publish.add_argument("--topic", required=True, help="Event topic")
+    bus_publish.add_argument("--payload-json", default="{}", help="JSON object payload")
+    bus_publish.add_argument("--tenant-id", default="", help="Tenant scope")
+    bus_publish.add_argument("--repo-id", default="", help="Repository scope")
+    bus_publish.add_argument("--task-id", default="", help="Task scope")
+    bus_publish.add_argument("--event-key", default="", help="Idempotency key within the topic")
+    bus_publish.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_list = bus_sub.add_parser("list", help="List learning events")
+    bus_list.add_argument("--topic", default="", help="Event topic filter")
+    bus_list.add_argument("--status", default="", help="Event status filter")
+    bus_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    bus_list.add_argument("--repo-id", default="", help="Repository scope")
+    bus_list.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    bus_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_consume = bus_sub.add_parser("consume", help="Lease learning events for a consumer")
+    bus_consume.add_argument("--topic", action="append", default=[], help="Topic to consume; repeatable")
+    bus_consume.add_argument("--consumer", default="cli", help="Consumer name")
+    bus_consume.add_argument("--limit", type=int, default=10, help="Maximum events to lease")
+    bus_consume.add_argument("--lease-seconds", type=float, default=300.0, help="Lease duration")
+    bus_consume.add_argument("--ack", action="store_true", help="Immediately mark leased events consumed")
+    bus_consume.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     candidates_parser = memory_sub.add_parser(
         "candidates",
         help="Review and apply meta-learning candidates",
@@ -11676,7 +11704,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "bus", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -11847,6 +11875,63 @@ Examples:
                             f"  rejected: {result.rejected}"
                             f"  needs human: {result.needs_human}\n"
                         )
+                elif sub == "bus":
+                    from hermes_cli.learning_bus import (
+                        consume_learning_events,
+                        list_learning_events,
+                        mark_learning_event_consumed,
+                        publish_learning_event,
+                    )
+
+                    bus_cmd = getattr(args, "memory_bus_command", None) or "list"
+                    if bus_cmd == "publish":
+                        try:
+                            payload = json.loads(getattr(args, "payload_json", "{}") or "{}")
+                        except json.JSONDecodeError as exc:
+                            raise SystemExit(f"Invalid --payload-json: {exc}") from exc
+                        if not isinstance(payload, dict):
+                            raise SystemExit("--payload-json must be a JSON object")
+                        event = publish_learning_event(
+                            db,
+                            topic=getattr(args, "topic"),
+                            payload=payload,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            task_id=getattr(args, "task_id", "") or None,
+                            event_key=getattr(args, "event_key", "") or None,
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(event.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  learning event published: {event.id} [{event.topic}] {event.status}\n")
+                    elif bus_cmd == "consume":
+                        result = consume_learning_events(
+                            db,
+                            consumer=getattr(args, "consumer", "cli") or "cli",
+                            topics=getattr(args, "topic", []) or [],
+                            limit=getattr(args, "limit", 10),
+                            lease_seconds=getattr(args, "lease_seconds", 300.0),
+                        )
+                        if getattr(args, "ack", False):
+                            for event in result.leased:
+                                mark_learning_event_consumed(db, event.id)
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  learning events leased: {len(result.leased)}\n")
+                    else:
+                        rows = list_learning_events(
+                            db,
+                            topic=getattr(args, "topic", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps([row.to_dict() for row in rows], indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  learning events: {len(rows)}\n")
                 else:
                     cand_cmd = getattr(args, "memory_candidates_command", None) or "list"
                     if cand_cmd == "list":

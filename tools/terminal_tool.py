@@ -1777,6 +1777,26 @@ def terminal_tool(
             command = policy_decision.effective_command
         except Exception:
             policy_metadata = None
+        if policy_metadata:
+            try:
+                import contextlib
+
+                from hermes_cli.learning_bus import publish_learning_event_safely
+                from hermes_state import SessionDB
+
+                with contextlib.closing(SessionDB()) as _learning_bus_db:
+                    publish_learning_event_safely(
+                        _learning_bus_db,
+                        topic="learning.policy.audit",
+                        payload={
+                            "command": command,
+                            "policy": policy_metadata,
+                            "task_id": effective_task_id,
+                        },
+                        task_id=effective_task_id,
+                    )
+            except Exception:
+                pass
 
         # Start cleanup thread
         _start_cleanup_thread()

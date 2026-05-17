@@ -96,17 +96,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Add event publish/consume tests in `tests/hermes_cli/test_learning_bus.py`
-- [ ] T034 [P] [US3] Add lease reclaim and retry-limit tests in `tests/hermes_cli/test_learning_bus.py`
-- [ ] T035 [P] [US3] Add CLI JSON smoke tests for `hermes memory bus` commands in `tests/hermes_cli/test_learning_bus.py`
+- [x] T033 [P] [US3] Add event publish/consume tests in `tests/hermes_cli/test_learning_bus.py`
+- [x] T034 [P] [US3] Add lease reclaim and retry-limit tests in `tests/hermes_cli/test_learning_bus.py`
+- [x] T035 [P] [US3] Add CLI JSON smoke tests for `hermes memory bus` commands in `tests/hermes_cli/test_learning_bus.py`
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] Create `hermes_cli/learning_bus.py` with SQLite event table helpers
-- [ ] T037 [US3] Add `hermes memory bus publish/list/consume` CLI wiring in `hermes_cli/main.py`
-- [ ] T038 [US3] Publish policy audit events from `tools/terminal_tool.py` without blocking command execution
-- [ ] T039 [US3] Publish task outcome and candidate events from existing learning rollup/reconcile paths in `hermes_cli/supervisor_memory.py`
-- [ ] T040 [US3] Add bus metrics into sidecar output in `hermes_cli/supervisor_memory.py`
+- [x] T036 [US3] Create `hermes_cli/learning_bus.py` with SQLite event table helpers
+- [x] T037 [US3] Add `hermes memory bus publish/list/consume` CLI wiring in `hermes_cli/main.py`
+- [x] T038 [US3] Publish policy audit events from `tools/terminal_tool.py` without blocking command execution
+- [x] T039 [US3] Publish task outcome and candidate events from existing learning rollup/reconcile paths in `hermes_cli/supervisor_memory.py`
+- [x] T040 [US3] Add bus metrics into sidecar output in `hermes_cli/supervisor_memory.py`
 
 **Checkpoint**: Runtime learning events can be replayed and consumed after process restarts.
 
