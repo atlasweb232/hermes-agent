@@ -1622,6 +1622,70 @@ def reject_meta_candidate(
     )
 
 
+def apply_learning_judge_decision(
+    db: SessionDB,
+    *,
+    decision: Any,
+    config: Optional[Dict[str, Any]] = None,
+    allow_enforcement: bool = False,
+) -> MetaCandidateActionResult:
+    """Persist a strict learning-judge decision against a meta-candidate.
+
+    Judge approval is advisory by default. Runtime config application still
+    requires the global allow_enforcement policy and the decision's explicit
+    allow_enforcement flag.
+    """
+    candidate_id = str(getattr(decision, "candidate_id", "") or "")
+    candidate = db.get_meta_candidate(candidate_id)
+    if candidate is None:
+        raise ValueError(f"unknown meta candidate: {candidate_id}")
+    decision_value = str(getattr(decision, "decision", "") or "")
+    confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
+    rationale = str(getattr(decision, "rationale", "") or "")
+    risk_flags = list(getattr(decision, "risk_flags", []) or [])
+    action = {
+        "judged_at": _now(),
+        "judge_decision": decision_value,
+        "judge_confidence": confidence,
+        "judge_rationale": rationale,
+        "judge_risk_flags": risk_flags,
+        "judge_allow_enforcement": bool(getattr(decision, "allow_enforcement", False)),
+    }
+    evidence = _candidate_evidence_with_action(candidate, action=action)
+    db.update_meta_candidate_status(
+        candidate_id,
+        status=str(candidate.get("status") or "proposed"),
+        evidence_json=evidence,
+    )
+
+    if decision_value == "approve":
+        should_apply = bool(allow_enforcement and getattr(decision, "allow_enforcement", False))
+        return approve_meta_candidate(
+            db,
+            candidate_id=candidate_id,
+            apply=should_apply,
+            config=config,
+        )
+    if decision_value == "reject":
+        return reject_meta_candidate(
+            db,
+            candidate_id=candidate_id,
+            reason=f"learning judge rejected: {rationale}",
+        )
+
+    updated = db.get_meta_candidate(candidate_id) or candidate
+    db.update_meta_candidate_status(candidate_id, status="needs_human", evidence_json=evidence)
+    updated = db.get_meta_candidate(candidate_id) or updated
+    return MetaCandidateActionResult(
+        candidate_id=candidate_id,
+        status="needs_human",
+        applied=False,
+        config_written=False,
+        notes=rationale or "learning judge requested human review",
+        candidate=updated,
+    )
+
+
 def search_memory_context(
     db: SessionDB,
     *,

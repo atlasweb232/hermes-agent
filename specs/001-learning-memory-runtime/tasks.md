@@ -72,17 +72,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T025 [P] [US2] Add strict judge schema parse tests in `tests/hermes_cli/test_learning_judge.py`
-- [ ] T026 [P] [US2] Add candidate approval/rejection transition tests in `tests/hermes_cli/test_learning_judge.py`
-- [ ] T027 [P] [US2] Add CLI JSON smoke tests for `hermes memory judge-run --json` in `tests/hermes_cli/test_learning_judge.py`
+- [x] T025 [P] [US2] Add strict judge schema parse tests in `tests/hermes_cli/test_learning_judge.py`
+- [x] T026 [P] [US2] Add candidate approval/rejection transition tests in `tests/hermes_cli/test_learning_judge.py`
+- [x] T027 [P] [US2] Add CLI JSON smoke tests for `hermes memory judge-run --json` in `tests/hermes_cli/test_learning_judge.py`
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Create `hermes_cli/learning_judge.py` with strict decision dataclasses and parser
-- [ ] T029 [US2] Integrate auxiliary model task `learning_judge` with timeout and fail-closed handling in `hermes_cli/learning_judge.py`
-- [ ] T030 [US2] Add candidate status transitions and judge decision persistence in `hermes_cli/supervisor_memory.py`
-- [ ] T031 [US2] Add `hermes memory judge-run` CLI wiring in `hermes_cli/main.py`
-- [ ] T032 [US2] Document judge/operator approval boundary in `docs/curator-policy-framework-architecture.md`
+- [x] T028 [US2] Create `hermes_cli/learning_judge.py` with strict decision dataclasses and parser
+- [x] T029 [US2] Integrate auxiliary model task `learning_judge` with timeout and fail-closed handling in `hermes_cli/learning_judge.py`
+- [x] T030 [US2] Add candidate status transitions and judge decision persistence in `hermes_cli/supervisor_memory.py`
+- [x] T031 [US2] Add `hermes memory judge-run` CLI wiring in `hermes_cli/main.py`
+- [x] T032 [US2] Document judge/operator approval boundary in `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Judge can approve low-risk candidates and reject malformed/risky candidates without enabling enforcement.
 

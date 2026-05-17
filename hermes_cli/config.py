@@ -627,6 +627,7 @@ DEFAULT_CONFIG = {
             "model": "codex",
             "timeout_seconds": 300,
             "max_candidates": 10,
+            "min_confidence": 0.75,
             "fail_closed": True,
             "allow_enforcement_approval": False,
         },

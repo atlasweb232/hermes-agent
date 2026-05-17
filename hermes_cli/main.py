@@ -11477,6 +11477,18 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    judge_parser = memory_sub.add_parser(
+        "judge-run",
+        help="Run the learning judge over proposed candidates",
+        description="Use the configured learning judge to approve, reject, or escalate proposed meta-candidates.",
+    )
+    judge_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    judge_parser.add_argument("--repo-id", default="", help="Repository scope")
+    judge_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
     candidates_parser = memory_sub.add_parser(
         "candidates",
         help="Review and apply meta-learning candidates",
@@ -11664,7 +11676,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -11815,6 +11827,25 @@ Examples:
                             f"  promoted: {result.promoted}"
                             f"  applied: {result.applied}"
                             f"  rolled back: {result.rolled_back}\n"
+                        )
+                elif sub == "judge-run":
+                    from hermes_cli.learning_judge import run_learning_judge
+
+                    result = run_learning_judge(
+                        db,
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        config=config,
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  learning judge: {result.status}"
+                            f"  scanned: {result.candidates_scanned}"
+                            f"  approved: {result.approved}"
+                            f"  rejected: {result.rejected}"
+                            f"  needs human: {result.needs_human}\n"
                         )
                 else:
                     cand_cmd = getattr(args, "memory_candidates_command", None) or "list"

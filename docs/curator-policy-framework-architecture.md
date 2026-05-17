@@ -586,8 +586,47 @@ The first orchestration CLI surface is packet/gate oriented:
 - `hermes runtime validate --task-id ... --feature-dir ... --branch-name ... --json`
 
 These commands create or validate protocol artifacts. They do not yet spawn
-planners, workers, or reviewers. Automatic memory packet retrieval during task
-initialization remains a follow-up task.
+planners, workers, or reviewers. Task initialization now creates a compact
+memory packet through the supervisor memory router unless the caller passes
+`--no-memory-packet`.
+
+## Learning Judge Boundary
+
+The learning judge is a separate auxiliary-model approval gate for proposed
+meta-learning candidates. It runs after curator/rollup candidate creation and
+before any candidate can be treated as trusted supervisor guidance.
+
+```text
+raw event / memory record
+  -> curator or deterministic rollup proposes candidate
+  -> learning judge emits strict JSON decision
+  -> candidate becomes approved, rejected, or needs_human
+  -> operator/policy may later allow enforcement
+```
+
+The judge output schema is intentionally narrow:
+
+- `candidate_id`
+- `decision`: `approve`, `reject`, or `needs_human`
+- `confidence`
+- `rationale`
+- `risk_flags`
+- `allow_enforcement`
+
+Malformed judge output is rejected by strict parsing. If the judge model times
+out or is unavailable, Hermes fails closed by escalating the candidate to human
+review rather than approving it.
+
+The CLI surface is:
+
+- `hermes memory judge-run --json`
+
+The default config uses `supervisor.learning_judge.provider: codex` and
+`supervisor.learning_judge.model: codex`. This keeps curation/judging separate
+from the primary chat model. Judge approval remains advisory: config writes or
+active enforcement require a later operator-approved policy path. The default
+`allow_enforcement_approval: false` prevents judge output alone from applying
+runtime policy.
 
 ## Hybrid Memory Retrieval
 
