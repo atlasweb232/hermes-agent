@@ -11520,6 +11520,38 @@ Examples:
     wiki_records.add_argument("--export-status", default="", help="Export status filter")
     wiki_records.add_argument("--limit", type=int, default=50, help="Maximum rows")
     wiki_records.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_parser = memory_sub.add_parser(
+        "dream",
+        help="Run and inspect proposal-only dreaming",
+        description="Manage offline dreaming proposals. Proposals cannot affect runtime without judge and operator gates.",
+    )
+    dream_sub = dream_parser.add_subparsers(dest="memory_dream_command")
+    dream_run = dream_sub.add_parser("run", help="Run a manual dreaming pass")
+    dream_run.add_argument("--tenant-id", default="", help="Tenant scope")
+    dream_run.add_argument("--repo-id", default="", help="Repository scope")
+    dream_run.add_argument("--force", action="store_true", help="Run even when supervisor.dreaming.enabled=false")
+    dream_run.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_status = dream_sub.add_parser("status", help="List dreaming proposals")
+    dream_status.add_argument("--tenant-id", default="", help="Tenant scope")
+    dream_status.add_argument("--repo-id", default="", help="Repository scope")
+    dream_status.add_argument("--status", default="", help="Proposal status filter")
+    dream_status.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    dream_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_judge = dream_sub.add_parser("judge", help="Record a judge decision for a dreaming proposal")
+    dream_judge.add_argument("proposal_id", help="Dreaming proposal id")
+    dream_judge.add_argument("--decision", choices=["approve", "reject", "needs_human"], required=True)
+    dream_judge.add_argument("--confidence", type=float, default=1.0)
+    dream_judge.add_argument("--rationale", default="")
+    dream_judge.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_approve = dream_sub.add_parser("approve", help="Operator-approve a judge-approved dreaming proposal")
+    dream_approve.add_argument("proposal_id", help="Dreaming proposal id")
+    dream_approve.add_argument("--operator", default="operator", help="Operator id/name")
+    dream_approve.add_argument("--convert-candidate", action="store_true", help="Convert to proposed meta-candidate after approval")
+    dream_approve.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_reject = dream_sub.add_parser("reject", help="Operator-reject a dreaming proposal")
+    dream_reject.add_argument("proposal_id", help="Dreaming proposal id")
+    dream_reject.add_argument("--reason", default="operator rejected")
+    dream_reject.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     bus_parser = memory_sub.add_parser(
         "bus",
         help="Publish and consume durable learning events",
@@ -11735,7 +11767,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "bus", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -11977,6 +12009,82 @@ Examples:
                             print(json.dumps(data, indent=2, ensure_ascii=False))
                         else:
                             print(f"\n  memory wiki claims: {len(rows)}\n")
+                elif sub == "dream":
+                    from hermes_cli.memory_dreaming import (
+                        approve_dreaming_proposal,
+                        judge_dreaming_proposal,
+                        list_dreaming_proposals,
+                        reject_dreaming_proposal,
+                        run_dreaming,
+                    )
+
+                    dream_cmd = getattr(args, "memory_dream_command", None) or "status"
+                    if dream_cmd == "run":
+                        result = run_dreaming(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            config=config,
+                            trigger="manual",
+                            force=getattr(args, "force", False),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  dreaming run: {result.status}"
+                                f"  scanned: {result.scanned}"
+                                f"  created: {result.proposals_created}"
+                                f"  updated: {result.proposals_updated}"
+                                f"  rejected: {len(result.rejected)}\n"
+                            )
+                    elif dream_cmd == "judge":
+                        result = judge_dreaming_proposal(
+                            db,
+                            proposal_id=getattr(args, "proposal_id"),
+                            decision=getattr(args, "decision"),
+                            confidence=getattr(args, "confidence", 1.0),
+                            rationale=getattr(args, "rationale", ""),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  dreaming proposal {result.proposal_id}: {result.status}\n")
+                    elif dream_cmd == "approve":
+                        result = approve_dreaming_proposal(
+                            db,
+                            proposal_id=getattr(args, "proposal_id"),
+                            operator=getattr(args, "operator", "operator"),
+                            convert_candidate=getattr(args, "convert_candidate", False),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            extra = f" candidate={result.converted_candidate_id}" if result.converted_candidate_id else ""
+                            print(f"\n  dreaming proposal {result.proposal_id}: {result.status}{extra}\n")
+                    elif dream_cmd == "reject":
+                        result = reject_dreaming_proposal(
+                            db,
+                            proposal_id=getattr(args, "proposal_id"),
+                            reason=getattr(args, "reason", "operator rejected"),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  dreaming proposal {result.proposal_id}: {result.status}\n")
+                    else:
+                        rows = list_dreaming_proposals(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        data = [row.to_dict() for row in rows]
+                        if getattr(args, "json", False):
+                            print(json.dumps(data, indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  dreaming proposals: {len(rows)}\n")
                 elif sub == "bus":
                     from hermes_cli.learning_bus import (
                         consume_learning_events,

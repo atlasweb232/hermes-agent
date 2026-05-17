@@ -157,6 +157,7 @@ class LearningSidecarTickResult:
     monitor: Dict[str, Any]
     policy: Dict[str, Any]
     housekeeping: Dict[str, Any] = field(default_factory=dict)
+    dreaming: Dict[str, Any] = field(default_factory=dict)
     bus: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
@@ -1366,6 +1367,7 @@ def run_learning_sidecar(
     sleep_fn: Callable[[float], None] = time.sleep,
     on_tick: Optional[Callable[[LearningSidecarTickResult], None]] = None,
     housekeeping_fn: Callable[..., CandidateHousekeepingResult] = run_candidate_housekeeping,
+    dreaming_fn: Optional[Callable[..., Any]] = None,
 ) -> LearningSidecarResult:
     """Run the optional learning sidecar loop.
 
@@ -1386,7 +1388,14 @@ def run_learning_sidecar(
     housekeeping_interval = float(
         housekeeping_policy.get("interval_seconds", 3600) or 3600
     )
+    supervisor_cfg = (config or load_config()).get("supervisor", {})
+    dreaming_policy = supervisor_cfg.get("dreaming", {}) if isinstance(supervisor_cfg, dict) else {}
+    if not isinstance(dreaming_policy, dict):
+        dreaming_policy = {}
+    dreaming_interval = float(dreaming_policy.get("interval_seconds", 3600) or 3600)
+    dreaming_run_on_start = bool(dreaming_policy.get("run_on_start", False))
     last_housekeeping_at = 0.0
+    last_dreaming_at = 0.0 if dreaming_run_on_start else _now()
     while True:
         tick_errors: List[str] = []
         try:
@@ -1436,6 +1445,48 @@ def run_learning_sidecar(
                             housekeeping = {"status": "error", "error": str(exc)}
                 else:
                     housekeeping = {"status": "disabled"}
+                dreaming: Dict[str, Any] = {
+                    "status": "skipped",
+                    "reason": "disabled",
+                }
+                if dreaming_policy.get("enabled", False):
+                    current_ts = _now()
+                    due = (
+                        once
+                        or (dreaming_run_on_start and last_dreaming_at <= 0)
+                        or current_ts - last_dreaming_at >= dreaming_interval
+                    )
+                    if due:
+                        try:
+                            if dreaming_fn is None:
+                                from hermes_cli.memory_dreaming import run_dreaming
+
+                                result = run_dreaming(
+                                    db,
+                                    tenant_id=tenant_id,
+                                    repo_id=repo_id,
+                                    config=config,
+                                    trigger="sidecar_interval",
+                                    interval_due_at=current_ts,
+                                )
+                            else:
+                                result = dreaming_fn(
+                                    db,
+                                    tenant_id=tenant_id,
+                                    repo_id=repo_id,
+                                    config=config,
+                                    trigger="sidecar_interval",
+                                    interval_due_at=current_ts,
+                                )
+                            dreaming = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+                            last_dreaming_at = current_ts
+                        except Exception as exc:
+                            err = f"dreaming: {exc}"
+                            tick_errors.append(err)
+                            errors.append(err)
+                            dreaming = {"status": "error", "error": str(exc)}
+                    else:
+                        dreaming = {"status": "skipped", "reason": "interval_not_due"}
                 try:
                     from hermes_cli.learning_bus import learning_bus_metrics
 
@@ -1447,6 +1498,7 @@ def run_learning_sidecar(
                     monitor=monitor.to_dict(),
                     policy=policy.to_dict(),
                     housekeeping=housekeeping,
+                    dreaming=dreaming,
                     bus=bus,
                     errors=list(tick_errors),
                 )
@@ -1459,6 +1511,7 @@ def run_learning_sidecar(
                 monitor={"status": "error"},
                 policy={"status": "error"},
                 housekeeping={"status": "error"},
+                dreaming={"status": "error"},
                 bus={"status": "error"},
                 errors=list(tick_errors),
             )

@@ -650,6 +650,22 @@ DEFAULT_CONFIG = {
             "history_limit": 200,
             "heartbeat_stale_seconds": 600,
         },
+        "dreaming": {
+            "enabled": False,
+            "provider": "codex",
+            "model": "codex",
+            "base_url": "",
+            "allow_llm": True,
+            "allow_cross_tenant": False,
+            "allow_policy_proposals": True,
+            "require_judge": True,
+            "require_operator_approval": True,
+            "max_proposals_per_run": 10,
+            "evidence_window": 100,
+            "timeout_seconds": 300,
+            "run_on_start": False,
+            "interval_seconds": 3600,
+        },
         "learning": {
             "enabled": True,
             # Max recent records examined when synthesizing learning
