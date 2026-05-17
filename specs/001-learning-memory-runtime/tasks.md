@@ -262,6 +262,9 @@
 - [x] T091G [US7] Add `hermes runtime control create --goal ...` and `hermes runtime control goal --set|--last-response|--status --json` CLI-compatible surfaces
 - [x] T091H [US7] Surface goal status, last verdict, last reason, and turn budget in observability line items and evidence bundles
 - [x] T091I [US7] Update `docs/curator-policy-framework-architecture.md` with task-level goal continuation, judge sidecar identity, authority boundaries, and error handling
+- [x] T091J [US7] Add named model-role config helpers for `curator`, `learning_judge`, and `goal_judge` so each can use a separate Codex instance/persona
+- [x] T091K [US7] Add CLI surfaces `hermes config roles --json` and `hermes config role set <role> ... --json`
+- [x] T091L [US7] Add backend surfaces `GET /api/model/roles` and `PUT /api/model/roles/{role}` for dashboard/service configuration
 
 **Checkpoint**: Native goal continuation is available as a supervisor-owned task loop, but completion authority remains with deterministic validation and operator/judge-approved control-plane actions.
 

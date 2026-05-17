@@ -13,6 +13,7 @@ This module provides:
 """
 
 import copy
+import json
 import logging
 import os
 import platform
@@ -1196,6 +1197,19 @@ DEFAULT_CONFIG = {
             "base_url": "",
             "api_key": "",
             "timeout": 600,
+            "extra_body": {},
+        },
+        # Goal judge — native /goal and supervisor task-goal continuation.
+        # Keep this separate from curator and learning_judge so the model that
+        # synthesizes candidates cannot approve task completion.
+        "goal_judge": {
+            "enabled": True,
+            "provider": "codex",
+            "model": "codex",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 300,
+            "max_tokens": 4096,
             "extra_body": {},
         },
     },
@@ -5396,6 +5410,56 @@ def config_command(args):
             print("  hermes config set OPENROUTER_API_KEY sk-or-...")
             sys.exit(1)
         set_config_value(key, value)
+
+    elif subcmd == "roles":
+        from hermes_cli.model_roles import list_model_roles
+
+        roles = list_model_roles(load_config())
+        if getattr(args, "json", False):
+            print(json.dumps({"roles": roles}, indent=2, ensure_ascii=False))
+            return
+        print("model roles:")
+        for item in roles:
+            cfg = item["config"]
+            print(f"  {item['role']} ({item['path']}):")
+            print(f"    provider: {cfg.get('provider', '')}")
+            print(f"    model:    {cfg.get('model', '')}")
+            print(f"    base_url: {cfg.get('base_url', '') or '(provider default)'}")
+            if "enabled" in cfg:
+                print(f"    enabled:  {cfg.get('enabled')}")
+        print()
+        print("set with: hermes config role set curator --provider codex --model codex")
+
+    elif subcmd == "role":
+        role_cmd = getattr(args, "config_role_command", None)
+        if role_cmd != "set":
+            print("Usage: hermes config role set <curator|learning_judge|goal_judge> --provider <provider> --model <model>")
+            sys.exit(1)
+        from hermes_cli.model_roles import update_model_role
+
+        config = load_config()
+        try:
+            result = update_model_role(
+                config,
+                getattr(args, "role"),
+                provider=getattr(args, "provider", None),
+                model=getattr(args, "model", None),
+                base_url=getattr(args, "base_url", None),
+                enabled=getattr(args, "enabled", None),
+                timeout=getattr(args, "timeout", None),
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+        save_config(config)
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": True, "role": result}, indent=2, ensure_ascii=False))
+            return
+        cfg = result["config"]
+        print(f"✓ Updated {result['role']} ({result['path']})")
+        print(f"  provider: {cfg.get('provider', '')}")
+        print(f"  model:    {cfg.get('model', '')}")
+        print(f"  base_url: {cfg.get('base_url', '') or '(provider default)'}")
     
     elif subcmd == "path":
         print(get_config_path())

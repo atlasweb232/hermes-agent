@@ -514,6 +514,41 @@ class TestConfigRoundTrip:
         web_config["agent"]["max_turns"] = original_turns
         self.client.put("/api/config", json={"config": web_config})
 
+    def test_model_roles_backend_lists_and_updates_sidecar_roles(self):
+        from hermes_cli.config import load_config
+
+        roles = self.client.get("/api/model/roles")
+        assert roles.status_code == 200
+        role_names = {item["role"] for item in roles.json()["roles"]}
+        assert {"curator", "learning_judge", "goal_judge"} <= role_names
+
+        response = self.client.put(
+            "/api/model/roles/curator",
+            json={
+                "provider": "codex",
+                "model": "codex",
+                "base_url": "",
+                "enabled": True,
+                "timeout": 300,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["role"]["path"] == "supervisor.curator"
+
+        cfg = load_config()
+        assert cfg["supervisor"]["curator"]["provider"] == "codex"
+        assert cfg["supervisor"]["curator"]["model"] == "codex"
+        assert cfg["supervisor"]["curator"]["timeout_seconds"] == 300
+
+    def test_model_roles_backend_rejects_unknown_role(self):
+        response = self.client.put(
+            "/api/model/roles/not_a_role",
+            json={"provider": "codex", "model": "codex"},
+        )
+        assert response.status_code == 400
+
     def test_schema_types_match_config_values(self):
         """Every schema field should have a matching-type value in the config."""
         config = self.client.get("/api/config").json()

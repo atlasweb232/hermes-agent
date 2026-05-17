@@ -474,6 +474,15 @@ class ModelAssignment(BaseModel):
     task: str = ""
 
 
+class ModelRoleAssignment(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    enabled: Optional[bool] = None
+    timeout: Optional[float] = None
+    extra: Dict[str, Any] = {}
+
+
 _GATEWAY_HEALTH_URL = os.getenv("GATEWAY_HEALTH_URL")
 try:
     _GATEWAY_HEALTH_TIMEOUT = float(os.getenv("GATEWAY_HEALTH_TIMEOUT", "3"))
@@ -981,6 +990,7 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
     "mcp",
     "title_generation",
     "curator",
+    "goal_judge",
 )
 
 
@@ -1044,6 +1054,45 @@ def get_auxiliary_models():
     except Exception:
         _log.exception("GET /api/model/auxiliary failed")
         raise HTTPException(status_code=500, detail="Failed to read auxiliary config")
+
+
+@app.get("/api/model/roles")
+def get_model_roles():
+    """Return supervisor sidecar model-role configuration."""
+    try:
+        from hermes_cli.model_roles import list_model_roles
+
+        return {"roles": list_model_roles(load_config())}
+    except Exception:
+        _log.exception("GET /api/model/roles failed")
+        raise HTTPException(status_code=500, detail="Failed to read model roles")
+
+
+@app.put("/api/model/roles/{role}")
+def put_model_role(role: str, body: ModelRoleAssignment):
+    """Update one named sidecar role for backend/dashboard callers."""
+    try:
+        from hermes_cli.model_roles import update_model_role
+
+        role = (role or "").strip().lower()
+        cfg = load_config()
+        result = update_model_role(
+            cfg,
+            role,
+            provider=body.provider,
+            model=body.model,
+            base_url=body.base_url,
+            enabled=body.enabled,
+            timeout=body.timeout,
+            extra=body.extra,
+        )
+        save_config(cfg)
+        return {"ok": True, "role": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("PUT /api/model/roles/%s failed", role)
+        raise HTTPException(status_code=500, detail="Failed to update model role")
 
 
 @app.post("/api/model/set")

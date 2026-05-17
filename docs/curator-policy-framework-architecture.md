@@ -1313,6 +1313,23 @@ Operational surfaces:
 - `hermes runtime control goal --task-id ... --last-response ... --json`
 - `hermes runtime control goal --task-id ... --status --json`
 - `hermes memory observe list --item-type supervisor_task --json`
+- `hermes config roles --json`
+- `hermes config role set curator --provider codex --model codex --json`
+- `hermes config role set learning_judge --provider codex --model codex --json`
+- `hermes config role set goal_judge --provider codex --model codex --json`
+- `GET /api/model/roles`
+- `PUT /api/model/roles/{role}`
+
+The named role config paths are:
+
+- `curator` -> `supervisor.curator`
+- `learning_judge` -> `supervisor.learning_judge`
+- `goal_judge` -> `auxiliary.goal_judge`
+
+These roles may all use `provider=codex` and `model=codex`, but they should be
+invoked as separate sessions/personas with separate audit records. The curator
+must not approve its own output, and the same worker transcript should not be
+treated as both implementation evidence and approval evidence.
 
 Error handling:
 

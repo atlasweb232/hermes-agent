@@ -10765,6 +10765,22 @@ Examples:
     )
     config_set.add_argument("value", nargs="?", help="Value to set")
 
+    # config roles
+    config_roles = config_subparsers.add_parser("roles", help="Show curator/judge model-role configuration")
+    config_roles.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    # config role
+    config_role = config_subparsers.add_parser("role", help="Configure a named curator/judge model role")
+    config_role_sub = config_role.add_subparsers(dest="config_role_command")
+    config_role_set = config_role_sub.add_parser("set", help="Set a named model role")
+    config_role_set.add_argument("role", choices=["curator", "learning_judge", "goal_judge"])
+    config_role_set.add_argument("--provider", help="Provider, e.g. codex, custom, ollama")
+    config_role_set.add_argument("--model", help="Model name, e.g. codex")
+    config_role_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
+    config_role_set.add_argument("--timeout", type=float, help="Role request timeout in seconds")
+    config_role_set.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
+    config_role_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     # config path
     config_subparsers.add_parser("path", help="Print config file path")
 
