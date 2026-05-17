@@ -136,6 +136,37 @@ Kafka/Redpanda is useful when:
 Kafka is overkill when there is one VM or one laptop. Start with the same bus
 interface and SQLite backend, then deploy Redpanda/Kafka for global operation.
 
+## Tiered Sidecar Model Deployment
+
+Global memory sidecars should not all use the same expensive reasoning model.
+Model choice is a config concern exposed through `supervisor.sidecar_model_tiers`
+and role-specific `supervisor.sidecar_models.*` assignments.
+
+Default tier intent:
+
+- `programmatic`: no LLM; deterministic index fanout, sync, leases, and
+  housekeeping.
+- `low_cost_reasoning`: bounded extraction/capture work using a cheaper hosted
+  reasoning model, for example DeepSeek Reasoner or MiniMax.
+- `balanced_reasoning`: synthesis work where quality matters but mistakes are
+  still advisory, for example wiki compilation.
+- `strong_reasoning`: judge, curator, dreaming, and approval-adjacent work
+  where false positives are costly.
+
+Resolution order:
+
+1. Explicit role override, for example
+   `supervisor.sidecar_models.claim_extractor.provider=minimax`.
+2. Role tier, for example
+   `supervisor.sidecar_models.claim_extractor.tier=low_cost_reasoning`.
+3. Built-in safe defaults.
+
+This keeps provider experiments transparent. Changing DeepSeek to MiniMax, or
+later to a local GPU-hosted model, should not require sidecar code changes.
+Operators can inspect and change the routing through `hermes config tiers
+--json`, `hermes config tier set <tier> ...`, `GET /api/model/tiers`, and
+`PUT /api/model/tiers/{tier}`.
+
 ## Event Topics
 
 Global topics should be narrow and replayable:

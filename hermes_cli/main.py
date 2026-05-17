@@ -10769,6 +10769,23 @@ Examples:
     config_roles = config_subparsers.add_parser("roles", help="Show curator/judge model-role configuration")
     config_roles.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    # config tiers
+    config_tiers = config_subparsers.add_parser("tiers", help="Show sidecar model tier configuration")
+    config_tiers.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    # config tier
+    config_tier = config_subparsers.add_parser("tier", help="Configure a named sidecar model tier")
+    config_tier_sub = config_tier.add_subparsers(dest="config_tier_command")
+    config_tier_set = config_tier_sub.add_parser("set", help="Set a sidecar model tier")
+    config_tier_set.add_argument("tier", help="Tier name, e.g. low_cost_reasoning")
+    config_tier_set.add_argument("--provider", help="Provider, e.g. deepseek, minimax, codex, ollama")
+    config_tier_set.add_argument("--model", help="Model name, e.g. deepseek-reasoner")
+    config_tier_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
+    config_tier_set.add_argument("--timeout", type=float, help="Tier request timeout in seconds")
+    config_tier_set.add_argument("--allow-llm", action=argparse.BooleanOptionalAction, default=None)
+    config_tier_set.add_argument("--description", help="Human-readable tier description")
+    config_tier_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     # config role
     config_role = config_subparsers.add_parser("role", help="Configure a named curator/judge model role")
     config_role_sub = config_role.add_subparsers(dest="config_role_command")
@@ -10788,6 +10805,7 @@ Examples:
     )
     config_role_set.add_argument("--provider", help="Provider, e.g. codex, custom, ollama")
     config_role_set.add_argument("--model", help="Model name, e.g. codex")
+    config_role_set.add_argument("--tier", help="Model tier, e.g. low_cost_reasoning, balanced_reasoning, strong_reasoning")
     config_role_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
     config_role_set.add_argument("--timeout", type=float, help="Role request timeout in seconds")
     config_role_set.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)

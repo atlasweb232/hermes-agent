@@ -94,7 +94,8 @@ def test_model_roles_include_discussion_sidecars(_isolate_hermes_home):
     assert {"discussion_capture", "claim_extractor", "wiki_compiler", "dreaming", "citation_validator"} <= names
     role = get_model_role(load_config(), "claim_extractor")
     assert role["path"] == "supervisor.sidecar_models.claim_extractor"
-    assert role["config"]["provider"] == "codex"
+    assert role["tier"] == "low_cost_reasoning"
+    assert role["config"]["provider"] == "deepseek"
 
 
 def test_normalize_proposal_adds_hashes_and_simhash():

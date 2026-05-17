@@ -477,9 +477,20 @@ class ModelAssignment(BaseModel):
 class ModelRoleAssignment(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
+    tier: Optional[str] = None
     base_url: Optional[str] = None
     enabled: Optional[bool] = None
     timeout: Optional[float] = None
+    extra: Dict[str, Any] = {}
+
+
+class ModelTierAssignment(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    allow_llm: Optional[bool] = None
+    timeout: Optional[float] = None
+    description: Optional[str] = None
     extra: Dict[str, Any] = {}
 
 
@@ -1060,12 +1071,53 @@ def get_auxiliary_models():
 def get_model_roles():
     """Return supervisor sidecar model-role configuration."""
     try:
-        from hermes_cli.model_roles import list_model_roles
+        from hermes_cli.model_roles import list_model_roles, list_model_tiers
 
-        return {"roles": list_model_roles(load_config())}
+        cfg = load_config()
+        return {"roles": list_model_roles(cfg), "tiers": list_model_tiers(cfg)}
     except Exception:
         _log.exception("GET /api/model/roles failed")
         raise HTTPException(status_code=500, detail="Failed to read model roles")
+
+
+@app.get("/api/model/tiers")
+def get_model_tiers():
+    """Return sidecar model tier configuration."""
+    try:
+        from hermes_cli.model_roles import list_model_tiers
+
+        return {"tiers": list_model_tiers(load_config())}
+    except Exception:
+        _log.exception("GET /api/model/tiers failed")
+        raise HTTPException(status_code=500, detail="Failed to read model tiers")
+
+
+@app.put("/api/model/tiers/{tier}")
+def put_model_tier(tier: str, body: ModelTierAssignment):
+    """Update a named sidecar model tier for backend/dashboard callers."""
+    try:
+        from hermes_cli.model_roles import update_model_tier
+
+        tier = (tier or "").strip().lower()
+        cfg = load_config()
+        result = update_model_tier(
+            cfg,
+            tier,
+            provider=body.provider,
+            model=body.model,
+            base_url=body.base_url,
+            allow_llm=body.allow_llm,
+            timeout=body.timeout,
+            description=body.description,
+            extra=body.extra,
+        )
+        save_config(cfg)
+        return {"ok": True, "tier": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("PUT /api/model/tiers/%s failed", tier)
+        raise HTTPException(status_code=500, detail="Failed to update model tier")
 
 
 @app.put("/api/model/roles/{role}")
@@ -1081,6 +1133,7 @@ def put_model_role(role: str, body: ModelRoleAssignment):
             role,
             provider=body.provider,
             model=body.model,
+            tier=body.tier,
             base_url=body.base_url,
             enabled=body.enabled,
             timeout=body.timeout,

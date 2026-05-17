@@ -74,3 +74,106 @@ def test_config_roles_cli_lists_three_operational_roles(_isolate_hermes_home, ca
         "dreaming",
         "citation_validator",
     }
+
+
+def test_sidecar_roles_resolve_through_model_tiers(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import get_model_role, list_model_tiers
+
+    cfg = load_config()
+    tiers = list_model_tiers(cfg)
+    capture = get_model_role(cfg, "discussion_capture")
+    extractor = get_model_role(cfg, "claim_extractor")
+    compiler = get_model_role(cfg, "wiki_compiler")
+    dreaming = get_model_role(cfg, "dreaming")
+
+    assert {"programmatic", "low_cost_reasoning", "balanced_reasoning", "strong_reasoning"} <= set(tiers)
+    assert capture["tier"] == "low_cost_reasoning"
+    assert capture["config"]["provider"] == tiers["low_cost_reasoning"]["provider"]
+    assert extractor["config"]["model"] == "deepseek-reasoner"
+    assert compiler["tier"] == "balanced_reasoning"
+    assert dreaming["tier"] == "strong_reasoning"
+
+
+def test_role_specific_provider_override_beats_tier(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import get_model_role, update_model_role
+
+    cfg = load_config()
+    update_model_role(
+        cfg,
+        "claim_extractor",
+        tier="low_cost_reasoning",
+        provider="minimax",
+        model="MiniMax-M2",
+    )
+
+    role = get_model_role(cfg, "claim_extractor")
+    assert role["tier"] == "low_cost_reasoning"
+    assert role["config"]["provider"] == "minimax"
+    assert role["config"]["model"] == "MiniMax-M2"
+
+
+def test_config_role_cli_sets_sidecar_tier(_isolate_hermes_home, capsys):
+    from hermes_cli import main as hermes_main
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import get_model_role
+
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "hermes",
+            "config",
+            "role",
+            "set",
+            "wiki_compiler",
+            "--tier",
+            "low_cost_reasoning",
+            "--json",
+        ],
+    ):
+        hermes_main.main()
+
+    output = json.loads(capsys.readouterr().out)
+    role = get_model_role(load_config(), "wiki_compiler")
+
+    assert output["ok"] is True
+    assert output["role"]["tier"] == "low_cost_reasoning"
+    assert role["config"]["provider"] == "deepseek"
+
+
+def test_config_tier_cli_updates_low_cost_provider(_isolate_hermes_home, capsys):
+    from hermes_cli import main as hermes_main
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import get_model_role, get_model_tier
+
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "hermes",
+            "config",
+            "tier",
+            "set",
+            "low_cost_reasoning",
+            "--provider",
+            "minimax",
+            "--model",
+            "MiniMax-M2",
+            "--base-url",
+            "https://api.minimax.io/v1",
+            "--json",
+        ],
+    ):
+        hermes_main.main()
+
+    output = json.loads(capsys.readouterr().out)
+    cfg = load_config()
+    tier = get_model_tier(cfg, "low_cost_reasoning")
+    role = get_model_role(cfg, "discussion_capture")
+
+    assert output["ok"] is True
+    assert tier["provider"] == "minimax"
+    assert tier["model"] == "MiniMax-M2"
+    assert role["config"]["provider"] == "minimax"

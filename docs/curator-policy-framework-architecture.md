@@ -1140,38 +1140,46 @@ Each sidecar should run out-of-band with bounded leases, timeouts, rate limits,
 and learning-job records. Failures must be observable but non-blocking for
 chat, task execution, worker delegation, and repo validation.
 
-LLM-backed sidecars should have separate configured model roles even when they
-all use `provider=codex` and `model=codex` initially. "Separate" means separate
-role config, prompt contract, invocation/session id, job id, and audit trail;
-not necessarily a different vendor model on day one.
+LLM-backed sidecars should have separate configured model roles. "Separate"
+means separate role config, prompt contract, invocation/session id, job id, and
+audit trail; not necessarily a different vendor model on day one.
+
+Sidecar model selection is tiered so lower-risk background work can use cheaper
+hosted models while high-impact approval and policy work remains on stronger
+reasoning models. Role-specific provider/model overrides always win; otherwise
+the role inherits from its configured tier.
 
 Recommended model-role split:
 
 ```yaml
 supervisor:
+  sidecar_model_tiers:
+    programmatic:
+      provider: ""
+      model: ""
+      allow_llm: false
+    low_cost_reasoning:
+      provider: deepseek
+      model: deepseek-reasoner
+      base_url: https://api.deepseek.com
+    balanced_reasoning:
+      provider: codex
+      model: codex
+    strong_reasoning:
+      provider: codex
+      model: codex
   sidecar_models:
     discussion_capture:
-      provider: codex
-      model: codex
+      tier: low_cost_reasoning
     claim_extractor:
-      provider: codex
-      model: codex
+      tier: low_cost_reasoning
     wiki_compiler:
-      provider: codex
-      model: codex
+      tier: balanced_reasoning
     dreaming:
-      provider: codex
-      model: codex
-    curator:
-      provider: codex
-      model: codex
-    learning_judge:
-      provider: codex
-      model: codex
+      tier: strong_reasoning
     citation_validator:
       mode: deterministic_first
-      provider: codex
-      model: codex
+      tier: low_cost_reasoning
     indexer:
       mode: programmatic
       embedding_provider: openai
@@ -1192,6 +1200,11 @@ Role boundaries:
   chat LLM should rewrite approved claims during indexing or sync.
 - The same model family can be reused, but the same invocation cannot both
   generate and approve a memory/wiki/policy/training artifact.
+- Tier defaults are operator policy, not architectural truth. Operators can set
+  `low_cost_reasoning` to DeepSeek, MiniMax, Ollama, or any hosted
+  OpenAI-compatible provider without changing sidecar code.
+- Judges and approval gates should default to `strong_reasoning` unless a
+  cheaper model has demonstrated low false-approval risk on local evals.
 
 Scope and sharing defaults:
 

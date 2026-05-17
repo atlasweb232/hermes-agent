@@ -191,6 +191,9 @@
 - [x] T070O [US5] Add global proposal metadata validators and idempotency keys for randomly arriving chunks from many Hermes instances
 - [x] T070P [US5] Add global dedupe/reconcile sidecar tests for exact duplicate, near duplicate, same evidence, same topic, conflict, and supersedes classes
 - [x] T070Q [US5] Add global index fanout tasks for lexical, vector, and graph stores after canonical approval
+- [x] T070R [US5] Add tiered sidecar model deployment config so programmatic, low-cost reasoning, balanced reasoning, and strong reasoning roles can be routed transparently to DeepSeek, MiniMax, Codex, Ollama, or future hosted/local providers
+- [x] T070S [US5] Update model-role tests and architecture docs to prove role-specific overrides win over tier defaults and judges/approval gates remain on the strong reasoning tier by default
+- [x] T070T [US5] Add CLI/backend tier configuration surfaces so operators can change a tier once through `hermes config tier set ...` or `/api/model/tiers/{tier}` instead of editing every sidecar role
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 

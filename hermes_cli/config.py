@@ -639,6 +639,52 @@ DEFAULT_CONFIG = {
             "max_attempts": 3,
             "max_events_per_run": 50,
         },
+        "sidecar_model_tiers": {
+            "programmatic": {
+                "description": "No model call; deterministic parsing, indexing, and sync only.",
+                "provider": "",
+                "model": "",
+                "base_url": "",
+                "allow_llm": False,
+                "timeout_seconds": 60,
+            },
+            "low_cost_reasoning": {
+                "description": "Cheap hosted reasoning tier for bounded capture/extraction sidecars.",
+                "provider": "deepseek",
+                "model": "deepseek-reasoner",
+                "base_url": "https://api.deepseek.com",
+                "allow_llm": True,
+                "timeout_seconds": 180,
+            },
+            "balanced_reasoning": {
+                "description": "Moderate-cost reasoning tier for compilation and synthesis sidecars.",
+                "provider": "codex",
+                "model": "codex",
+                "base_url": "",
+                "allow_llm": True,
+                "timeout_seconds": 300,
+            },
+            "strong_reasoning": {
+                "description": "Strong reasoning tier for judges, approval gates, and high-impact curation.",
+                "provider": "codex",
+                "model": "codex",
+                "base_url": "",
+                "allow_llm": True,
+                "timeout_seconds": 300,
+            },
+        },
+        "sidecar_models": {
+            "discussion_capture": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 120},
+            "claim_extractor": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 300},
+            "citation_validator": {
+                "enabled": True,
+                "mode": "deterministic_first",
+                "tier": "low_cost_reasoning",
+                "timeout_seconds": 120,
+            },
+            "wiki_compiler": {"enabled": True, "tier": "balanced_reasoning", "timeout_seconds": 300},
+            "dreaming": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 300},
+        },
         "global_memory_wiki": {
             "enabled": False,
             "instance_id": "auto",
@@ -5486,23 +5532,81 @@ def config_command(args):
         set_config_value(key, value)
 
     elif subcmd == "roles":
-        from hermes_cli.model_roles import list_model_roles
+        from hermes_cli.model_roles import list_model_roles, list_model_tiers
 
-        roles = list_model_roles(load_config())
+        cfg = load_config()
+        roles = list_model_roles(cfg)
+        tiers_by_name = list_model_tiers(cfg)
         if getattr(args, "json", False):
-            print(json.dumps({"roles": roles}, indent=2, ensure_ascii=False))
+            print(json.dumps({"roles": roles, "tiers": tiers_by_name}, indent=2, ensure_ascii=False))
             return
+        tiers = {item.get("tier") for item in roles if item.get("tier")}
         print("model roles:")
         for item in roles:
             cfg = item["config"]
             print(f"  {item['role']} ({item['path']}):")
+            if item.get("tier"):
+                print(f"    tier:     {item.get('tier')}")
             print(f"    provider: {cfg.get('provider', '')}")
             print(f"    model:    {cfg.get('model', '')}")
             print(f"    base_url: {cfg.get('base_url', '') or '(provider default)'}")
             if "enabled" in cfg:
                 print(f"    enabled:  {cfg.get('enabled')}")
+        if tiers:
+            print()
+            print("active tiers: " + ", ".join(sorted(tiers)))
         print()
         print("set with: hermes config role set curator --provider codex --model codex")
+        print("or:       hermes config role set claim_extractor --tier low_cost_reasoning")
+
+    elif subcmd == "tiers":
+        from hermes_cli.model_roles import list_model_tiers
+
+        tiers_by_name = list_model_tiers(load_config())
+        if getattr(args, "json", False):
+            print(json.dumps({"tiers": tiers_by_name}, indent=2, ensure_ascii=False))
+            return
+        print("model tiers:")
+        for name, cfg in tiers_by_name.items():
+            print(f"  {name}:")
+            print(f"    provider:  {cfg.get('provider', '')}")
+            print(f"    model:     {cfg.get('model', '')}")
+            print(f"    base_url:  {cfg.get('base_url', '') or '(provider default)'}")
+            print(f"    allow_llm: {cfg.get('allow_llm')}")
+            print(f"    timeout:   {cfg.get('timeout_seconds', '')}")
+        print()
+        print("set with: hermes config tier set low_cost_reasoning --provider deepseek --model deepseek-reasoner")
+
+    elif subcmd == "tier":
+        tier_cmd = getattr(args, "config_tier_command", None)
+        if tier_cmd != "set":
+            print("Usage: hermes config tier set <tier> --provider <provider> --model <model>")
+            sys.exit(1)
+        from hermes_cli.model_roles import update_model_tier
+
+        config = load_config()
+        try:
+            result = update_model_tier(
+                config,
+                getattr(args, "tier"),
+                provider=getattr(args, "provider", None),
+                model=getattr(args, "model", None),
+                base_url=getattr(args, "base_url", None),
+                allow_llm=getattr(args, "allow_llm", None),
+                timeout=getattr(args, "timeout", None),
+                description=getattr(args, "description", None),
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+        save_config(config)
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": True, "tier": result}, indent=2, ensure_ascii=False))
+            return
+        print(f"✓ Updated tier {result.get('tier')}")
+        print(f"  provider:  {result.get('provider', '')}")
+        print(f"  model:     {result.get('model', '')}")
+        print(f"  base_url:  {result.get('base_url', '') or '(provider default)'}")
 
     elif subcmd == "role":
         role_cmd = getattr(args, "config_role_command", None)
@@ -5521,6 +5625,7 @@ def config_command(args):
                 base_url=getattr(args, "base_url", None),
                 enabled=getattr(args, "enabled", None),
                 timeout=getattr(args, "timeout", None),
+                tier=getattr(args, "tier", None),
             )
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
@@ -5531,6 +5636,7 @@ def config_command(args):
             return
         cfg = result["config"]
         print(f"✓ Updated {result['role']} ({result['path']})")
+        print(f"  tier:     {result.get('tier', '')}")
         print(f"  provider: {cfg.get('provider', '')}")
         print(f"  model:    {cfg.get('model', '')}")
         print(f"  base_url: {cfg.get('base_url', '') or '(provider default)'}")
