@@ -344,6 +344,106 @@ No sidecar should write raw LLM output directly into canonical memory. Canonical
 writes require normalized metadata, evidence refs, dedupe status, judge result,
 and audit record.
 
+## Global Pre-Curation Dedupe Gate
+
+Local runtimes should not spend curator or dreaming tokens rediscovering a
+failure/repair pattern that already exists as approved global memory. Before a
+local event enters expensive curation, the runtime should normalize the event
+and check global approved memory.
+
+Required local event signatures:
+
+- `failure_signature`: normalized command, tool, provider, model, exception
+  class, stderr hash, validation failure, or repeated-progress signature.
+- `success_signature`: known working command, repair action, validation command,
+  completion evidence hash, or policy repair action.
+- `scope_signature`: tenant, repo, platform, language/framework, tool,
+  task_type, worker_kind, and sensitivity.
+- `evidence_signature`: hashes/refs for bounded logs, task ids, commits,
+  validation outputs, or approved memory refs.
+
+Pre-curation flow:
+
+```text
+local event emitted
+  -> local normalizer computes signatures
+  -> local hot/warm memory lookup
+  -> global approved-memory lookup
+  -> exact global hit:
+       attach global canonical id
+       skip local expensive curation
+       record global_lesson_hit
+  -> high-confidence near global hit:
+       create lightweight local confirmation
+       skip LLM curator unless configured otherwise
+       record global_lesson_near_hit
+  -> no hit:
+       local curator may run
+       record global_lesson_miss
+```
+
+This gate is not enforcement. It is a cost and dedupe control. The foreground
+task can use approved global memory as compact advisory context, but local
+execution still follows the supervisor, policy engine, judge, and operator
+boundaries.
+
+Implementation should expose this decision as a deterministic helper such as
+`should_curate_locally(event)`, returning one of `skip_global_exact_hit`,
+`confirm_global_near_hit`, or `curate_locally`.
+
+The local runtime must record reuse metrics:
+
+- `global_lesson_hit`: exact approved global lesson matched.
+- `global_lesson_near_hit`: near match found, local confirmation recorded.
+- `global_lesson_used`: lesson was injected or attached to a task packet.
+- `global_lesson_helped`: later validation suggests it reduced failures or
+  improved completion.
+- `global_lesson_ignored`: retrieved but not used by the worker/supervisor.
+- `global_lesson_hurt`: retrieved lesson correlated with worse outcome and
+  should be decayed or reviewed.
+
+These counters feed global confidence and retrieval ranking. They must never
+promote private local evidence globally without the normal approval path.
+
+## Local Dreaming Vs Global Dreaming
+
+Local and global dreaming are separate sidecar roles.
+
+Local dreaming:
+
+- reads local approved memory/wiki evidence only
+- defaults to tenant/repo/device scope
+- proposes local playbooks, tests, cleanup, architecture work, or policy ideas
+- cannot publish directly to global memory
+- cannot change runtime prompts, config, routing, or enforcement
+
+Global dreaming:
+
+- reads only globally approved, redacted, shareable canonical memory/wiki
+- looks for cross-tenant/cross-repo patterns, contradictions, drift, and
+  reusable training/eval candidates
+- proposes global wiki updates, eval fixtures, training candidates, or policy
+  candidates
+- requires stronger judge review and operator approval
+- never reads private raw logs or private local proposal storage
+- never pushes changes directly to local runtimes
+
+Promotion hierarchy:
+
+```text
+local raw event
+  -> local candidate
+  -> local approved memory
+  -> global promotion candidate
+  -> global judge/operator approval
+  -> global canonical memory/wiki
+  -> local runtimes retrieve approved global lesson
+```
+
+Global dreaming may suggest that many local lessons should be consolidated, but
+only the global reconcile/judge/operator chain can make a canonical global
+write.
+
 ## Access Control
 
 Global does not mean visible to everyone.
@@ -372,6 +472,10 @@ claim may be globally proposed only when evidence and approval support it.
 8. Add reconcile and judge sidecars.
 9. Add canonical write path and audit table.
 10. Add index fanout and device sync deltas.
+11. Add global pre-curation dedupe gate before expensive local curator/dreaming
+    work.
+12. Add global lesson reuse counters and confidence feedback.
+13. Add separate local/global dreaming roles and sidecar leases.
 
 ## Production Scale-Out And Evaluation
 

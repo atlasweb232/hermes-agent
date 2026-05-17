@@ -1683,3 +1683,17 @@ Low-end model findings are evidence, not authority. They may become memory
 candidates or advisory policies only through the normal curator -> judge ->
 operator chain. They must not directly mutate routing, prompts, tool config,
 global wiki records, training exports, or enforcement policies.
+
+Production sidecars should also avoid duplicate work across the global memory
+layer. Before local curator/dreaming spends model tokens on a failure, the local
+normalizer should compute failure/success/scope signatures and query approved
+global memory. Exact global hits attach the canonical global lesson id and skip
+local expensive curation. Near hits create lightweight local confirmation unless
+the operator explicitly asks for local recuration. Misses proceed through the
+local curator path.
+
+Local dreaming remains repo/tenant/device scoped. Global dreaming is a separate
+role over approved, redacted, shareable global memory only. Neither local nor
+global dreaming can alter live execution; both produce proposals that require
+judge/operator conversion before they become approved memory, wiki updates,
+training records, eval fixtures, or policy candidates.
