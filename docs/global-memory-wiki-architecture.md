@@ -372,3 +372,37 @@ claim may be globally proposed only when evidence and approval support it.
 8. Add reconcile and judge sidecars.
 9. Add canonical write path and audit table.
 10. Add index fanout and device sync deltas.
+
+## Production Scale-Out And Evaluation
+
+Global memory scale-out should be driven by measured need, not by default
+infrastructure weight. The default remains local filesystem/SQLite for one
+laptop or one VM. Production deployments add services only when the workload
+requires them:
+
+- Redpanda/Kafka when many Hermes instances publish randomly and replay/dead
+  letter handling matters.
+- Object storage when raw evidence and redacted artifacts exceed local cache
+  limits.
+- Vector index when lexical/hash/entity retrieval misses relevant approved
+  memories.
+- Graph index when tenant/domain/tool/error relationships become important for
+  multi-hop retrieval.
+
+The production validation loop should compare low-cost workers before and after
+memory retrieval:
+
+```text
+baseline task run
+  -> no memory packet
+  -> capture failures and validation gaps
+memory-assisted task run
+  -> classifier + metadata filters + compact packet
+  -> capture success, reduced repeats, and packet usefulness
+judge/operator review
+  -> promote only durable lessons
+```
+
+This keeps the global wiki useful for both runtime improvement and future
+training-corpus construction while preventing noisy, speculative, or
+tenant-inappropriate memories from spreading across devices.

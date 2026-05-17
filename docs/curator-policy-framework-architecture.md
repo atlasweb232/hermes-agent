@@ -1625,3 +1625,61 @@ These media choices are operator configuration, not learning-policy output.
 Curator/dreaming/judge sidecars may recommend cheaper media providers, but they
 must not silently enable paid voice/image generation or mutate API-key-backed
 tool configuration without operator approval.
+
+## Production Runtime Surfaces And Low-End Model Validation
+
+The next implementation phase should prove that the orchestration stack creates
+measurable value for cheaper or weaker models. The test target is not "can a
+strong supervisor solve the task"; it is "does the system help a lower-cost
+worker avoid mistakes it previously repeated."
+
+The validation loop is:
+
+```text
+task fixture
+  -> baseline low-cost worker run without injected memory
+  -> record failures, retries, validation gaps, token estimate, wall time
+  -> same worker with task classifier + memory packet + policy hints
+  -> judge validates outcome and evidence
+  -> compare improvement metrics
+  -> approved lesson/policy only if judge + operator allow it
+```
+
+Required metrics:
+
+- task success or completion status
+- repeated command/error signatures
+- failed tool-call count
+- validation evidence completeness
+- memory packet relevance and token size
+- blocker count and escalation count
+- wall time and approximate token/cost footprint
+- cross-tenant or cross-repo retrieval violations
+
+The supervisor should use cheaper models for bounded worker execution and keep
+strong reasoning models for judge/curator/approval roles. A typical deployment
+is:
+
+```text
+supervisor: Codex / strong reasoning
+curator: Codex / strong reasoning, or configured reasoning tier
+learning_judge: Codex / strong reasoning
+worker: MiniMax, DeepSeek, Claude Code, or other lower-cost model
+sidecars: low_cost_reasoning where safe, programmatic where possible
+```
+
+Production runtime surfaces still needed:
+
+- richer observability frontend with active/historical jobs, tenant/repo/date
+  filters, blockers, worker state, completion state, and line-item drilldown
+- realtime voice transport behind the existing `voice.realtime` config
+- Redpanda/Kafka deployment helpers behind the global bus interface
+- memory wiki scale-out adapters for object storage, state store, vector index,
+  and graph index
+- training corpus bundle writer with JSONL first, optional Parquet, manifest,
+  approval refs, redaction report, and reproducible hashes
+
+Low-end model findings are evidence, not authority. They may become memory
+candidates or advisory policies only through the normal curator -> judge ->
+operator chain. They must not directly mutate routing, prompts, tool config,
+global wiki records, training exports, or enforcement policies.

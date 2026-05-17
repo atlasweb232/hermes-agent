@@ -296,6 +296,37 @@
 - [ ] T097 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
 - [ ] T098 Push branch and record commit hashes for local and VM deployments
 
+## Phase 11: Production Runtime Surfaces And Low-End Model Validation (Priority: P8)
+
+**Goal**: Turn the architecture into production-ready surfaces that can be tested with lower-cost models. The system should prove that memory packets, judge gates, sidecars, observability, and policy hints improve task convergence for weaker/cheaper workers without bloating runtime infrastructure.
+
+**Independent Test**: Run the same branch-inspection, repair, and form-fill planning tasks with a low-cost worker model before and after memory/judge/sidecar injection. Verify fewer repeated mistakes, fewer failed tool calls, better validation evidence, bounded token use, and no unauthorized memory/policy/config mutation.
+
+### Tests for Production Runtime Surfaces
+
+- [ ] T099 [P] [US8] Add low-end model baseline eval fixtures for repeated command failure, branch triage, validation discipline, and worker handoff quality in `tests/hermes_cli/test_low_end_model_evals.py`
+- [ ] T100 [P] [US8] Add memory-injection improvement tests proving task classifier + metadata retrieval + compact packet reduce repeated mistakes for cheaper workers without leaking unrelated tenant/repo lessons
+- [ ] T101 [P] [US8] Add observability UI/API tests for historical jobs, active jobs, tenant/repo/date filters, worker status, blocker reason, completion status, line-item drilldown, and scoped Ask analysis
+- [ ] T102 [P] [US8] Add realtime voice config/transport tests for OpenAI `gpt-realtime-2`, MiniMax `speech-2.8`, and xAI/Grok provider selection, fallback reporting, and no secret leakage
+- [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving idempotent publish/consume/replay/dead-letter behavior
+- [ ] T104 [P] [US8] Add training corpus export tests for JSONL/Parquet bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters
+- [ ] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
+
+### Implementation for Production Runtime Surfaces
+
+- [ ] T106 [US8] Implement a low-end model eval runner that records baseline vs memory-assisted metrics: task success, tool error count, repeated error signatures, validation completeness, token estimate, wall time, and escalation count
+- [ ] T107 [US8] Implement compact task-memory retrieval profiles for low-cost workers, including strict top-k caps, exact metadata filters, command/error signature matching, semantic fallback, and negative-feedback demotion
+- [ ] T108 [US8] Implement richer observability frontend/backend surfaces for active/historical jobs: tenant, repo, task description, worker, model, Spec Kit refs, architecture refs, task list refs, blocker status, completion status, evidence bundle, and scoped Ask analysis
+- [ ] T109 [US8] Implement realtime voice transport behind the existing `voice.realtime` config, with provider adapters for OpenAI realtime first and MiniMax/xAI-compatible extension points
+- [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend
+- [ ] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
+- [ ] T112 [US8] Implement training corpus bundle writer with JSONL first, Parquet optional, manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility
+- [ ] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
+- [ ] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
+- [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
+
+**Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -306,6 +337,7 @@
 - User Story 5 depends on approved memory from User Story 2 and retrieval/tier rules from User Story 4.
 - User Story 6 can begin after job records are available and should expand as each sidecar path lands.
 - User Story 7 depends on runtime packet schemas, learning jobs, event bus, and observability surfaces so stale/looping work can be audited and recovered.
+- User Story 8 depends on Phase 10 validation and should start with low-end model eval instrumentation before production backend scale-out.
 
 ## Parallel Opportunities
 
@@ -313,6 +345,7 @@
 - Supervisor control-plane tests can be developed in parallel after runtime packet schemas and learning job helpers are stable.
 - CLI contracts and docs can be updated in parallel with implementation after data-model fields stabilize.
 - Dashboard/backend observability can start once `learning_jobs.py` exposes stable JSON.
+- Low-end model eval fixtures, realtime voice adapters, global bus adapters, memory wiki backends, and training export tests can be developed in parallel because they share only config contracts and DTOs.
 
 ## Implementation Strategy
 
@@ -334,3 +367,4 @@
 7. Observability dashboard/API.
 8. Supervisor convergence control plane.
 9. Future enforcement mode only after audit evidence, judge approval, and operator approval.
+10. Production runtime surfaces and low-end model validation after Phase 10 smoke tests.
