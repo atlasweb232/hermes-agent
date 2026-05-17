@@ -273,6 +273,64 @@ class GlobalPreCurationDecision:
         return asdict(self)
 
 
+@dataclass
+class GlobalLessonRecord:
+    id: str
+    approval_state: str
+    scope: str
+    sensitivity: str
+    visibility: str
+    claim_type: str
+    normalized_text: str
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    tool: str = ""
+    task_type: str = ""
+    worker_kind: str = ""
+    failure_signature: str = ""
+    success_signature: str = ""
+    scope_signature: str = ""
+    evidence_signature: str = ""
+    text_hash: str = ""
+    simhash: str = ""
+    confidence: float = 0.0
+    reuse_stats: Dict[str, int] = field(default_factory=dict)
+    approval_provenance: Dict[str, Any] = field(default_factory=dict)
+    evidence_refs: List[str] = field(default_factory=list)
+    citation_refs: List[str] = field(default_factory=list)
+    cross_tenant_shareable: bool = False
+    created_at: float = field(default_factory=_now)
+    updated_at: float = field(default_factory=_now)
+    retired_at: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class GlobalLessonRetrievalAudit:
+    query_id: str
+    event_id: str
+    considered: int = 0
+    returned: int = 0
+    exact_matches: int = 0
+    near_matches: int = 0
+    rejected: List[Dict[str, Any]] = field(default_factory=list)
+    matched: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class GlobalLessonRetrievalResult:
+    lessons: List[Dict[str, Any]]
+    audit: GlobalLessonRetrievalAudit
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"lessons": self.lessons, "audit": self.audit.to_dict()}
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -575,6 +633,26 @@ def _lesson_confidence(lesson: Dict[str, Any]) -> float:
         return 0.0
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _as_json_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
 def _exact_lesson_match(event: GlobalPreCurationEvent, lesson: Dict[str, Any]) -> bool:
     for key in ("failure_signature", "success_signature", "scope_signature", "evidence_signature"):
         event_value = str(getattr(event, key) or "")
@@ -598,6 +676,261 @@ def _near_lesson_match(event: GlobalPreCurationEvent, lesson: Dict[str, Any], *,
             return False
         lesson_simhash = simple_simhash(lesson_text)
     return hamming_distance_hex(simple_simhash(event.normalized_text), lesson_simhash) <= max_distance
+
+
+def _normalize_global_lesson(raw: Dict[str, Any]) -> GlobalLessonRecord:
+    data = dict(raw or {})
+    normalized_text = _normalize_text(str(data.get("normalized_text") or data.get("claim") or ""))
+    lesson_id = str(data.get("id") or data.get("lesson_id") or f"glesson_{stable_hash(data)[:16]}")
+    confidence = _lesson_confidence(data)
+    created_at = data.get("created_at")
+    updated_at = data.get("updated_at")
+    retired_at = data.get("retired_at")
+    return GlobalLessonRecord(
+        id=lesson_id,
+        tenant_id=str(data.get("tenant_id") or "") or None,
+        repo_id=str(data.get("repo_id") or "") or None,
+        approval_state=str(data.get("approval_state") or data.get("status") or "approved"),
+        scope=str(data.get("scope") or "global"),
+        sensitivity=str(data.get("sensitivity") or "internal"),
+        visibility=str(data.get("visibility") or "global_candidate"),
+        claim_type=str(data.get("claim_type") or data.get("kind") or "lesson"),
+        tool=str(data.get("tool") or ""),
+        task_type=str(data.get("task_type") or ""),
+        worker_kind=str(data.get("worker_kind") or ""),
+        failure_signature=str(data.get("failure_signature") or ""),
+        success_signature=str(data.get("success_signature") or ""),
+        scope_signature=str(data.get("scope_signature") or ""),
+        evidence_signature=str(data.get("evidence_signature") or ""),
+        normalized_text=normalized_text,
+        text_hash=str(data.get("text_hash") or text_hash(normalized_text)),
+        simhash=str(data.get("simhash") or simple_simhash(normalized_text)),
+        confidence=confidence,
+        reuse_stats={str(k): int(v) for k, v in _as_json_dict(data.get("reuse_stats")).items()},
+        approval_provenance=_as_json_dict(data.get("approval_provenance")),
+        evidence_refs=_json_list(data.get("evidence_refs") or data.get("evidence_refs_json") or []),
+        citation_refs=_json_list(data.get("citation_refs") or data.get("citation_refs_json") or []),
+        cross_tenant_shareable=_as_bool(
+            data.get("cross_tenant_shareable")
+            if "cross_tenant_shareable" in data
+            else data.get("global_shareable", data.get("shareable", False))
+        ),
+        created_at=float(created_at or _now()),
+        updated_at=float(updated_at or _now()),
+        retired_at=float(retired_at) if retired_at not in {None, ""} else None,
+    )
+
+
+def ensure_global_lesson_schema(db: SessionDB) -> None:
+    def _do(conn):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hermes_global_lessons (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                repo_id TEXT,
+                approval_state TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                sensitivity TEXT NOT NULL,
+                visibility TEXT NOT NULL,
+                claim_type TEXT NOT NULL,
+                tool TEXT,
+                task_type TEXT,
+                worker_kind TEXT,
+                failure_signature TEXT,
+                success_signature TEXT,
+                scope_signature TEXT,
+                evidence_signature TEXT,
+                normalized_text TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                simhash TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                reuse_stats_json TEXT,
+                approval_provenance_json TEXT,
+                evidence_refs_json TEXT,
+                citation_refs_json TEXT,
+                cross_tenant_shareable INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                retired_at REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_global_lessons_exact
+                ON hermes_global_lessons(approval_state, sensitivity, failure_signature, success_signature, text_hash)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_global_lessons_scope
+                ON hermes_global_lessons(tenant_id, repo_id, scope, approval_state, retired_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_global_lessons_simhash
+                ON hermes_global_lessons(approval_state, simhash, confidence)
+            """
+        )
+
+    db._execute_write(_do)
+
+
+def persist_global_lesson(db: SessionDB, lesson: Dict[str, Any]) -> GlobalLessonRecord:
+    ensure_global_lesson_schema(db)
+    record = _normalize_global_lesson(lesson)
+    record.updated_at = _now()
+
+    def _do(conn):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO hermes_global_lessons (
+                id, tenant_id, repo_id, approval_state, scope, sensitivity,
+                visibility, claim_type, tool, task_type, worker_kind,
+                failure_signature, success_signature, scope_signature,
+                evidence_signature, normalized_text, text_hash, simhash,
+                confidence, reuse_stats_json, approval_provenance_json,
+                evidence_refs_json, citation_refs_json, cross_tenant_shareable,
+                created_at, updated_at, retired_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.tenant_id,
+                record.repo_id,
+                record.approval_state,
+                record.scope,
+                record.sensitivity,
+                record.visibility,
+                record.claim_type,
+                record.tool,
+                record.task_type,
+                record.worker_kind,
+                record.failure_signature,
+                record.success_signature,
+                record.scope_signature,
+                record.evidence_signature,
+                record.normalized_text,
+                record.text_hash,
+                record.simhash,
+                record.confidence,
+                json.dumps(record.reuse_stats, sort_keys=True),
+                json.dumps(record.approval_provenance, sort_keys=True),
+                json.dumps(record.evidence_refs, sort_keys=True),
+                json.dumps(record.citation_refs, sort_keys=True),
+                1 if record.cross_tenant_shareable else 0,
+                record.created_at,
+                record.updated_at,
+                record.retired_at,
+            ),
+        )
+
+    db._execute_write(_do)
+    return record
+
+
+def _global_lesson_from_row(row: Any) -> Dict[str, Any]:
+    data = dict(row)
+    return GlobalLessonRecord(
+        id=data["id"],
+        tenant_id=data.get("tenant_id"),
+        repo_id=data.get("repo_id"),
+        approval_state=data["approval_state"],
+        scope=data["scope"],
+        sensitivity=data["sensitivity"],
+        visibility=data["visibility"],
+        claim_type=data["claim_type"],
+        tool=data.get("tool") or "",
+        task_type=data.get("task_type") or "",
+        worker_kind=data.get("worker_kind") or "",
+        failure_signature=data.get("failure_signature") or "",
+        success_signature=data.get("success_signature") or "",
+        scope_signature=data.get("scope_signature") or "",
+        evidence_signature=data.get("evidence_signature") or "",
+        normalized_text=data["normalized_text"],
+        text_hash=data["text_hash"],
+        simhash=data["simhash"],
+        confidence=float(data.get("confidence") or 0.0),
+        reuse_stats={str(k): int(v) for k, v in _as_json_dict(data.get("reuse_stats_json")).items()},
+        approval_provenance=_as_json_dict(data.get("approval_provenance_json")),
+        evidence_refs=_json_list(data.get("evidence_refs_json")),
+        citation_refs=_json_list(data.get("citation_refs_json")),
+        cross_tenant_shareable=bool(data.get("cross_tenant_shareable")),
+        created_at=float(data.get("created_at") or 0.0),
+        updated_at=float(data.get("updated_at") or 0.0),
+        retired_at=float(data["retired_at"]) if data.get("retired_at") is not None else None,
+    ).to_dict()
+
+
+def _event_matches_lesson_scope(event: GlobalPreCurationEvent, lesson: Dict[str, Any]) -> tuple[bool, str]:
+    if not _lesson_is_usable_for_event(event, lesson):
+        return False, "scope_or_sensitivity_gate"
+    repo_id = str(lesson.get("repo_id") or "")
+    if repo_id and event.repo_id and repo_id != event.repo_id:
+        return False, "repo_mismatch"
+    if str(lesson.get("sensitivity") or "").lower() == "secret":
+        return False, "secret"
+    return True, ""
+
+
+def retrieve_global_lessons_for_event(
+    db: SessionDB,
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    limit: int = 5,
+) -> GlobalLessonRetrievalResult:
+    ensure_global_lesson_schema(db)
+    evt = _as_precuration_event(event)
+    cfg = _precuration_config(config)
+    max_distance = int(cfg.get("near_hamming_distance") or 8)
+    min_confidence = float(cfg.get("min_near_confidence") or 0.75)
+    query_id = f"glret_{stable_hash([evt.to_dict(), limit])[:16]}"
+    audit = GlobalLessonRetrievalAudit(query_id=query_id, event_id=evt.event_id)
+
+    def _fetch(conn):
+        rows = conn.execute(
+            """
+            SELECT * FROM hermes_global_lessons
+            WHERE approval_state IN ('approved', 'canonical', 'applied')
+              AND retired_at IS NULL
+              AND sensitivity != 'secret'
+            ORDER BY updated_at DESC
+            LIMIT 500
+            """
+        ).fetchall()
+        return [_global_lesson_from_row(row) for row in rows]
+
+    candidates = db._execute_write(_fetch)
+    audit.considered = len(candidates)
+    ranked: List[tuple[int, float, str, Dict[str, Any]]] = []
+
+    for lesson in candidates:
+        ok, reason = _event_matches_lesson_scope(evt, lesson)
+        if not ok:
+            audit.rejected.append({"id": lesson["id"], "reason": reason})
+            continue
+        if _exact_lesson_match(evt, lesson):
+            audit.exact_matches += 1
+            ranked.append((0, 1.0, "exact", lesson))
+            audit.matched.append({"id": lesson["id"], "reason": "exact", "score": 1.0})
+            continue
+        confidence = _lesson_confidence(lesson)
+        if confidence >= min_confidence and _near_lesson_match(evt, lesson, max_distance=max_distance):
+            distance = hamming_distance_hex(simple_simhash(evt.normalized_text), str(lesson.get("simhash") or "0"))
+            score = max(0.0, confidence - (distance / 100.0))
+            audit.near_matches += 1
+            ranked.append((1, score, "near", lesson))
+            audit.matched.append({"id": lesson["id"], "reason": "near", "score": score})
+        else:
+            audit.rejected.append({"id": lesson["id"], "reason": "no_exact_or_near_match"})
+
+    ranked.sort(key=lambda item: (item[0], -item[1], str(item[3].get("id") or "")))
+    lessons = [lesson for _, _, _, lesson in ranked[: max(0, int(limit))]]
+    audit.returned = len(lessons)
+    return GlobalLessonRetrievalResult(lessons=lessons, audit=audit)
 
 
 def should_curate_locally(

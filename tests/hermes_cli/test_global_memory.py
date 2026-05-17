@@ -14,8 +14,10 @@ from hermes_cli.global_memory import (
     fanout_discussion_record_to_indexes,
     get_global_memory_bus,
     normalize_proposal,
+    persist_global_lesson,
     publish_global_proposal,
     record_global_lesson_reuse_metric,
+    retrieve_global_lessons_for_event,
     should_curate_locally,
     simple_simhash,
     text_hash,
@@ -538,3 +540,131 @@ def test_local_and_global_dreaming_sidecars_are_separate_and_non_mutating(_isola
     assert sidecars["global_dreaming"].output_topic == "memory.global.dreaming.proposed"
     assert sidecars["global_dreaming"].allow_private_raw_logs is False
     assert sidecars["global_dreaming"].mutates_runtime_state is False
+
+
+def test_persisted_global_lesson_round_trip_and_exact_retrieval(tmp_path):
+    db = _db(tmp_path)
+    try:
+        lesson = persist_global_lesson(
+            db,
+            {
+                "id": "global-claude-router-repair",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "tenant_id": "atlas",
+                "tool": "claude",
+                "task_type": "worker_routing",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "success_signature": "cmd:claude:sonnet:print-mode",
+                "normalized_text": "Prefer direct Claude Code invocation after worker-router claude parse errors.",
+                "confidence": 0.91,
+                "reuse_stats": {"global_lesson_helped": 2},
+                "approval_provenance": {"judge_id": "judge-1", "operator_approved": True},
+                "evidence_refs": ["global://evidence/claude-router"],
+                "cross_tenant_shareable": True,
+            },
+        )
+
+        result = retrieve_global_lessons_for_event(
+            db,
+            {
+                "event_id": "evt-1",
+                "tenant_id": "atlas",
+                "tool": "claude",
+                "task_type": "worker_routing",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "worker-router claude failed",
+            },
+        )
+
+        assert lesson.id == "global-claude-router-repair"
+        assert result.lessons[0]["id"] == "global-claude-router-repair"
+        assert result.lessons[0]["reuse_stats"]["global_lesson_helped"] == 2
+        assert result.lessons[0]["approval_provenance"]["operator_approved"] is True
+        assert result.audit.exact_matches == 1
+        assert result.audit.returned == 1
+
+        decision = should_curate_locally(
+            {"event_id": "evt-1", "tenant_id": "atlas", "failure_signature": "cmd:worker-router:claude:parse-error"},
+            result.lessons,
+        )
+        assert decision.action == "skip_global_exact_hit"
+        assert decision.should_run_expensive_curator is False
+    finally:
+        db.close()
+
+
+def test_retrieve_global_lessons_for_event_near_match_and_top_k(tmp_path):
+    db = _db(tmp_path)
+    try:
+        event_text = "worker router claude failed repeatedly direct claude model sonnet print mode worked"
+        lesson_text = "claude router wrapper failed repeatedly and direct sonnet print mode worked"
+        for idx in range(3):
+            persist_global_lesson(
+                db,
+                {
+                    "id": f"global-near-{idx}",
+                    "approval_state": "approved",
+                    "scope": "global",
+                    "visibility": "global_candidate",
+                    "sensitivity": "internal",
+                    "claim_type": "command_repair_policy",
+                    "normalized_text": lesson_text,
+                    "simhash": simple_simhash(event_text),
+                    "confidence": 0.9 - (idx * 0.01),
+                    "cross_tenant_shareable": True,
+                },
+            )
+
+        result = retrieve_global_lessons_for_event(
+            db,
+            {"event_id": "evt-near", "tenant_id": "atlas", "normalized_text": event_text},
+            limit=2,
+        )
+
+        assert [lesson["id"] for lesson in result.lessons] == ["global-near-0", "global-near-1"]
+        assert result.audit.near_matches == 3
+        assert result.audit.returned == 2
+    finally:
+        db.close()
+
+
+def test_retrieve_global_lessons_rejects_wrong_tenant_secret_rejected_and_retired(tmp_path):
+    db = _db(tmp_path)
+    try:
+        common = {
+            "scope": "tenant",
+            "visibility": "global_candidate",
+            "claim_type": "command_repair_policy",
+            "failure_signature": "cmd:codex:timeout",
+            "normalized_text": "codex timed out while planning a flutter migration",
+            "confidence": 0.95,
+        }
+        persist_global_lesson(db, {**common, "id": "wrong-tenant", "approval_state": "approved", "tenant_id": "other", "sensitivity": "confidential"})
+        persist_global_lesson(db, {**common, "id": "secret", "approval_state": "approved", "tenant_id": "atlas", "sensitivity": "secret"})
+        persist_global_lesson(db, {**common, "id": "rejected", "approval_state": "rejected", "tenant_id": "atlas", "sensitivity": "internal"})
+        persist_global_lesson(db, {**common, "id": "retired", "approval_state": "approved", "tenant_id": "atlas", "sensitivity": "internal", "retired_at": 1779000000.0})
+        persist_global_lesson(db, {**common, "id": "usable", "approval_state": "approved", "tenant_id": "atlas", "sensitivity": "internal"})
+
+        result = retrieve_global_lessons_for_event(
+            db,
+            {
+                "event_id": "evt-codex",
+                "tenant_id": "atlas",
+                "failure_signature": "cmd:codex:timeout",
+                "normalized_text": "codex timed out while planning a flutter migration",
+            },
+        )
+
+        assert [lesson["id"] for lesson in result.lessons] == ["usable"]
+        rejected = {item["id"]: item["reason"] for item in result.audit.rejected}
+        assert rejected["wrong-tenant"] == "scope_or_sensitivity_gate"
+        assert "secret" not in rejected
+        assert "rejected" not in rejected
+        assert "retired" not in rejected
+        assert result.audit.considered == 2
+    finally:
+        db.close()
