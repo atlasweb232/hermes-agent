@@ -331,7 +331,7 @@
 - [x] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
 - [x] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval
 - [x] T119 [US8] Split local dreaming and global dreaming role/config/lease definitions so local dreaming stays tenant/repo scoped and global dreaming consumes only approved redacted global memory
-- [ ] T120 [US8] Update VM smoke to include a duplicate-failure scenario where a global approved command-repair lesson suppresses local recuration and records a global lesson hit
+- [x] T120 [US8] Update VM smoke to include a duplicate-failure scenario where a global approved command-repair lesson suppresses local recuration and records a global lesson hit
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 

@@ -89,6 +89,45 @@ Known VM smoke gap:
   intentionally document that separation or add command-repair-policy retrieval
   into compact packets when relevant.
 
+## VM Phase 11 Pre-Curation Smoke
+
+VM pre-curation smoke validation completed on 2026-05-17.
+
+Deployment:
+
+- VM host: `52.4.43.41`
+- VM repo: `/home/rakib/.hermes/hermes-agent`
+- Branch: `132-learning-memory-runtime`
+- Commit deployed: `f4889f4e1`
+- Runtime version after editable reinstall: `Hermes Agent v0.14.0 (2026.5.16)`
+
+Smoke scenario:
+
+- Seeded an approved global command-repair lesson for the Claude
+  `worker-router` failure signature.
+- Replayed the duplicate failure event through `should_curate_locally(...)`.
+- Replayed a near-match event with matching simhash and sufficient confidence.
+- Replayed a miss where the only matching lesson was confidential and belonged
+  to another tenant.
+- Recorded aggregate reuse feedback for the global lesson without copying local
+  private evidence into global memory.
+
+Results:
+
+- Exact global lesson hit returned `skip_global_exact_hit`.
+- Exact hit returned `should_run_expensive_curator=false`.
+- Exact hit emitted metric `global_lesson_hit`.
+- Near global lesson hit returned `confirm_global_near_hit`.
+- Near hit required lightweight local confirmation and skipped expensive
+  curator work.
+- Cross-tenant confidential match was rejected and returned `curate_locally`.
+- Feedback update increased global lesson confidence only through aggregate
+  reuse stats.
+- `hermes memory sidecar --once --json` completed after deployment.
+- Rollup skipped 31 noisy records rather than resurfacing them.
+- `hermes memory monitor --json` remained `healthy`.
+- Dreaming remained disabled by config and did not mutate runtime state.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:
