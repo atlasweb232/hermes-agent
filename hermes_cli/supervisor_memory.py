@@ -870,6 +870,168 @@ def archive_meta_candidate(
     )
 
 
+def _candidate_match_text(candidate: Dict[str, Any]) -> str:
+    evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    parts = [
+        candidate.get("kind"),
+        candidate.get("claim"),
+        evidence.get("match"),
+        evidence.get("failed_path"),
+        evidence.get("working_path"),
+        evidence.get("policy_type"),
+        evidence.get("mode"),
+        evidence.get("assignee"),
+        evidence.get("workspace_kind"),
+    ]
+    return " ".join(str(part) for part in parts if part).casefold()
+
+
+def _query_tokens(query: str) -> List[str]:
+    return [
+        token
+        for token in re.findall(r"[a-zA-Z0-9_.:/-]+", query.casefold())
+        if len(token) >= 4
+    ]
+
+
+def _candidate_matches_query(candidate: Dict[str, Any], query: str) -> bool:
+    tokens = _query_tokens(query)
+    if not tokens:
+        return False
+    haystack = _candidate_match_text(candidate)
+    return any(token in haystack for token in tokens)
+
+
+def retrieve_learning_context(
+    db: SessionDB,
+    *,
+    query: str,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return compact approved/applied learning guidance for prompt injection."""
+    if config is None:
+        config = load_config()
+    learning = (config.get("supervisor") or {}).get("learning") or {}
+    if not isinstance(learning, dict):
+        learning = {}
+    injection = learning.get("injection")
+    if not isinstance(injection, dict):
+        injection = {}
+    if injection.get("enabled", True) is False:
+        return {
+            "status": "disabled",
+            "query": query,
+            "candidates": [],
+            "metrics": {"reason": "learning injection disabled"},
+        }
+
+    statuses = [
+        str(status)
+        for status in (injection.get("statuses") or ["approved", "applied"])
+        if status
+    ]
+    max_candidates = max(0, int(injection.get("max_candidates", 5) or 5))
+    min_score = float(injection.get("min_score", 0.6) or 0.6)
+    max_chars = max(200, int(injection.get("max_chars", 2500) or 2500))
+    require_match = bool(injection.get("require_match", True))
+
+    selected: List[Dict[str, Any]] = []
+    skipped: Dict[str, int] = {}
+
+    def mark_skipped(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    for status in statuses:
+        scan_limit = max(max_candidates * 4, 20)
+        rows = db.list_meta_candidates(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            status=status,
+            limit=scan_limit,
+        )
+        if tenant_id is not None or repo_id is not None:
+            rows.extend(
+                db.list_meta_candidates(
+                    tenant_id=None,
+                    repo_id=None,
+                    status=status,
+                    limit=scan_limit,
+                )
+            )
+        for candidate in rows:
+            if len(selected) >= max_candidates:
+                break
+            if any(existing.get("id") == candidate.get("id") for existing in selected):
+                mark_skipped("duplicate_candidate")
+                continue
+            score = float(candidate.get("score") or 0.0)
+            if score < min_score:
+                mark_skipped("below_min_score")
+                continue
+            quality_skip = _candidate_quality_skip_reason(
+                candidate,
+                learning_policy=learning,
+            )
+            if quality_skip:
+                mark_skipped(f"quality_gate:{quality_skip}")
+                continue
+            if require_match and not _candidate_matches_query(candidate, query):
+                mark_skipped("query_mismatch")
+                continue
+            evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+            selected.append(
+                {
+                    "id": candidate.get("id"),
+                    "kind": candidate.get("kind"),
+                    "claim": candidate.get("claim"),
+                    "score": score,
+                    "status": candidate.get("status"),
+                    "match": evidence.get("match"),
+                    "assignee": evidence.get("assignee"),
+                    "workspace_kind": evidence.get("workspace_kind"),
+                    "policy_type": evidence.get("policy_type"),
+                    "mode": evidence.get("mode"),
+                    "failed_path": evidence.get("failed_path"),
+                    "working_path": evidence.get("working_path"),
+                    "source_record_id": evidence.get("source_record_id") or evidence.get("record_id"),
+                    "evidence_uri": evidence.get("evidence_uri"),
+                }
+            )
+        if len(selected) >= max_candidates:
+            break
+
+    rendered = json.dumps(selected, ensure_ascii=False, sort_keys=True)
+    truncated = False
+    if len(rendered) > max_chars:
+        truncated = True
+        kept: List[Dict[str, Any]] = []
+        total = 2
+        for candidate in selected:
+            candidate_text = json.dumps(candidate, ensure_ascii=False, sort_keys=True)
+            if total + len(candidate_text) + 2 > max_chars:
+                break
+            kept.append(candidate)
+            total += len(candidate_text) + 2
+        selected = kept
+
+    return {
+        "status": "ready" if selected else "empty",
+        "query": query,
+        "candidates": selected,
+        "metrics": {
+            "returned": len(selected),
+            "skipped": skipped,
+            "statuses": statuses,
+            "min_score": min_score,
+            "max_candidates": max_candidates,
+            "max_chars": max_chars,
+            "truncated": truncated,
+        },
+    }
+
+
 def run_candidate_housekeeping(
     db: SessionDB,
     *,

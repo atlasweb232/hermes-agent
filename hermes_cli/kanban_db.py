@@ -4930,6 +4930,74 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
     except Exception:
         pass
 
+    try:
+        from hermes_cli.config import load_config
+        from hermes_cli.supervisor_memory import retrieve_learning_context
+        from hermes_state import SessionDB
+
+        cfg = load_config()
+        learning_cfg = cfg.get("supervisor", {}).get("learning", {})
+        if isinstance(learning_cfg, dict):
+            injection_cfg = learning_cfg.get("injection")
+            if not isinstance(injection_cfg, dict):
+                injection_cfg = {}
+            if injection_cfg.get("enabled", True):
+                query = task.memory_query or f"{task.title}\n{task.body or ''}"
+                repo_id = task.memory_scope or task.tenant or task.workspace_kind
+                memory_db = SessionDB()
+                try:
+                    retrieved = retrieve_learning_context(
+                        memory_db,
+                        query=query,
+                        tenant_id=task.tenant,
+                        repo_id=repo_id,
+                        config=cfg,
+                    )
+                finally:
+                    memory_db.close()
+                candidates = retrieved.get("candidates") if isinstance(retrieved, dict) else []
+                if candidates:
+                    lines.append("## Supervisor retrieved learning context")
+                    lines.append(
+                        "Use this as advisory memory only; explicit task instructions, git, tests, and logs are more authoritative."
+                    )
+                    for candidate in candidates:
+                        if not isinstance(candidate, dict):
+                            continue
+                        claim = _cap(str(candidate.get("claim") or ""), 220)
+                        kind = str(candidate.get("kind") or "candidate")
+                        status = str(candidate.get("status") or "")
+                        score = candidate.get("score")
+                        identifier = str(candidate.get("id") or "").strip()
+                        line = f"- [{kind}]"
+                        if identifier:
+                            line += f" id={identifier}"
+                        if status:
+                            line += f" status={status}"
+                        if score is not None:
+                            line += f" score={score}"
+                        if claim:
+                            line += f" {claim}"
+                        extras: list[str] = []
+                        for key, label in (
+                            ("match", "match"),
+                            ("policy_type", "policy"),
+                            ("mode", "mode"),
+                            ("failed_path", "failed"),
+                            ("working_path", "working"),
+                            ("evidence_uri", "evidence"),
+                            ("source_record_id", "source"),
+                        ):
+                            value = candidate.get(key)
+                            if value:
+                                extras.append(f"{label}={_cap(str(value), 140)}")
+                        if extras:
+                            line += " | " + "; ".join(extras)
+                        lines.append(line)
+                    lines.append("")
+    except Exception:
+        pass
+
     packet_id = os.environ.get("HERMES_MEMORY_PACKET_ID", "").strip()
     packet_status = os.environ.get("HERMES_MEMORY_PACKET_STATUS", "").strip()
     packet_query = os.environ.get("HERMES_MEMORY_PACKET_QUERY", "").strip()

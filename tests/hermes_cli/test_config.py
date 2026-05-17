@@ -83,6 +83,8 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["rollup_filters"]["archive_invalid_proposed"] is True
             assert config["supervisor"]["learning"]["rollup_filters"]["archive_invalid_approved"] is True
             assert config["supervisor"]["learning"]["rollup_filters"]["task_outcome"]["require_memory_packet"] is True
+            assert config["supervisor"]["learning"]["injection"]["enabled"] is True
+            assert config["supervisor"]["learning"]["injection"]["statuses"] == ["approved", "applied"]
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
 

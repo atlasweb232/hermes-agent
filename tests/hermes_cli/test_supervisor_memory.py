@@ -14,6 +14,7 @@ from hermes_cli.supervisor_memory import (
     monitor_learning,
     reject_meta_candidate,
     reconcile_learning_candidates,
+    retrieve_learning_context,
     run_candidate_housekeeping,
     run_learning_sidecar,
     rollup_learning_candidates,
@@ -665,6 +666,47 @@ def test_reconcile_learning_candidates_requires_evidence(tmp_path, monkeypatch):
 
         assert result.promoted == 0
         assert result.metrics["promotion_skipped"]["quality_gate:missing_evidence"] == 1
+    finally:
+        db.close()
+
+
+def test_retrieve_learning_context_returns_quality_gated_matches(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="curpol_claude",
+            kind="command_repair_policy",
+            claim="Prefer direct Claude Code invocation after wrapper failures",
+            evidence_json={
+                "policy_type": "command_repair",
+                "mode": "advisory",
+                "failed_path": "worker-router claude",
+                "working_path": "claude --model sonnet -p",
+                "source_record_id": "memrec_claude",
+            },
+            score=0.9,
+            status="approved",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_noise",
+            kind="playbook",
+            claim="completed: prior #3",
+            evidence_json={
+                "record_id": "kanban_event_12",
+                "packet_id": None,
+                "evidence_uri": "kanban://task/t_prior/event/12",
+            },
+            score=0.9,
+            status="approved",
+        )
+
+        result = retrieve_learning_context(db, query="ask claude code two plus two")
+
+        assert result["status"] == "ready"
+        assert [candidate["id"] for candidate in result["candidates"]] == ["curpol_claude"]
+        assert result["metrics"]["skipped"]["quality_gate:synthetic_marker"] == 1
     finally:
         db.close()
 

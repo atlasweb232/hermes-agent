@@ -188,6 +188,50 @@ def test_build_worker_context_includes_supervisor_learning_context(kanban_home):
     assert task.assignee == "jules"
 
 
+def test_build_worker_context_injects_db_learning_context(kanban_home):
+    memory_db = SessionDB()
+    try:
+        memory_db.upsert_meta_candidate(
+            candidate_id="curpol_claude",
+            kind="command_repair_policy",
+            claim="Prefer direct Claude Code invocation after wrapper failures",
+            evidence_json={
+                "policy_type": "command_repair",
+                "mode": "advisory",
+                "failed_path": "worker-router claude",
+                "working_path": "claude --model sonnet -p",
+                "source_record_id": "memrec_claude",
+            },
+            score=0.9,
+            status="approved",
+        )
+        memory_db.upsert_meta_candidate(
+            candidate_id="metacand_bad",
+            kind="playbook",
+            claim="active candidate",
+            evidence_json={},
+            score=0.9,
+            status="approved",
+        )
+    finally:
+        memory_db.close()
+
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="Ask Claude Code two plus two",
+            body="Use the right claude invocation",
+            workspace_kind="scratch",
+        )
+        ctx = kb.build_worker_context(conn, tid)
+
+    assert "Supervisor retrieved learning context" in ctx
+    assert "Use this as advisory memory only" in ctx
+    assert "curpol_claude" in ctx
+    assert "claude --model sonnet -p" in ctx
+    assert "metacand_bad" not in ctx
+
+
 # ---------------------------------------------------------------------------
 # Task creation + status inference
 # ---------------------------------------------------------------------------

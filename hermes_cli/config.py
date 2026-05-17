@@ -623,6 +623,14 @@ DEFAULT_CONFIG = {
             # keep broad historical guidance from bloating worker prompts.
             "context_max_entries_per_bucket": 3,
             "context_max_total_chars": 6000,
+            "injection": {
+                "enabled": True,
+                "statuses": ["approved", "applied"],
+                "max_candidates": 5,
+                "min_score": 0.6,
+                "max_chars": 2500,
+                "require_match": True,
+            },
             # Promotion policy: candidates must clear these thresholds
             # before being auto-approved / auto-applied.
             "promotion": {

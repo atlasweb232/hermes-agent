@@ -420,6 +420,47 @@ auditability. Old or low-value candidates become invisible to normal active
 candidate review by using `status=archived`, but they remain available for
 forensics and later migration into memory wiki/cold storage.
 
+## Controlled Memory Injection
+
+Runtime injection is read-only advisory context. It does not enforce, rewrite,
+route, merge, or execute anything.
+
+Worker context retrieval reads from `hermes_meta_candidates` directly and only
+injects candidates that pass all of these gates:
+
+- status is `approved` or `applied`
+- candidate passes the same quality gate used by promotion/housekeeping
+- candidate score is above `supervisor.learning.injection.min_score`
+- candidate matches the current task query/title/body when `require_match=true`
+- compact output stays within `max_candidates` and `max_chars`
+
+Default config:
+
+```yaml
+supervisor:
+  learning:
+    injection:
+      enabled: true
+      statuses:
+        - approved
+        - applied
+      max_candidates: 5
+      min_score: 0.6
+      max_chars: 2500
+      require_match: true
+```
+
+Injected worker context is labeled:
+
+```text
+## Supervisor retrieved learning context
+Use this as advisory memory only; explicit task instructions, git, tests, and logs are more authoritative.
+```
+
+This deliberately separates retrieval/injection from enforcement. The future
+policy engine may consume approved candidates for audit/rewrite decisions, but
+that is a separate layer with separate approval.
+
 ## Current Implementation Status
 
 Implemented:
@@ -434,6 +475,7 @@ Implemented:
 - candidate housekeeping service
 - CLI archive/prune wrappers
 - sidecar-triggered bounded housekeeping
+- DB-backed controlled learning retrieval/injection for worker context
 
 Not implemented yet:
 
@@ -445,7 +487,7 @@ Not implemented yet:
 - memory wiki promotion/storage
 - dreaming/offline synthesis phase
 - hot/warm/cold memory tiering
-- supervisor memory injection from approved clean candidates
+- terminal policy enforcement from approved clean candidates
 
 ## Why This Shape
 
