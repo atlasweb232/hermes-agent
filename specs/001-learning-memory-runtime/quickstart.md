@@ -22,7 +22,15 @@ hermes memory judge-run --json
 
 Expected: eligible proposed candidates receive approve, reject, or needs-human decisions. Malformed judge output fails closed.
 
-## 4. Publish And Consume A Runtime Event
+## 4. Verify Dreaming Is Default Disabled
+
+```bash
+hermes memory sidecar --once --json
+```
+
+Expected: dreaming is skipped unless `supervisor.dreaming.enabled=true`. When implemented and enabled, dreaming runs from the sidecar only when its interval is due. Manual `hermes memory dream run --json` is for smoke tests and operator one-offs.
+
+## 5. Publish And Consume A Runtime Event
 
 ```bash
 hermes memory bus publish --topic runtime.policy_audit --json-payload '{"schema_version":1,"source":"quickstart","summary":"audit smoke"}'
@@ -31,7 +39,7 @@ hermes memory bus consume --consumer quickstart --once --json
 
 Expected: event is consumed or failed with structured metadata.
 
-## 5. Verify Retrieval Injection
+## 6. Verify Retrieval Injection
 
 ```bash
 python - <<'PY'
@@ -42,7 +50,7 @@ PY
 
 Expected: only approved, scoped, evidence-backed advisory memory is returned.
 
-## 6. Verify No Enforcement
+## 7. Verify No Enforcement
 
 ```bash
 python - <<'PY'

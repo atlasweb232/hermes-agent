@@ -268,6 +268,12 @@
 - `evidence`: wiki/memory/event pointers
 - `scope`: proposed applicability boundaries
 - `risk`: `low`, `medium`, `high`
+- `trigger`: `manual`, `sidecar_interval`, or `service_start`
+- `interval_due_at`: timestamp when sidecar-driven dreaming was due
+- `job_id`: learning job that produced the proposal
+- `validator_errors`: deterministic validation errors, if any
+- `judge_decision_id`: judge decision reference, if reviewed
+- `operator_decision`: approval/rejection metadata, if reviewed
 - `status`: `proposed`, `judged`, `approved`, `rejected`, `archived`
 
 Dreaming proposals are not retrieval memory and are not policies. They become

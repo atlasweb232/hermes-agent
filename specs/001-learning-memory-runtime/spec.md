@@ -86,13 +86,14 @@ As the Hermes operator, I want stable lessons promoted into a memory wiki and of
 
 **Why this priority**: Wiki and dreaming are high-value but must stay downstream of judged, approved evidence.
 
-**Independent Test**: Promote approved memory into wiki claims, run a dreaming cycle, and verify dreaming creates proposals only, not applied policies.
+**Independent Test**: Promote approved memory into wiki claims, run a manual dreaming cycle, run the sidecar with dreaming due, and verify dreaming creates proposals only, not applied policies.
 
 **Acceptance Scenarios**:
 
 1. **Given** approved durable memory, **When** the wiki compiler runs, **Then** it creates or updates evidence-backed wiki claims.
-2. **Given** wiki claims and recent failures, **When** dreaming runs, **Then** it emits proposal records with rationale and risk.
+2. **Given** wiki claims and recent failures, **When** dreaming runs manually or becomes due on the sidecar interval, **Then** it emits proposal records with rationale and risk.
 3. **Given** a dreaming proposal, **When** the next session starts, **Then** it is not injected unless separately approved through the judge/operator path.
+4. **Given** `supervisor.dreaming.enabled=false`, **When** the sidecar ticks, **Then** dreaming is skipped and the foreground runtime is unaffected.
 
 ---
 
@@ -162,16 +163,19 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **FR-032**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
 - **FR-033**: Memory wiki claims MUST carry scope, confidence, evidence references, and safety metadata suitable for future lexical, vector, graph, and training-data pipelines.
 - **FR-034**: System MUST keep wiki claims advisory unless they are converted into judge/operator-approved policy candidates.
-- **FR-035**: System MUST run dreaming as proposal-only background synthesis.
-- **FR-036**: Dreaming proposals MUST NOT be injected into prompts, applied to config, or enforced directly.
-- **FR-037**: Training-data exports MUST use curated wiki/approved-memory records rather than raw transcripts or raw logs, and MUST preserve tenant/shareability boundaries.
-- **FR-038**: Training-data exports for migration intelligence MUST preserve source repository refs, target repository refs, branch names, before/after commit refs, Spec Kit artifact refs, task/worker/model refs, failure signatures, successful repair signatures, validation evidence refs, redaction status, and approval provenance.
-- **FR-039**: System MUST support training dataset families for `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, and `policy_playbook`.
-- **FR-040**: System MUST require redaction, scope checks, and operator approval before any wiki claim or approved memory is exported as training data.
-- **FR-041**: System MUST support drift-evaluation anchors for exported training records, including regression prompts, expected behavior, forbidden bad fixes, and required validation evidence.
-- **FR-042**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-043**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-044**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-035**: System MUST run dreaming as proposal-only synthesis that can be invoked manually for testing and scheduled by the learning sidecar when `supervisor.dreaming.enabled=true` and its interval is due.
+- **FR-036**: Dreaming MUST be disabled by default until validators, judge gating, operator approval, and storage isolation are present.
+- **FR-037**: Dreaming proposals MUST NOT be injected into prompts, applied to config, queued as goals, written to the wiki, exported as training data, or enforced directly.
+- **FR-038**: Dreaming sidecar execution MUST be asynchronous and bounded by interval, timeout, evidence window, and maximum proposals per run so foreground chat, terminal, and delegation paths never wait on dreaming.
+- **FR-039**: Dreaming proposal promotion MUST require judge review and operator approval before conversion into approved memory, wiki claims, training corpus candidates, playbooks, tests, goals, or policy candidates.
+- **FR-040**: Training-data exports MUST use curated wiki/approved-memory records rather than raw transcripts or raw logs, and MUST preserve tenant/shareability boundaries.
+- **FR-041**: Training-data exports for migration intelligence MUST preserve source repository refs, target repository refs, branch names, before/after commit refs, Spec Kit artifact refs, task/worker/model refs, failure signatures, successful repair signatures, validation evidence refs, redaction status, and approval provenance.
+- **FR-042**: System MUST support training dataset families for `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, and `policy_playbook`.
+- **FR-043**: System MUST require redaction, scope checks, and operator approval before any wiki claim or approved memory is exported as training data.
+- **FR-044**: System MUST support drift-evaluation anchors for exported training records, including regression prompts, expected behavior, forbidden bad fixes, and required validation evidence.
+- **FR-045**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-046**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-047**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 

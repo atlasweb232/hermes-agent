@@ -808,6 +808,54 @@ routing changes, cleanup candidates, or policy ideas. Dreaming output must not
 be injected into prompts, applied to config, or enforced directly. It must pass
 judge and operator gates before it can affect runtime behavior.
 
+Dreaming should be service-driven by default once enabled. The production
+trigger is the learning sidecar, not the foreground chat loop:
+
+```text
+learning sidecar tick
+  -> rollup
+  -> monitor
+  -> reconcile
+  -> housekeeping
+  -> wiki compile if due
+  -> dreaming run if enabled and due
+  -> judge proposal/candidate queues if enabled
+```
+
+Manual CLI exists for smoke tests, debugging, and operator-triggered one-offs:
+
+```bash
+hermes memory dream run --json
+hermes memory dream status --json
+```
+
+The sidecar must treat dreaming as a bounded background block. It records a
+learning job, publishes bus events, and returns dreaming metrics, but rollup,
+monitoring, reconciliation, and housekeeping must continue if dreaming fails or
+times out. Foreground chat, terminal execution, and worker delegation must never
+wait on dreaming.
+
+Default config should keep dreaming disabled until validators and gates are
+installed:
+
+```yaml
+supervisor:
+  dreaming:
+    enabled: false
+    interval_seconds: 3600
+    run_on_start: false
+    allow_llm: true
+    provider: codex
+    model: codex
+    timeout_seconds: 300
+    max_proposals_per_run: 10
+    evidence_window: 100
+    allow_cross_tenant: false
+    allow_policy_proposals: true
+    require_judge: true
+    require_operator_approval: true
+```
+
 The long-term training-data value comes from this separation. Raw transcripts
 and logs are not appropriate proprietary training data. The useful substrate is
 curated records with:
@@ -996,6 +1044,7 @@ Dreaming output must use a strict schema. At minimum:
   "evidence_refs": ["..."],
   "scope": {},
   "risk": "low|medium|high",
+  "trigger": "manual|sidecar_interval|service_start",
   "requested_action": "...",
   "runtime_effect": false
 }
@@ -1011,6 +1060,7 @@ must check:
 - no cross-tenant sharing unless explicitly allowed
 - no duplicate proposal already exists for the same type, scope, and summary
 - no config mutation or enforcement request bypasses policy proposal status
+- no direct wiki write, training export, goal queue, or prompt injection request
 - rationale and risk are present
 
 Dreaming proposals must be stored separately from approved memory, wiki claims,
@@ -1050,10 +1100,18 @@ Dreaming should also have kill switches:
 supervisor:
   dreaming:
     enabled: false
+    interval_seconds: 3600
+    run_on_start: false
     allow_llm: true
+    provider: codex
+    model: codex
+    timeout_seconds: 300
     allow_cross_tenant: false
     allow_policy_proposals: true
+    require_judge: true
+    require_operator_approval: true
     max_proposals_per_run: 10
+    evidence_window: 100
 ```
 
 Negative tests must prove proposals are not injected, indexed as approved
