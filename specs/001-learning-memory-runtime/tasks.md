@@ -192,22 +192,22 @@
 
 ### Tests for User Story 6
 
-- [ ] T071 [P] [US6] Add learning job list/filter tests in `tests/hermes_cli/test_learning_jobs.py` for tenant, repo, task, worker, status, date range, blocker, and job type filters
-- [ ] T071A [P] [US6] Add observability line-item and evidence-bundle tests in `tests/hermes_cli/test_observability.py` covering task description, initial assignment, agents, Spec Kit refs, validation refs, memory refs, event refs, blockers, and no raw transcript leakage
-- [ ] T071B [P] [US6] Add scoped analysis tests in `tests/hermes_cli/test_observability.py` proving tenant/repo/task scope, read-only repo mode, evidence citations, and no mutation authority
-- [ ] T072 [P] [US6] Add dashboard/backend API tests for tenant-scoped job/task list, line-item detail, evidence bundle, and Ask analysis endpoints in `tests/plugins/test_kanban_dashboard_plugin.py`
+- [x] T071 [P] [US6] Add learning job list/filter tests in `tests/hermes_cli/test_learning_jobs.py` for tenant, repo, task, worker, status, date range, blocker, and job type filters
+- [x] T071A [P] [US6] Add observability line-item and evidence-bundle tests in `tests/hermes_cli/test_observability.py` covering task description, initial assignment, agents, Spec Kit refs, validation refs, memory refs, event refs, blockers, and no raw transcript leakage
+- [x] T071B [P] [US6] Add scoped analysis tests in `tests/hermes_cli/test_observability.py` proving tenant/repo/task scope, read-only repo mode, evidence citations, and no mutation authority
+- [x] T072 [P] [US6] Add dashboard/backend API tests for tenant-scoped job/task list, line-item detail, evidence bundle, and Ask analysis endpoints in `tests/plugins/test_kanban_dashboard_observability.py`
 - [ ] T073 [P] [US6] Add sidecar metrics regression tests in `tests/hermes_cli/test_supervisor_memory.py`
 
 ### Implementation for User Story 6
 
-- [ ] T074 [US6] Add `hermes memory jobs list/status` CLI wiring in `hermes_cli/main.py`
+- [x] T074 [US6] Add `hermes memory jobs list/status` CLI wiring in `hermes_cli/main.py`
 - [ ] T075 [US6] Record learning jobs for sidecar, judge, bus consumer, wiki, dreaming, housekeeping, and reconcile paths
-- [ ] T075A [US6] Create `hermes_cli/observability.py` for tenant-scoped line items, evidence bundles, filter DTOs, and read-only analysis request helpers
-- [ ] T075B [US6] Add `hermes memory observe list/detail/ask --json` CLI surfaces for tenant-scoped list rows, line-item drilldown, and scoped read-only LLM analysis
-- [ ] T076 [US6] Add backend endpoints for active jobs, historical jobs, candidates, decisions, policy audits, line-item detail, evidence bundles, and scoped analysis under `plugins/kanban/dashboard/`
-- [ ] T077 [US6] Add lean dashboard DTOs and lazy detail tabs for tenant selector, repo filter, task/job list, Overview, Agents, Spec Kit, Memory, Validation, Events, and Ask
-- [ ] T077A [US6] Add read-only repo query integration for scoped analysis, guarded by tenant/repo/task scope and disabled mutation tools
-- [ ] T078 [US6] Document tenant-scoped observability, line-item drilldown, evidence bundles, scoped Ask analysis, and no-mutation guardrails in `docs/curator-policy-framework-architecture.md`
+- [x] T075A [US6] Create `hermes_cli/observability.py` for tenant-scoped line items, evidence bundles, filter DTOs, and read-only analysis request helpers
+- [x] T075B [US6] Add `hermes memory observe list/detail/ask --json` CLI surfaces for tenant-scoped list rows, line-item drilldown, and scoped read-only LLM analysis
+- [x] T076 [US6] Add backend endpoints for active jobs, historical jobs, candidates, decisions, policy audits, line-item detail, evidence bundles, and scoped analysis under `plugins/kanban/dashboard/`
+- [x] T077 [US6] Add lean dashboard DTOs and lazy detail tabs for tenant selector, repo filter, task/job list, Overview, Agents, Spec Kit, Memory, Validation, Events, and Ask
+- [x] T077A [US6] Add read-only repo query integration for scoped analysis, guarded by tenant/repo/task scope and disabled mutation tools
+- [x] T078 [US6] Document tenant-scoped observability, line-item drilldown, evidence bundles, scoped Ask analysis, and no-mutation guardrails in `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Operator can see what ran, open each line item, inspect evidence, and ask scoped analytical questions without giving the analysis path mutation authority.
 

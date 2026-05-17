@@ -63,3 +63,62 @@ def test_record_update_and_list_learning_jobs(tmp_path):
     finally:
         db.close()
 
+
+def test_list_learning_jobs_filters_task_owner_dates_and_blocker(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        old = record_learning_job(
+            db,
+            job_type="dreaming",
+            status="blocked",
+            owner="claude",
+            tenant_id="atlas",
+            repo_id="repo-a",
+            task_id="task-old",
+            metrics={"title": "old job", "blocker": "stale wrapper"},
+        )
+        current = record_learning_job(
+            db,
+            job_type="judge",
+            status="running",
+            owner="codex",
+            tenant_id="atlas",
+            repo_id="repo-a",
+            task_id="task-1",
+            metrics={"title": "current job", "blocker": "needs approval"},
+        )
+        record_learning_job(
+            db,
+            job_type="judge",
+            status="running",
+            owner="codex",
+            tenant_id="other",
+            repo_id="repo-a",
+            task_id="task-1",
+            metrics={"title": "wrong tenant"},
+        )
+        db._conn.execute(
+            "UPDATE hermes_learning_jobs SET created_at = ? WHERE id = ?",
+            (1.0, old.id),
+        )
+        db._conn.execute(
+            "UPDATE hermes_learning_jobs SET created_at = ? WHERE id = ?",
+            (10.0, current.id),
+        )
+        db._conn.commit()
+
+        rows = list_learning_jobs(
+            db,
+            tenant_id="atlas",
+            repo_id="repo-a",
+            task_id="task-1",
+            job_type="judge",
+            status="running",
+            owner="codex",
+            blocker="approval",
+            started_after=5.0,
+        )
+
+        assert [row.id for row in rows] == [current.id]
+    finally:
+        db.close()

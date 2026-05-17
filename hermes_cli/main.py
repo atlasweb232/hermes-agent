@@ -11580,6 +11580,60 @@ Examples:
     bus_consume.add_argument("--lease-seconds", type=float, default=300.0, help="Lease duration")
     bus_consume.add_argument("--ack", action="store_true", help="Immediately mark leased events consumed")
     bus_consume.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    jobs_parser = memory_sub.add_parser(
+        "jobs",
+        help="Inspect background learning jobs",
+        description="List or inspect tenant-scoped learning sidecar, curator, judge, wiki, and dreaming jobs.",
+    )
+    jobs_sub = jobs_parser.add_subparsers(dest="memory_jobs_command")
+    jobs_list = jobs_sub.add_parser("list", help="List learning jobs")
+    jobs_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    jobs_list.add_argument("--repo-id", default="", help="Repository scope")
+    jobs_list.add_argument("--task-id", default="", help="Task scope")
+    jobs_list.add_argument("--job-type", default="", help="Job type filter")
+    jobs_list.add_argument("--status", default="", help="Status filter")
+    jobs_list.add_argument("--owner", default="", help="Owner/worker filter")
+    jobs_list.add_argument("--blocker", default="", help="Substring filter over blocker/error metadata")
+    jobs_list.add_argument("--date-from", type=float, default=None, help="Earliest created_at timestamp")
+    jobs_list.add_argument("--date-to", type=float, default=None, help="Latest created_at timestamp")
+    jobs_list.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    jobs_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    jobs_status = jobs_sub.add_parser("status", help="Inspect one learning job")
+    jobs_status.add_argument("job_id", help="Learning job id")
+    jobs_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    observe_parser = memory_sub.add_parser(
+        "observe",
+        help="Inspect observability line items",
+        description="List scoped observability line items, drill into evidence bundles, or ask read-only questions.",
+    )
+    observe_sub = observe_parser.add_subparsers(dest="memory_observe_command")
+    observe_list = observe_sub.add_parser("list", help="List observability line items")
+    observe_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    observe_list.add_argument("--repo-id", default="", help="Repository scope")
+    observe_list.add_argument("--task-id", default="", help="Task scope")
+    observe_list.add_argument("--worker-id", default="", help="Worker/owner filter")
+    observe_list.add_argument("--item-type", choices=["job", "candidate"], default="", help="Line item type")
+    observe_list.add_argument("--job-type", default="", help="Learning job type filter")
+    observe_list.add_argument("--candidate-kind", default="", help="Memory candidate kind filter")
+    observe_list.add_argument("--status", default="", help="Status filter")
+    observe_list.add_argument("--blocker", default="", help="Substring filter over blocker/error metadata")
+    observe_list.add_argument("--date-from", type=float, default=None, help="Earliest updated_at timestamp")
+    observe_list.add_argument("--date-to", type=float, default=None, help="Latest updated_at timestamp")
+    observe_list.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    observe_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    observe_detail = observe_sub.add_parser("detail", help="Show a scoped evidence bundle")
+    observe_detail.add_argument("line_item_id", help="Observability line item id")
+    observe_detail.add_argument("--tenant-id", default="", help="Tenant scope")
+    observe_detail.add_argument("--repo-id", default="", help="Repository scope")
+    observe_detail.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    observe_ask = observe_sub.add_parser("ask", help="Ask a read-only scoped question about one line item")
+    observe_ask.add_argument("line_item_id", help="Observability line item id")
+    observe_ask.add_argument("--question", required=True, help="Question to answer from the evidence bundle")
+    observe_ask.add_argument("--tenant-id", default="", help="Tenant scope")
+    observe_ask.add_argument("--repo-id", default="", help="Repository scope")
+    observe_ask.add_argument("--repo-path", default="", help="Optional read-only repository path")
+    observe_ask.add_argument("--repo-query", action="store_true", help="Include read-only top-level repo context")
+    observe_ask.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     candidates_parser = memory_sub.add_parser(
         "candidates",
         help="Review and apply meta-learning candidates",
@@ -11767,7 +11821,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "jobs", "observe", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -12142,6 +12196,96 @@ Examples:
                             print(json.dumps([row.to_dict() for row in rows], indent=2, ensure_ascii=False))
                         else:
                             print(f"\n  learning events: {len(rows)}\n")
+                elif sub == "jobs":
+                    from hermes_cli.learning_jobs import get_learning_job, list_learning_jobs
+
+                    jobs_cmd = getattr(args, "memory_jobs_command", None) or "list"
+                    if jobs_cmd == "status":
+                        job = get_learning_job(db, getattr(args, "job_id"))
+                        if job is None:
+                            raise SystemExit(f"Unknown learning job: {getattr(args, 'job_id')}")
+                        if getattr(args, "json", False):
+                            print(json.dumps(job.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  learning job: {job.id}  type={job.job_type}  status={job.status}\n")
+                    else:
+                        rows = list_learning_jobs(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            task_id=getattr(args, "task_id", "") or None,
+                            job_type=getattr(args, "job_type", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            owner=getattr(args, "owner", "") or None,
+                            started_after=getattr(args, "date_from", None),
+                            started_before=getattr(args, "date_to", None),
+                            blocker=getattr(args, "blocker", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps([row.to_dict() for row in rows], indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  learning jobs: {len(rows)}\n")
+                elif sub == "observe":
+                    from hermes_cli.observability import (
+                        ObservabilityFilters,
+                        build_evidence_bundle,
+                        list_observability_items,
+                        scoped_analysis,
+                    )
+
+                    observe_cmd = getattr(args, "memory_observe_command", None) or "list"
+                    if observe_cmd == "detail":
+                        try:
+                            bundle = build_evidence_bundle(
+                                db,
+                                line_item_id=getattr(args, "line_item_id"),
+                                tenant_id=getattr(args, "tenant_id", "") or None,
+                                repo_id=getattr(args, "repo_id", "") or None,
+                            )
+                        except (PermissionError, ValueError) as exc:
+                            raise SystemExit(str(exc)) from exc
+                        if getattr(args, "json", False):
+                            print(json.dumps(bundle.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  observability bundle: {bundle.id}  item={bundle.line_item_id}\n")
+                    elif observe_cmd == "ask":
+                        try:
+                            result = scoped_analysis(
+                                db,
+                                line_item_id=getattr(args, "line_item_id"),
+                                question=getattr(args, "question"),
+                                tenant_id=getattr(args, "tenant_id", "") or None,
+                                repo_id=getattr(args, "repo_id", "") or None,
+                                repo_query_allowed=getattr(args, "repo_query", False),
+                                repo_path=getattr(args, "repo_path", "") or None,
+                            )
+                        except (PermissionError, ValueError) as exc:
+                            raise SystemExit(str(exc)) from exc
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  {result.answer}\n")
+                    else:
+                        filters = ObservabilityFilters(
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            task_id=getattr(args, "task_id", "") or None,
+                            worker_id=getattr(args, "worker_id", "") or None,
+                            item_type=getattr(args, "item_type", "") or None,
+                            job_type=getattr(args, "job_type", "") or None,
+                            candidate_kind=getattr(args, "candidate_kind", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            blocker=getattr(args, "blocker", "") or None,
+                            date_from=getattr(args, "date_from", None),
+                            date_to=getattr(args, "date_to", None),
+                            limit=getattr(args, "limit", 50),
+                        )
+                        rows = list_observability_items(db, filters)
+                        if getattr(args, "json", False):
+                            print(json.dumps([row.to_dict() for row in rows], indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  observability line items: {len(rows)}\n")
                 else:
                     cand_cmd = getattr(args, "memory_candidates_command", None) or "list"
                     if cand_cmd == "list":

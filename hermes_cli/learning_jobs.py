@@ -238,7 +238,13 @@ def list_learning_jobs(
     *,
     tenant_id: Optional[str] = None,
     repo_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    job_type: Optional[str] = None,
     status: Optional[str] = None,
+    owner: Optional[str] = None,
+    started_after: Optional[float] = None,
+    started_before: Optional[float] = None,
+    blocker: Optional[str] = None,
     limit: int = 100,
 ) -> List[LearningJobRecord]:
     ensure_learning_jobs_schema(db)
@@ -250,9 +256,24 @@ def list_learning_jobs(
     if repo_id is not None:
         clauses.append("repo_id = ?")
         params.append(repo_id)
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(task_id)
+    if job_type is not None:
+        clauses.append("job_type = ?")
+        params.append(job_type)
     if status is not None:
         clauses.append("status = ?")
         params.append(status)
+    if owner is not None:
+        clauses.append("owner = ?")
+        params.append(owner)
+    if started_after is not None:
+        clauses.append("created_at >= ?")
+        params.append(float(started_after))
+    if started_before is not None:
+        clauses.append("created_at <= ?")
+        params.append(float(started_before))
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(max(1, int(limit)))
     rows = db._conn.execute(
@@ -264,5 +285,17 @@ def list_learning_jobs(
         """,
         params,
     ).fetchall()
-    return [_row_to_record(row) for row in rows]
-
+    records = [_row_to_record(row) for row in rows]
+    if blocker:
+        needle = str(blocker).casefold()
+        records = [
+            record
+            for record in records
+            if needle
+            in json.dumps(
+                {"metrics": record.metrics_json, "error": record.error_json},
+                sort_keys=True,
+                ensure_ascii=False,
+            ).casefold()
+        ]
+    return records

@@ -834,6 +834,29 @@ Guardrails:
 This keeps the first dashboard lean while preserving the backend capability to
 answer analytical questions about a specific task or job.
 
+Implemented Phase 8 surfaces:
+
+- `hermes memory jobs list/status --json` exposes filtered learning job records
+  by tenant, repo, task, worker, job type, status, date window, and blocker text.
+- `hermes memory observe list --json` returns dashboard line-item DTOs for
+  learning jobs and memory/policy candidates. The list shape is intentionally
+  compact so large tenants can page through active and historical work.
+- `hermes memory observe detail <line_item_id> --json` builds a scoped evidence
+  bundle from refs: task summary, assignment metadata, Spec Kit refs, branch
+  refs, validation refs, memory refs, event refs, and artifact refs.
+- `hermes memory observe ask <line_item_id> --question ... --json` returns a
+  read-only scoped analysis result. The deterministic fallback can answer from
+  the evidence bundle without a model; a future backend can inject an analysis
+  LLM while preserving the same no-mutation contract.
+- Dashboard plugin endpoints under `/api/plugins/kanban/observability/...`
+  expose the same list, detail, and Ask DTOs for a lean tenant/repo/task view.
+
+The implementation deliberately treats dashboard tabs as DTO groups rather than
+frontend-heavy screens: Overview is the line item, Agents/Spec Kit/Memory/
+Validation/Events are lazy evidence-bundle collections, and Ask is a separate
+read-only analysis response. This keeps observability cheap while leaving room
+for a richer UI later.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

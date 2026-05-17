@@ -36,6 +36,7 @@ the port.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -49,10 +50,93 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from pydantic import BaseModel, Field
 
 from hermes_cli import kanban_db
+from hermes_cli.observability import (
+    ObservabilityFilters,
+    build_evidence_bundle,
+    list_observability_items,
+    scoped_analysis,
+)
+from hermes_state import SessionDB
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class ObservabilityAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    repo_query_allowed: bool = False
+    repo_path: Optional[str] = None
+
+
+@router.get("/observability/items")
+def list_observability_line_items(
+    tenant_id: Optional[str] = Query(None),
+    repo_id: Optional[str] = Query(None),
+    task_id: Optional[str] = Query(None),
+    worker_id: Optional[str] = Query(None),
+    item_type: Optional[str] = Query(None),
+    job_type: Optional[str] = Query(None),
+    candidate_kind: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    blocker: Optional[str] = Query(None),
+    date_from: Optional[float] = Query(None),
+    date_to: Optional[float] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Return dashboard line items without raw transcripts or secret-bearing logs."""
+    filters = ObservabilityFilters(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        task_id=task_id,
+        worker_id=worker_id,
+        item_type=item_type,
+        job_type=job_type,
+        candidate_kind=candidate_kind,
+        status=status,
+        blocker=blocker,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+    with contextlib.closing(SessionDB()) as db:
+        return [item.to_dict() for item in list_observability_items(db, filters)]
+
+
+@router.get("/observability/items/{line_item_id}")
+def get_observability_line_item(
+    line_item_id: str,
+    tenant_id: Optional[str] = Query(None),
+    repo_id: Optional[str] = Query(None),
+):
+    with contextlib.closing(SessionDB()) as db:
+        try:
+            return build_evidence_bundle(db, line_item_id=line_item_id, tenant_id=tenant_id, repo_id=repo_id).to_dict()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/observability/items/{line_item_id}/ask")
+def ask_observability_line_item(line_item_id: str, body: ObservabilityAskRequest):
+    with contextlib.closing(SessionDB()) as db:
+        try:
+            return scoped_analysis(
+                db,
+                line_item_id=line_item_id,
+                question=body.question,
+                tenant_id=body.tenant_id,
+                repo_id=body.repo_id,
+                repo_query_allowed=body.repo_query_allowed,
+                repo_path=body.repo_path,
+            ).to_dict()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
