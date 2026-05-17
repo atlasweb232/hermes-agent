@@ -36,12 +36,65 @@
 - `id`: stable memory id
 - `source_candidate_id`: candidate that produced it
 - `memory_type`: routing hint, playbook, recovery hint, rule, policy
-- `scope`: tenant/repo/machine/tool scope
+- `tenant_id`: tenant where memory is known to apply, if scoped
+- `repo_id`: repo where memory is known to apply, if scoped
+- `tool`: tool or worker affected by the memory, if applicable
+- `task_type`: normalized task class such as `worker_routing`, `branch_triage`, `form_fill`, or `merge_repair`
+- `intent`: normalized user/workflow intent
+- `error_signature`: normalized signature of the avoided failure, if applicable
+- `success_signature`: normalized signature of the known-good path, if applicable
+- `scope`: explicit applicability scope such as `global_safe`, `tenant_safe`, `repo_safe`, `machine_safe`, `tool_safe`, or `task_type_safe`
 - `text`: compact advisory content
 - `evidence_uri`: pointer to task, event, or log summary
 - `confidence`: numeric confidence
 - `tier`: `hot`, `warm`, `cold`
+- `last_used_at`: timestamp for retrieval feedback
+- `last_verified_at`: timestamp for evidence refresh
 - `status`: `active`, `superseded`, `archived`
+
+## TaskRetrievalQuery
+
+- `tenant_id`: active tenant, if known
+- `repo_id`: active repository, if known
+- `cwd`: current working directory
+- `task_type`: normalized task class
+- `intent`: task intent
+- `tools`: tools or workers likely to be used
+- `entities`: branch names, provider names, service names, files, or external systems
+- `error_signatures`: known failure patterns detected in task text or recent tool output
+- `success_signatures`: known success patterns detected in task text or recent tool output
+- `required_scope`: minimum scope required for injection
+- `raw_query`: compact redacted source text for audit
+
+## MemoryRelevanceScore
+
+- `memory_id`: approved memory being scored
+- `query_id`: retrieval query or task invocation id
+- `score`: final numeric relevance score
+- `features_json`: exact match, semantic match, recency, confidence, tier, and penalty components
+- `decision`: `include`, `exclude`, or `defer`
+- `reason`: short explanation for audit
+
+## MemoryPacket
+
+- `id`: stable packet id
+- `query_id`: retrieval query that produced the packet
+- `items`: ordered approved memory ids and short summaries
+- `max_chars`: prompt budget used to build the packet
+- `advisory_header`: required warning that explicit instructions and current evidence are more authoritative
+- `created_at`: timestamp
+
+## OutcomeFeedback
+
+- `id`: stable feedback id
+- `task_id`: task/session/work item id
+- `packet_id`: injected memory packet id
+- `memory_id`: approved memory item affected by feedback
+- `outcome`: `helpful`, `irrelevant`, `harmful`, or `unknown`
+- `evidence_uri`: pointer to task result or tool output
+- `confidence_delta`: bounded adjustment proposed for approved memory
+- `tier_action`: `promote`, `demote`, `keep`, or `archive_candidate`
+- `created_at`: timestamp
 
 ## MemoryWikiClaim
 
@@ -81,4 +134,5 @@
 - Candidate: `proposed -> approved` only after quality gate and judge/operator rules
 - Candidate rejection: `proposed -> rejected` or `needs_human`
 - Approved memory: `active -> superseded -> archived`
+- Approved memory feedback: `active -> active` with confidence/tier adjustment, or `active -> superseded/archived` after repeated harmful feedback
 - Dreaming proposal: `proposed -> judged -> approved/rejected`, never directly to enforced

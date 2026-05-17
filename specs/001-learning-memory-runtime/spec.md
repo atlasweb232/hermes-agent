@@ -48,13 +48,15 @@ As a worker or supervisor, I want only relevant approved learning context inject
 
 **Why this priority**: Retrieval is already partially implemented; meta-based search, tiering, and source separation need to make it reliable.
 
-**Independent Test**: Query for command routing, OAuth routing, and unrelated work; verify exact scoped matches are injected, unrelated memory is excluded, and injection is labeled advisory.
+**Independent Test**: Invoke tasks with different tenants, repos, tools, task types, and error signatures; verify the classifier creates a structured query, the scorer ranks only relevant approved memory, the packet builder injects a compact top-k advisory packet, and unrelated memory is excluded.
 
 **Acceptance Scenarios**:
 
 1. **Given** approved routing memory matching a task, **When** worker context is built, **Then** a compact advisory memory packet is included.
 2. **Given** archived, proposed, rejected, or low-confidence candidates, **When** retrieval runs, **Then** they are not injected.
 3. **Given** a task whose tokens only partially overlap a memory item, **When** retrieval runs, **Then** substring-only false positives are excluded.
+4. **Given** a prior mistake from another repo and tenant with the same tool and error signature, **When** a new task has the same task type and tool, **Then** the memory may be retrieved with cross-scope penalty but is labeled advisory and never treated as repo-specific truth.
+5. **Given** a deterministic approved memory item such as a known bad command pattern and known working replacement, **When** policy escalation runs, **Then** it creates an audit/advisory policy candidate and requires judge plus operator approval before enforcement.
 
 ---
 
@@ -110,13 +112,19 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **FR-006**: System MUST process event bus work asynchronously with leases, retries, and failure states.
 - **FR-007**: System MUST keep raw events, curator candidates, judge decisions, approved memory, wiki claims, dreaming proposals, and enforcement policies in separate records or tables.
 - **FR-008**: System MUST support hot, warm, and cold memory tiers with explicit promotion and demotion rules.
-- **FR-009**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
-- **FR-010**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
-- **FR-011**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
-- **FR-012**: System MUST run dreaming as proposal-only background synthesis.
-- **FR-013**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-014**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-015**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-009**: System MUST classify each task invocation into a structured retrieval query that includes tenant, repo, task type, tools, intent, entities, error signatures, success signatures, and scope.
+- **FR-010**: System MUST store approved memory with metadata fields sufficient for targeted retrieval, including tenant, repo, tool, task type, error signature, success signature, confidence, tier, scope, source, and verification timestamps.
+- **FR-011**: System MUST score memory relevance using exact scope matches, task type, tool, error/success signatures, semantic similarity, confidence, recency, and cross-tenant/repo penalties.
+- **FR-012**: System MUST build compact top-k memory packets from scored approved memory and include evidence, scope, confidence, and advisory priority labels.
+- **FR-013**: System MUST provide policy escalation for deterministic approved memory, producing audit/advisory/enforcement candidates without enabling enforcement automatically.
+- **FR-014**: System MUST record outcome feedback that marks injected memory as helpful, irrelevant, harmful, or unknown and adjusts confidence or tier according to policy.
+- **FR-015**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
+- **FR-016**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
+- **FR-017**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
+- **FR-018**: System MUST run dreaming as proposal-only background synthesis.
+- **FR-019**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-020**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-021**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 
@@ -129,6 +137,9 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Policy Audit**: Non-enforcing evaluation that records what a policy would have done.
 - **Memory Tier**: Hot, warm, or cold storage classification that controls retrieval latency, prompt budget, and summarization.
 - **Learning Job**: Background execution record for sidecar, judge, wiki, dreaming, housekeeping, or reconcile work.
+- **Task Retrieval Query**: Structured representation of a task invocation used to find relevant approved memory.
+- **Memory Packet**: Compact prompt-ready advisory context built from top-ranked approved memory.
+- **Outcome Feedback**: Post-task record describing whether injected memory helped, was irrelevant, was harmful, or had unknown impact.
 
 ## Success Criteria
 

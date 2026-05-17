@@ -33,6 +33,35 @@ Eligible memory must be:
 - non-archived and non-rejected
 - compact enough for prompt injection
 
+## Retrieval Pipeline
+
+```text
+task invocation
+  -> classify into TaskRetrievalQuery
+  -> retrieve approved memory candidates by hard scope filters
+  -> score candidates using exact matches, semantic matches, confidence, recency, tier, and penalties
+  -> build compact MemoryPacket from top-k results
+  -> inject advisory packet into supervisor or worker context
+  -> record OutcomeFeedback after task completion
+```
+
+## Scoping Rules
+
+- Same tenant, repo, task type, and tool is highest confidence.
+- Same tenant and task type may be injected with reduced confidence.
+- Different tenant memory requires a matching tool or error signature and must remain advisory.
+- Repo-specific claims must not cross repo boundaries.
+- Machine-specific command routing policies may cross repos only on the same machine or explicitly matching environment.
+- Global memory requires explicit `global_safe` scope and stronger judge/operator approval.
+
+## Policy Escalation Rules
+
+- Only deterministic approved memory can become a policy candidate.
+- Deterministic memory must include a recognizable bad pattern and a validated recommended action.
+- Policy escalation creates audit/advisory candidates first.
+- Enforcement requires separate judge approval and operator approval.
+- Secret-like, destructive, or privilege-changing commands are never eligible for learned rewrite.
+
 ## Injection Header
 
 Injected memory must use this semantic warning:
