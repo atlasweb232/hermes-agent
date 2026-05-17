@@ -165,9 +165,13 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **FR-035**: System MUST run dreaming as proposal-only background synthesis.
 - **FR-036**: Dreaming proposals MUST NOT be injected into prompts, applied to config, or enforced directly.
 - **FR-037**: Training-data exports MUST use curated wiki/approved-memory records rather than raw transcripts or raw logs, and MUST preserve tenant/shareability boundaries.
-- **FR-038**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-039**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-040**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-038**: Training-data exports for migration intelligence MUST preserve source repository refs, target repository refs, branch names, before/after commit refs, Spec Kit artifact refs, task/worker/model refs, failure signatures, successful repair signatures, validation evidence refs, redaction status, and approval provenance.
+- **FR-039**: System MUST support training dataset families for `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, and `policy_playbook`.
+- **FR-040**: System MUST require redaction, scope checks, and operator approval before any wiki claim or approved memory is exported as training data.
+- **FR-041**: System MUST support drift-evaluation anchors for exported training records, including regression prompts, expected behavior, forbidden bad fixes, and required validation evidence.
+- **FR-042**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-043**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-044**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 
@@ -186,7 +190,7 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Memory Index Document**: Redacted compact text and metadata used for lexical and vector search.
 - **Memory Graph Node**: Typed node representing tenant, repo, machine, tool, worker, provider, model, task type, signature, memory, wiki claim, proposal, or policy.
 - **Memory Graph Edge**: Typed relationship explaining where memory applies, what it avoids, what it recommends, and what evidence produced it.
-- **Training Corpus Record**: Sanitized, scoped, evidence-backed export derived from wiki claims or approved memory, never raw transcripts.
+- **Training Corpus Record**: Sanitized, scoped, evidence-backed export derived from wiki claims or approved memory, never raw transcripts. For migration work, it preserves source/target repo refs, before/after commit refs, Spec Kit refs, failure/repair labels, validation evidence, and drift-evaluation anchors.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Supervisor Task Packet**: Structured intake record for a user or dashboard request before planning or delegation.
 - **Planner Packet**: Bounded request sent to the planner agent to create or update Spec Kit artifacts.

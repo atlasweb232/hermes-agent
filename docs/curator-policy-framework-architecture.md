@@ -838,6 +838,98 @@ wiki claim
 Memory wiki claims are therefore a retrieval and training substrate, not direct
 runtime authority.
 
+## Migration Intelligence Training Corpus
+
+For large-scale private-repo migration, the useful corpus is not a dump of
+chat logs or terminal output. The useful corpus is structured migration
+intelligence: evidence-backed records that connect an old repo state, a target
+architecture, the attempted work, failures, repairs, and validation evidence.
+
+The canonical training unit should be:
+
+```text
+migration task
+  -> source repo state
+  -> target repo state or desired architecture
+  -> Spec Kit plan
+  -> agent actions
+  -> failures encountered
+  -> fixes applied
+  -> validation evidence
+  -> durable lesson
+  -> reusable policy / playbook / test
+```
+
+Each export record should preserve references, not raw private data:
+
+- source repository id, branch, commit, language/framework/dependency profile,
+  and architecture summary
+- target repository id, branch, commit, desired runtime, desired architecture,
+  and validation strategy
+- Spec Kit artifact refs such as `spec.md`, `plan.md`, `tasks.md`, contracts,
+  and architecture docs
+- task id, worker id, worker model, tool calls, and bounded action summaries
+- before/after commit refs, changed-file summaries, redacted diff hashes, and
+  optional redacted patch excerpts
+- failure signature, bad action, root cause, successful repair signature, and
+  successful action summary
+- validation command refs, validation output hashes, completion evidence, and
+  any required manual review refs
+- safety metadata: redaction status, secret-safety status, tenant boundary,
+  cross-tenant shareability, approval provenance, and export status
+
+The first dataset families should be:
+
+- `repo_migration_plan`: repo facts and goal -> high-quality migration plan
+- `migration_failure_repair`: task context plus failed action/error evidence
+  -> correct repair
+- `before_after_diff`: legacy implementation plus target implementation,
+  redacted diff, reasoning, tests, and lesson
+- `validation_recipe`: change type -> required checks, tests, logs, and
+  completion evidence
+- `architecture_pattern`: repo structure, dependencies, and files ->
+  architecture summary
+- `policy_playbook`: repeated lesson plus evidence -> reusable playbook,
+  advisory, audit, or enforceable policy candidate
+
+The strongest record for future distilled coding models is:
+
+```text
+legacy code context
+  + desired target behavior
+  + agent mistake
+  + corrected diff
+  + validation evidence
+  + scoped lesson
+```
+
+This creates training data for planning, repair, validation discipline, and
+drift resistance. It also produces regression anchors for future models:
+
+- canonical migration tasks
+- known failure cases
+- golden corrected diffs
+- required validation evidence
+- forbidden bad fixes
+- tenant-scope rules
+- regression prompts for release evaluation
+
+The export path is intentionally gated:
+
+```text
+wiki claim
+  -> training corpus candidate
+  -> redaction and safety validator
+  -> judge review
+  -> operator approval
+  -> dataset export
+```
+
+Raw transcripts, raw logs, unredacted terminal output, secrets, and speculative
+dreaming proposals must not enter the training corpus. Dreaming may propose a
+training candidate, but only approved wiki claims or approved memory can be
+materialized into exportable records.
+
 ## Native Goal Loop Relationship
 
 Hermes also has a native `/goal` mechanism in `hermes_cli/goals.py` and

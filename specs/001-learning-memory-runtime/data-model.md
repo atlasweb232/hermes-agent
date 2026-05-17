@@ -278,14 +278,23 @@ approved memory candidate, wiki update, or policy candidate.
 
 - `id`: stable export record id
 - `source_wiki_claim_id`: source wiki claim
+- `dataset_family`: `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, or `policy_playbook`
 - `goal`: normalized goal or task type
+- `legacy_repo_ref`: source repository id, branch, commit, language/framework/dependency profile, and architecture summary
+- `target_repo_ref`: target repository id, branch, commit, desired architecture, runtime, and validation strategy
+- `spec_refs`: Spec Kit artifact refs such as `spec.md`, `plan.md`, and `tasks.md`
+- `diff_refs`: before/after commit refs, patch summaries, changed-file summaries, and redacted diff hashes
 - `scope`: tenant, repo, platform, tool, provider/model, and shareability boundary
 - `failure_signature`: compact failure pattern if applicable
+- `bad_action`: known incorrect action if applicable
 - `successful_action`: verified action or playbook if applicable
+- `validation_evidence`: test command refs, log hashes, validation reports, and completion evidence
 - `evidence_refs`: wiki, candidate, event, session, and policy audit pointers
 - `confidence`: numeric confidence at export time
 - `approval_provenance`: judge/operator/version metadata
 - `safety`: redaction, secret safety, and cross-tenant shareability flags
+- `drift_eval`: stable regression prompt, expected behavior, forbidden bad fix, and required evidence labels
+- `export_status`: `candidate`, `approved`, `exported`, `rejected`, or `archived`
 - `payload`: sanitized structured training payload
 
 ## LearningJob
