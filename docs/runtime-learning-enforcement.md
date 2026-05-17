@@ -29,10 +29,65 @@ pytest tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.
 
 Total focused Phase 10 local coverage: 244 tests passed.
 
-VM smoke validation is still pending. The VM sequence must verify the installed
-runtime binary, sidecar service, judge/curator config, memory retrieval,
-policy-audit behavior, dreaming status, supervisor control-plane recovery, and
-low-cost worker improvement tests after deployment.
+## VM Phase 10 Smoke Validation
+
+VM deployment/smoke validation completed on 2026-05-17.
+
+Deployment:
+
+- VM host: `52.4.43.41`
+- VM repo: `/home/rakib/.hermes/hermes-agent`
+- Branch: `132-learning-memory-runtime`
+- Commit deployed: `592298ceb3c386d618e8a603346867c6c522619e`
+- Install path: `/home/rakib/.npm-global/bin/hermes`
+- Runtime version after deploy: `Hermes Agent v0.14.0 (2026.5.16)`
+
+Smoke results:
+
+- Fast-forward deploy and editable reinstall succeeded.
+- `hermes config tiers --json` returned `programmatic`,
+  `low_cost_reasoning`, `balanced_reasoning`, and `strong_reasoning`.
+- `hermes config roles --json` returned curator, learning judge, goal judge,
+  discussion sidecars, dreaming, and citation validator role config.
+- `hermes memory monitor --json` reported `healthy`, with `ready_packets=14`,
+  `blocked_packets=0`, and `degraded_packets=0`.
+- `hermes curator policy-run --json` completed and produced a valid
+  `command_repair_policy` proposal for the Claude worker-router failure lesson.
+- `hermes memory sidecar --once --json` completed:
+  - rollup scanned 31 records
+  - 31 records skipped as expected after housekeeping/filtering
+  - skipped reasons included `curator_only:tool_routing_lesson`,
+    `existing_candidate_status:approved`, and `synthetic_marker`
+  - policy reconciliation completed
+  - housekeeping completed
+  - dreaming reported `skipped` because config keeps dreaming disabled
+  - learning bus reported queued events
+- Candidate list was clean after housekeeping: 3 approved candidates remained
+  (`command_repair_policy`, `playbook`, and `routing_hint`).
+- `hermes memory judge-run --json` completed with no pending candidates.
+- Policy engine audit matched the approved Claude command-repair policy for
+  `worker-router claude ...`; mode remained `audit`, command unchanged.
+- Supervisor control plane smoke passed:
+  - created a low-cost worker task
+  - recorded heartbeat
+  - assessed healthy task as non-reclaimable
+  - created a stale low-cost worker task
+  - stale assessment returned `reclaimable` with `lease_expired` and
+    `missing_heartbeat`
+  - recovery packet was created with next-worker recommendation `codex`
+  - override `reclaim` moved the stale task to `reclaimed`
+- Observability surfaces returned learning job line items.
+- Learning sidecar service was restarted and verified `active`.
+
+Known VM smoke gap:
+
+- `hermes memory packet create --query "Use direct Claude Code when
+  worker-router claude fails" ...` returned an empty compact packet even though
+  the approved command-repair policy exists and policy-engine audit can match
+  it. This means command-repair policy audit and compact memory retrieval are
+  still separate paths on the VM. Phase 11 should include a task to either
+  intentionally document that separation or add command-repair-policy retrieval
+  into compact packets when relevant.
 
 ## Enforced Today
 

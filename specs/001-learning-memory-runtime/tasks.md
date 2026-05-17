@@ -292,9 +292,9 @@
 - [x] T093 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
 - [x] T094 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
 - [x] T095 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
-- [ ] T096 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, policy audit, dreaming, and supervisor control-plane recovery
-- [ ] T097 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
-- [ ] T098 Push branch and record commit hashes for local and VM deployments
+- [x] T096 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, policy audit, dreaming, and supervisor control-plane recovery
+- [x] T097 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
+- [x] T098 Push branch and record commit hashes for local and VM deployments
 
 ## Phase 11: Production Runtime Surfaces And Low-End Model Validation (Priority: P8)
 
@@ -324,6 +324,7 @@
 - [ ] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [ ] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
+- [ ] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 
