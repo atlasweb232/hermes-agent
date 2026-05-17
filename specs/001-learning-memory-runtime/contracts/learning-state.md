@@ -37,6 +37,8 @@ Eligible memory must be:
 
 ```text
 task invocation
+  -> supervisor initialization protocol
+  -> create SupervisorTaskPacket
   -> classify into TaskRetrievalQuery
   -> retrieve approved memory candidates by hard scope filters
   -> score candidates using exact matches, semantic matches, confidence, recency, tier, and penalties

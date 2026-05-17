@@ -504,18 +504,61 @@ The remaining runtime learning work is now captured as a Spec Kit feature:
 
 The implementation sequence is:
 
-1. Learning judge with strict schema and fail-closed approval.
-2. SQLite-backed runtime event bus for asynchronous learning signals.
-3. Tiered hot/warm/cold retrieval and advisory injection.
-4. Memory wiki compiler for durable evidence-backed claims.
-5. Dreaming phase for proposal-only offline synthesis.
-6. Learning job observability through CLI/API/dashboard surfaces.
-7. Future enforcement only after judge and operator approval.
+1. Supervisor orchestration protocol with Spec Kit gating, packet schemas,
+   prompt templates, worker dispatch gates, validation gates, and session
+   summaries.
+2. Learning judge with strict schema and fail-closed approval.
+3. SQLite-backed runtime event bus for asynchronous learning signals.
+4. Tiered hot/warm/cold retrieval and advisory injection.
+5. Memory wiki compiler for durable evidence-backed claims.
+6. Dreaming phase for proposal-only offline synthesis.
+7. Learning job observability through CLI/API/dashboard surfaces.
+8. Future enforcement only after judge and operator approval.
 
 The Spec Kit constitution for this work is `.specify/memory/constitution.md`.
 It makes the separation boundary explicit: raw events, curator candidates,
 judge decisions, approved memory, wiki knowledge, dreaming proposals, and
 enforcement policies remain separate layers with explicit promotion paths.
+
+## Supervisor Orchestration Protocol
+
+For non-trivial implementation work, Hermes should not directly jump from user
+request to worker execution. The supervisor first creates structured packets and
+preserves the work through Spec Kit and git:
+
+```text
+user/dashboard request
+  -> supervisor intake
+  -> clarification if required
+  -> task classification
+  -> advisory memory packet retrieval
+  -> supervisor task packet
+  -> Spec Kit planner packet
+  -> numbered branch/worktree and Spec Kit artifacts
+  -> bounded worker delegation packet
+  -> worker result
+  -> supervisor validation report
+  -> session summary and learning writeback
+```
+
+Prompt templates guide the model, but runtime packet validation enforces the
+protocol. A worker dispatch is invalid without repo, branch/worktree, objective,
+constraints, owned files, validation commands, memory packet, and return schema.
+A non-trivial task cannot be marked complete without validation evidence,
+Spec Kit/git preservation status, and a session summary.
+
+The role model is intentionally provider-neutral:
+
+- supervisor owns user conversation, routing, approval, validation, and final
+  response
+- planner/Spec Kit creator uses the strongest configured reasoning model
+- implementation workers can be Claude Code Sonnet, Minimax via Claude Code,
+  DeepSeek TUI, Cursor, Codex, or another configured worker
+- judge/reviewer should be separate from the implementation worker when
+  practical
+
+Spec Kit may be skipped only for read-only investigation, trivial local fixes,
+explicit user opt-out, or emergency debugging. The skip reason is recorded.
 
 ## Why This Shape
 

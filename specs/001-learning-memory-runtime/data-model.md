@@ -12,6 +12,112 @@
 - `error`: structured failure summary
 - `created_at`, `updated_at`, `consumed_at`: timestamps
 
+## SupervisorTaskPacket
+
+- `id`: stable packet id
+- `source`: `chat`, `dashboard`, `gateway`, `cli`, or automation source
+- `tenant_id`: tenant if known
+- `repo_id`: target repo if known
+- `cwd`: working directory if known
+- `raw_request_summary`: compact redacted user request
+- `task_type`: normalized task class
+- `complexity`: `trivial`, `standard`, or `complex`
+- `requires_speckit`: boolean
+- `clarifications`: unresolved or answered scope questions
+- `memory_packet_id`: retrieved memory packet attached to the task
+- `success_criteria`: user-visible success conditions
+- `constraints`: safety, secret, file ownership, deployment, and approval constraints
+- `status`: `intake`, `needs_clarification`, `planned`, `delegated`, `validated`, `completed`, `blocked`
+- `created_at`, `updated_at`: timestamps
+
+## PlannerPacket
+
+- `id`: stable planner packet id
+- `task_packet_id`: parent supervisor task packet
+- `planner_role`: `planner`, `speckit_creator`, or combined role
+- `preferred_model`: configured strong reasoning model
+- `branch_name`: numbered feature branch
+- `worktree_path`: isolated worktree path if used
+- `required_artifacts`: spec, plan, tasks, contracts, quickstart, research
+- `memory_packet_id`: advisory memory attached to planning
+- `return_schema`: required planner response shape
+- `status`: `queued`, `running`, `completed`, `failed`, `blocked`
+
+## SpecKitArtifactSet
+
+- `id`: stable artifact set id
+- `task_packet_id`: parent supervisor task packet
+- `branch_name`: numbered feature branch
+- `worktree_path`: worktree path, if any
+- `spec_path`: path to `spec.md`
+- `plan_path`: path to `plan.md`
+- `tasks_path`: path to `tasks.md`
+- `artifact_status`: `missing`, `draft`, `validated`, `committed`
+- `commit_sha`: commit preserving artifacts, if committed
+
+## WorkerDelegationPacket
+
+- `id`: stable worker packet id
+- `task_packet_id`: parent supervisor task packet
+- `worker_id`: selected worker
+- `worker_kind`: `codex`, `claude_code`, `deepseek_tui`, `cursor`, `minimax_via_claude_code`, or configured provider
+- `repo_id`: target repo
+- `branch_name`: target branch
+- `worktree_path`: isolated worktree path
+- `objective`: bounded task objective
+- `owned_files`: allowed write scope
+- `constraints`: safety and workflow constraints
+- `validation_commands`: commands or checks the worker must run
+- `memory_packet_id`: advisory memory attached to execution
+- `return_schema`: required result fields
+- `status`: `queued`, `running`, `completed`, `failed`, `blocked`
+
+## WorkerResult
+
+- `id`: stable worker result id
+- `delegation_packet_id`: source delegation packet
+- `summary`: concise result
+- `changed_files`: changed file paths
+- `commands_run`: commands and outcomes
+- `validation_status`: `passed`, `failed`, `not_run`, or `blocked`
+- `blockers`: unresolved blockers
+- `memory_notes`: lessons or irrelevant memory feedback
+- `created_at`: timestamp
+
+## ValidationReport
+
+- `id`: stable report id
+- `task_packet_id`: parent supervisor task packet
+- `artifact_set_id`: Spec Kit artifacts checked
+- `worker_result_ids`: worker results reviewed
+- `git_diff_summary`: compact changed-file summary
+- `test_results`: structured validation results
+- `requirement_coverage`: mapping to Spec Kit tasks or success criteria
+- `status`: `passed`, `failed`, `blocked`
+- `created_at`: timestamp
+
+## SessionSummary
+
+- `id`: stable summary id
+- `task_packet_id`: parent supervisor task packet
+- `master_instructions`: compact user/operator instructions
+- `decisions`: supervisor routing and approval decisions
+- `delegations`: workers and task packets used
+- `validation_report_id`: final validation report
+- `memory_outcome`: memory used, ignored, helpful, harmful, or newly written
+- `commit_refs`: branch and commit pointers
+- `created_at`: timestamp
+
+## WorktreeAssignment
+
+- `id`: stable assignment id
+- `task_packet_id`: parent supervisor task packet
+- `agent_id`: planner, worker, or reviewer agent
+- `branch_name`: assigned branch
+- `worktree_path`: assigned worktree
+- `owned_files`: write scope
+- `status`: `active`, `released`, `blocked`, `abandoned`
+
 ## LearningCandidate
 
 - Existing meta candidate fields: `id`, `tenant_id`, `repo_id`, `kind`, `claim`, `evidence_json`, `score`, `status`, timestamps
@@ -131,6 +237,9 @@
 
 - Runtime event: `pending -> processing -> consumed`
 - Runtime event failure: `processing -> pending` until retry limit, then `failed`
+- Supervisor task packet: `intake -> needs_clarification/planned -> delegated -> validated -> completed`
+- Spec Kit artifact set: `missing -> draft -> validated -> committed`
+- Worker delegation packet: `queued -> running -> completed/failed/blocked`
 - Candidate: `proposed -> approved` only after quality gate and judge/operator rules
 - Candidate rejection: `proposed -> rejected` or `needs_human`
 - Approved memory: `active -> superseded -> archived`

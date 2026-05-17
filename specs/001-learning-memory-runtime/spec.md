@@ -10,7 +10,25 @@
 
 ## User Scenarios & Testing
 
-### User Story 1 - Judge Learning Candidates (Priority: P1)
+### User Story 1 - Supervisor Orchestration Protocol (Priority: P1)
+
+As a Hermes operator or dashboard user, I want Hermes to turn ambiguous requests into scoped, memory-aware, Spec Kit-preserved work before dispatching agents, so implementation is reviewable, resumable, and consistent even when the user is non-technical.
+
+**Why this priority**: This is the entry point for all serious work. Without a deterministic supervisor protocol, memory retrieval, planning, worker delegation, and git preservation remain prompt-dependent and hard to audit.
+
+**Independent Test**: Submit a dashboard-style non-technical request and verify the supervisor runs initialization, asks scope questions when required, creates or updates Spec Kit artifacts, builds a memory packet, creates planner and worker packets, records validation, and refuses to mark work complete without required artifacts.
+
+**Acceptance Scenarios**:
+
+1. **Given** a non-trivial implementation request, **When** the supervisor initializes the task, **Then** it loads the constitution, classifies the task, retrieves relevant memory, creates a task packet, and routes planning through Spec Kit.
+2. **Given** an ambiguous dashboard request, **When** required scope is missing, **Then** the supervisor asks concise clarification questions before planner/worker dispatch.
+3. **Given** a task above the configured complexity threshold, **When** planning begins, **Then** the supervisor creates or updates a numbered branch/worktree and Spec Kit `spec.md`, `plan.md`, and `tasks.md`.
+4. **Given** a worker is selected, **When** the task is dispatched, **Then** the worker receives a bounded delegation packet with repo, branch/worktree, objective, constraints, validation commands, memory packet, owned files, and return schema.
+5. **Given** a worker returns results, **When** the supervisor validates completion, **Then** it checks the result against Spec Kit tasks, git diff, tests/logs, and memory outcome requirements before final response.
+
+---
+
+### User Story 2 - Judge Learning Candidates (Priority: P2)
 
 As the Hermes operator, I want proposed learning candidates to be reviewed by a separate judge before they can become approved memory or enforcement policy, so that noisy or unsafe lessons do not alter future agent behavior.
 
@@ -26,7 +44,7 @@ As the Hermes operator, I want proposed learning candidates to be reviewed by a 
 
 ---
 
-### User Story 2 - Durable Runtime Event Bus (Priority: P2)
+### User Story 3 - Durable Runtime Event Bus (Priority: P3)
 
 As the Hermes supervisor, I want runtime events to be written to a durable local bus so sidecars can consume learning signals asynchronously without blocking chat, delegation, or tool execution.
 
@@ -42,7 +60,7 @@ As the Hermes supervisor, I want runtime events to be written to a durable local
 
 ---
 
-### User Story 3 - Retrieve And Inject Scoped Learning (Priority: P3)
+### User Story 4 - Retrieve And Inject Scoped Learning (Priority: P4)
 
 As a worker or supervisor, I want only relevant approved learning context injected into a task prompt, so prior lessons help current work without overriding explicit instructions or current evidence.
 
@@ -60,7 +78,7 @@ As a worker or supervisor, I want only relevant approved learning context inject
 
 ---
 
-### User Story 4 - Compile Memory Wiki And Dreaming Proposals (Priority: P4)
+### User Story 5 - Compile Memory Wiki And Dreaming Proposals (Priority: P5)
 
 As the Hermes operator, I want stable lessons promoted into a memory wiki and offline dreaming proposals, so repeated work becomes easier without letting speculative ideas control live execution.
 
@@ -76,7 +94,7 @@ As the Hermes operator, I want stable lessons promoted into a memory wiki and of
 
 ---
 
-### User Story 5 - Observe Runtime Learning (Priority: P5)
+### User Story 6 - Observe Runtime Learning (Priority: P6)
 
 As the Hermes operator, I want historical and active learning jobs visible by date, repo, task, worker, status, completions, blockers, and system overrides, so I can audit effectiveness and diagnose failures.
 
@@ -99,32 +117,45 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - Retrieved memory conflicts with explicit operator instructions or current git/test evidence.
 - Dreaming proposes a risky or destructive change.
 - Hot memory grows beyond prompt budget.
+- Supervisor receives a vague dashboard request from a non-technical user.
+- Planner or Spec Kit creator fails or returns incomplete artifacts.
+- Worker starts without a valid worktree, owned file scope, validation command, or return schema.
+- User explicitly requests no Spec Kit for a task that would normally require it.
 
 ## Requirements
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide a learning judge runner with strict structured output validation.
-- **FR-002**: System MUST fail closed when judge output is missing, malformed, risky, or unsupported.
-- **FR-003**: System MUST record judge decisions separately from curator candidates and approved memory.
-- **FR-004**: System MUST keep enforcement disabled unless both judge approval and operator approval are present.
-- **FR-005**: System MUST provide a durable local event bus for runtime learning events.
-- **FR-006**: System MUST process event bus work asynchronously with leases, retries, and failure states.
-- **FR-007**: System MUST keep raw events, curator candidates, judge decisions, approved memory, wiki claims, dreaming proposals, and enforcement policies in separate records or tables.
-- **FR-008**: System MUST support hot, warm, and cold memory tiers with explicit promotion and demotion rules.
-- **FR-009**: System MUST classify each task invocation into a structured retrieval query that includes tenant, repo, task type, tools, intent, entities, error signatures, success signatures, and scope.
-- **FR-010**: System MUST store approved memory with metadata fields sufficient for targeted retrieval, including tenant, repo, tool, task type, error signature, success signature, confidence, tier, scope, source, and verification timestamps.
-- **FR-011**: System MUST score memory relevance using exact scope matches, task type, tool, error/success signatures, semantic similarity, confidence, recency, and cross-tenant/repo penalties.
-- **FR-012**: System MUST build compact top-k memory packets from scored approved memory and include evidence, scope, confidence, and advisory priority labels.
-- **FR-013**: System MUST provide policy escalation for deterministic approved memory, producing audit/advisory/enforcement candidates without enabling enforcement automatically.
-- **FR-014**: System MUST record outcome feedback that marks injected memory as helpful, irrelevant, harmful, or unknown and adjusts confidence or tier according to policy.
-- **FR-015**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
-- **FR-016**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
-- **FR-017**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
-- **FR-018**: System MUST run dreaming as proposal-only background synthesis.
-- **FR-019**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-020**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-021**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-001**: System MUST define a supervisor initialization protocol loaded for non-trivial task invocation.
+- **FR-002**: System MUST provide prompt templates for supervisor intake, initialization, memory packet injection, Spec Kit planning, worker delegation, worker result, validation report, and session summary.
+- **FR-003**: System MUST require a structured supervisor task packet before planner or worker dispatch.
+- **FR-004**: System MUST require Spec Kit artifacts for non-trivial implementation work unless the user explicitly opts out or the task matches a configured trivial-work exception.
+- **FR-005**: System MUST record when Spec Kit is skipped and why.
+- **FR-006**: System MUST support planner and Spec Kit creator roles, with Codex/GPT-5.5-class reasoning as the preferred planner and configurable fallback providers.
+- **FR-007**: System MUST support implementation worker routing across configured workers such as Claude Code Sonnet, Minimax via Claude Code, DeepSeek TUI, Cursor, or Codex, without hardcoding one vendor as the architecture.
+- **FR-008**: System MUST validate worker delegation packets before dispatch and reject packets missing repo, branch/worktree, objective, constraints, validation, owned files, memory packet, or return schema.
+- **FR-009**: System MUST prevent the supervisor from marking a non-trivial implementation task complete without validation evidence and git/spec preservation status.
+- **FR-010**: System MUST provide a learning judge runner with strict structured output validation.
+- **FR-011**: System MUST fail closed when judge output is missing, malformed, risky, or unsupported.
+- **FR-012**: System MUST record judge decisions separately from curator candidates and approved memory.
+- **FR-013**: System MUST keep enforcement disabled unless both judge approval and operator approval are present.
+- **FR-014**: System MUST provide a durable local event bus for runtime learning events.
+- **FR-015**: System MUST process event bus work asynchronously with leases, retries, and failure states.
+- **FR-016**: System MUST keep raw events, curator candidates, judge decisions, approved memory, wiki claims, dreaming proposals, and enforcement policies in separate records or tables.
+- **FR-017**: System MUST support hot, warm, and cold memory tiers with explicit promotion and demotion rules.
+- **FR-018**: System MUST classify each task invocation into a structured retrieval query that includes tenant, repo, task type, tools, intent, entities, error signatures, success signatures, and scope.
+- **FR-019**: System MUST store approved memory with metadata fields sufficient for targeted retrieval, including tenant, repo, tool, task type, error signature, success signature, confidence, tier, scope, source, and verification timestamps.
+- **FR-020**: System MUST score memory relevance using exact scope matches, task type, tool, error/success signatures, semantic similarity, confidence, recency, and cross-tenant/repo penalties.
+- **FR-021**: System MUST build compact top-k memory packets from scored approved memory and include evidence, scope, confidence, and advisory priority labels.
+- **FR-022**: System MUST provide policy escalation for deterministic approved memory, producing audit/advisory/enforcement candidates without enabling enforcement automatically.
+- **FR-023**: System MUST record outcome feedback that marks injected memory as helpful, irrelevant, harmful, or unknown and adjusts confidence or tier according to policy.
+- **FR-024**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
+- **FR-025**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
+- **FR-026**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
+- **FR-027**: System MUST run dreaming as proposal-only background synthesis.
+- **FR-028**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-029**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-030**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 
@@ -140,6 +171,14 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Task Retrieval Query**: Structured representation of a task invocation used to find relevant approved memory.
 - **Memory Packet**: Compact prompt-ready advisory context built from top-ranked approved memory.
 - **Outcome Feedback**: Post-task record describing whether injected memory helped, was irrelevant, was harmful, or had unknown impact.
+- **Supervisor Task Packet**: Structured intake record for a user or dashboard request before planning or delegation.
+- **Planner Packet**: Bounded request sent to the planner agent to create or update Spec Kit artifacts.
+- **Spec Kit Artifact Set**: Branch/worktree plus `spec.md`, `plan.md`, `tasks.md`, and related design docs.
+- **Worker Delegation Packet**: Bounded execution request sent to an implementation worker.
+- **Worker Result**: Structured response from an implementation worker with changes, commands, validation, blockers, and memory notes.
+- **Validation Report**: Supervisor-owned evidence that the work matches Spec Kit tasks, tests/logs, git diff, and user success criteria.
+- **Session Summary**: Durable summary of master instructions, decisions, delegation, validation, and memory outcome.
+- **Worktree Assignment**: Mapping between branch/worktree, agent, owned files, task scope, and cleanup state.
 
 ## Success Criteria
 
@@ -152,6 +191,9 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **SC-005**: No enforcement policy can actively rewrite a command unless a test fixture includes both judge approval and operator approval.
 - **SC-006**: No raw secrets or raw transcripts are stored in approved memory, wiki claims, or dreaming proposals in safety tests.
 - **SC-007**: Housekeeping can reduce noisy active candidate lists without deleting archived audit history.
+- **SC-008**: Non-trivial implementation tasks produce Spec Kit artifacts and a git branch/worktree record before worker execution in protocol tests.
+- **SC-009**: Worker dispatch is rejected in tests when required delegation packet fields are missing.
+- **SC-010**: Supervisor completion is rejected in tests when validation evidence, git preservation, or session summary is missing.
 
 ## Assumptions
 
@@ -161,3 +203,4 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - Existing Hermes CLI and dashboard/backend patterns should be reused instead of introducing a separate service.
 - Existing learning sidecar, curator policy runner, housekeeping, retrieval, and policy audit code remain the base implementation.
 - Operator approval means explicit user or admin action through CLI/API/config, not implicit model confidence.
+- Non-trivial implementation work defaults to Spec Kit preservation; trivial fixes and explicit user opt-out are recorded as exceptions.
