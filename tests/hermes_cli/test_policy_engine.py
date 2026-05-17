@@ -84,4 +84,5 @@ def test_terminal_tool_attaches_policy_audit_without_rewriting(tmp_path, monkeyp
     audit = result["runtime_policy_audit"]
     assert audit["status"] == "matched"
     assert audit["effective_command"] == audit["original_command"]
-    assert audit["matches"][0]["policy_id"] == "curpol_claude"
+    assert audit["matches"][0]["policy_type"] == "command_repair"
+    assert audit["matches"][0]["action"] == "would_rewrite"
