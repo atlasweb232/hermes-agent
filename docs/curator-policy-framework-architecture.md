@@ -162,6 +162,10 @@ deterministic gates:
   `crashy`, and `prior #` are skipped
 - Kanban `task_outcome` records must be high-signal completed outcomes with a
   memory packet before they can become candidates
+- reconcile applies the same candidate-quality gates before promotion, so old
+  proposed candidates created before the filters do not get promoted later
+- housekeeping can archive invalid proposed candidates that fail the quality
+  gates, keeping normal candidate review focused on active usable guidance
 
 The filters are configurable:
 
@@ -171,6 +175,7 @@ supervisor:
     rollup_filters:
       curator_only_record_kinds:
         - tool_routing_lesson
+      archive_invalid_proposed: true
       terminal_existing_statuses:
         - approved
         - applied

@@ -568,6 +568,60 @@ def test_reconcile_learning_candidates_rolls_back_degraded_apply(tmp_path, monke
         db.close()
 
 
+def test_reconcile_learning_candidates_skips_noisy_kanban_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_ready",
+            query="ready",
+            status="ready",
+            tenant_id=None,
+            repo_id=None,
+            scopes=["global"],
+            claims_json=[],
+            evidence_json=[],
+            contradictions_json=[],
+            freshness_json={},
+            confidence=0.9,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_noisy_reconcile",
+            kind="playbook",
+            claim="completed: prior #3",
+            evidence_json={
+                "record_id": "kanban_event_12",
+                "packet_id": None,
+                "evidence_uri": "kanban://task/t_prior/event/12",
+            },
+            score=0.9,
+            status="proposed",
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            config={
+                "supervisor": {
+                    "learning": {
+                        "promotion": {"enabled": True, "min_score": 0.7, "min_ready_ratio": 0.1},
+                        "rollback": {"enabled": False},
+                        "rollup_filters": {},
+                    },
+                    "monitoring": {"enabled": True, "recent_runs": 20},
+                }
+            },
+        )
+
+        assert result.promoted == 0
+        assert result.metrics["promotion_skipped"]["quality_gate:kanban_missing_memory_packet"] == 1
+        assert db.get_meta_candidate("metacand_noisy_reconcile")["status"] == "proposed"
+    finally:
+        db.close()
+
+
 def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -766,6 +820,36 @@ def test_candidate_housekeeping_trims_excess_proposed_per_kind(tmp_path, monkeyp
         assert db.get_meta_candidate("metacand_trim_2")["status"] == "proposed"
         assert db.get_meta_candidate("metacand_trim_1")["status"] == "archived"
         assert db.get_meta_candidate("metacand_trim_0")["status"] == "archived"
+    finally:
+        db.close()
+
+
+def test_candidate_housekeeping_archives_invalid_proposed_kanban_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_invalid_kanban",
+            kind="playbook",
+            claim="timed_out: loop forever",
+            evidence_json={
+                "record_id": "kanban_event_3",
+                "packet_id": None,
+                "evidence_uri": "kanban://task/t_loop/event/3",
+            },
+            score=0.4,
+            status="proposed",
+        )
+
+        result = run_candidate_housekeeping(
+            db,
+            config={"supervisor": {"learning": {"housekeeping": {}, "rollup_filters": {}}}},
+        )
+
+        assert result.archived == 1
+        assert "quality gate failed" in result.items[0].reason
+        assert db.get_meta_candidate("metacand_invalid_kanban")["status"] == "archived"
     finally:
         db.close()
 

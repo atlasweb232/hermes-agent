@@ -418,6 +418,48 @@ def _existing_candidate_blocks_rollup(
     return None
 
 
+def _candidate_quality_skip_reason(
+    candidate: Dict[str, Any],
+    *,
+    learning_policy: Dict[str, Any],
+) -> Optional[str]:
+    filters = _rollup_filter_policy(learning_policy)
+    claim = str(candidate.get("claim") or "")
+    evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    evidence_text = json.dumps(evidence, ensure_ascii=False)
+    combined = f"{claim} {evidence_text}"
+    if _matches_any_pattern(combined, filters.get("synthetic_title_patterns") or []):
+        return "synthetic_marker"
+
+    record_id = str(evidence.get("record_id") or "")
+    evidence_uri = str(evidence.get("evidence_uri") or "")
+    is_kanban = record_id.startswith("kanban_event_") or evidence_uri.startswith("kanban://")
+    if not is_kanban:
+        return None
+
+    lowered_claim = claim.lower()
+    non_completed_markers = (
+        "blocked:",
+        "gave_up:",
+        "timed_out:",
+        "crashed:",
+        "completion_blocked_hallucination:",
+        "reclaimed:",
+    )
+    if lowered_claim.startswith(non_completed_markers):
+        return "kanban_non_completed_outcome"
+
+    task_policy = filters.get("task_outcome")
+    if not isinstance(task_policy, dict):
+        task_policy = {}
+    if task_policy.get("require_memory_packet", True) and not evidence.get("packet_id"):
+        return "kanban_missing_memory_packet"
+    min_task_score = float(task_policy.get("min_score", 0.75) or 0.75)
+    if float(candidate.get("score") or 0.0) < min_task_score:
+        return "kanban_low_score"
+    return None
+
+
 def rollup_learning_candidates(
     db: SessionDB,
     *,
@@ -660,6 +702,10 @@ def reconcile_learning_candidates(
     promoted = 0
     applied = 0
     rolled_back = 0
+    skipped: Dict[str, int] = {}
+
+    def mark_skipped(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
 
     if promotion_enabled and monitor.status not in degraded_statuses and metrics["ready_ratio"] >= min_ready_ratio:
         candidates = db.list_meta_candidates(
@@ -671,8 +717,17 @@ def reconcile_learning_candidates(
         for candidate in candidates:
             score = float(candidate.get("score") or 0.0)
             if score < min_score:
+                mark_skipped("below_min_score")
                 continue
             if not _candidate_is_auto_promotable(candidate):
+                mark_skipped("not_auto_promotable")
+                continue
+            quality_skip = _candidate_quality_skip_reason(
+                candidate,
+                learning_policy=learning_policy,
+            )
+            if quality_skip:
+                mark_skipped(f"quality_gate:{quality_skip}")
                 continue
             apply_candidate = auto_apply and score >= apply_min_score
             approve_meta_candidate(
@@ -720,6 +775,7 @@ def reconcile_learning_candidates(
             "promoted": promoted,
             "applied": applied,
             "rolled_back": rolled_back,
+            "promotion_skipped": skipped,
         },
         notes="learning policy reconciliation completed",
     )
@@ -733,6 +789,7 @@ def reconcile_learning_candidates(
         metrics={
             "monitor": monitor.to_dict(),
             "metrics": metrics,
+            "promotion_skipped": skipped,
         },
     )
 
@@ -840,6 +897,12 @@ def run_candidate_housekeeping(
     rejected_ttl_days = float(policy.get("rejected_ttl_days", 30) or 0)
     approved_ttl_days = float(policy.get("approved_ttl_days", 0) or 0)
     max_candidates_per_kind = int(policy.get("max_candidates_per_kind", 25) or 0)
+    learning_policy = (config or load_config()).get("supervisor", {}).get("learning", {})
+    if not isinstance(learning_policy, dict):
+        learning_policy = {}
+    archive_invalid_proposed = bool(
+        _rollup_filter_policy(learning_policy).get("archive_invalid_proposed", True)
+    )
 
     rows = db.list_meta_candidates(
         tenant_id=tenant_id,
@@ -901,6 +964,10 @@ def run_candidate_housekeeping(
             plan_archive(row, f"rejected candidate older than {rejected_ttl_days:g} days")
         elif status == "approved" and approved_ttl_days > 0 and age_days(row) >= approved_ttl_days:
             plan_archive(row, f"approved candidate older than {approved_ttl_days:g} days")
+        elif status == "proposed" and archive_invalid_proposed:
+            quality_skip = _candidate_quality_skip_reason(row, learning_policy=learning_policy)
+            if quality_skip:
+                plan_archive(row, f"quality gate failed: {quality_skip}")
 
     if max_candidates_per_kind > 0:
         grouped: Dict[str, List[Dict[str, Any]]] = {}
