@@ -230,6 +230,91 @@ def test_reconcile_learning_candidates_promotes_threshold_hits(tmp_path, monkeyp
         db.close()
 
 
+def test_reconcile_does_not_promote_unvalidated_command_repair_policy(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_ready",
+            query="claude repair",
+            status="ready",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            scopes=["atlas-email-flutter"],
+            claims_json=[{"record_id": "rec-1", "title": "claim", "score": 0.9}],
+            evidence_json=[{"uri": "artifact://evidence.txt"}],
+            contradictions_json=[],
+            freshness_json={"policy": "fresh"},
+            confidence=0.9,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="curpol_no_validation",
+            kind="command_repair_policy",
+            claim="Prefer direct claude",
+            evidence_json={"source_record_id": "memrec_1"},
+            score=0.95,
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        assert result.status == "completed"
+        assert result.promoted == 0
+        row = db.get_meta_candidate("curpol_no_validation")
+        assert row["status"] == "proposed"
+    finally:
+        db.close()
+
+
+def test_approve_meta_candidate_preserves_validation_payload(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        evidence = {
+            "source_record_id": "memrec_1",
+            "validation": {
+                "status": "valid",
+                "eligible_for_approval": True,
+                "approved_for_enforcement": False,
+                "warnings": [],
+                "errors": [],
+            },
+        }
+        db.upsert_meta_candidate(
+            candidate_id="curpol_validated",
+            kind="command_repair_policy",
+            claim="Prefer direct claude",
+            evidence_json=evidence,
+            score=0.95,
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        result = approve_meta_candidate(db, candidate_id="curpol_validated")
+
+        assert result.status == "approved"
+        row = db.get_meta_candidate("curpol_validated")
+        assert row["status"] == "approved"
+        assert row["evidence_json"]["source_record_id"] == "memrec_1"
+        assert row["evidence_json"]["validation"]["eligible_for_approval"] is True
+        assert row["evidence_json"]["validation"]["approved_for_enforcement"] is False
+        assert row["evidence_json"]["approved_at"]
+        assert row["evidence_json"]["actions"]
+    finally:
+        db.close()
+
+
 def test_approve_meta_candidate_applies_to_config(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

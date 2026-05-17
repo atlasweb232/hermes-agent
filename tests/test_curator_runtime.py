@@ -97,6 +97,25 @@ def test_policy_pass_writes_advisory_candidate(tmp_path):
     assert rows[0]["evidence_json"]["validation"]["status"] == "valid"
 
 
+def test_policy_pass_rerun_upserts_same_candidate_for_source_record(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_lesson(db)
+    responses = iter(["first curator wording", "second curator wording"])
+
+    def fake_model_call(cfg, prompt):
+        return next(responses)
+
+    first = run_curator_policy_pass(db, config={}, model_call=fake_model_call)
+    second = run_curator_policy_pass(db, config={}, model_call=fake_model_call)
+
+    assert first.candidates_created == 1
+    assert second.candidates_created == 1
+    assert first.candidates[0].candidate_id == second.candidates[0].candidate_id
+    rows = db.list_meta_candidates(kind="command_repair_policy", limit=5)
+    assert len(rows) == 1
+    assert rows[0]["evidence_json"]["curator_output"] == "second curator wording"
+
+
 def test_codex_curator_adapter_uses_read_only_exec(monkeypatch):
     calls = []
 

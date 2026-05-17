@@ -400,9 +400,8 @@ def _stable_candidate_id(record: dict[str, Any], output: str) -> str:
     raw = "|".join(
         [
             "command_repair_policy",
+            CURATOR_POLICY_VERSION,
             str(record.get("id") or ""),
-            str(record.get("updated_at") or record.get("created_at") or ""),
-            output[:120],
         ]
     )
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]

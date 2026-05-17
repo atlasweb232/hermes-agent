@@ -535,6 +535,8 @@ def reconcile_learning_candidates(
             score = float(candidate.get("score") or 0.0)
             if score < min_score:
                 continue
+            if not _candidate_is_auto_promotable(candidate):
+                continue
             apply_candidate = auto_apply and score >= apply_min_score
             approve_meta_candidate(
                 db,
@@ -596,6 +598,19 @@ def reconcile_learning_candidates(
             "metrics": metrics,
         },
     )
+
+
+def _candidate_is_auto_promotable(candidate: Dict[str, Any]) -> bool:
+    """Return whether policy reconciliation may auto-approve a candidate."""
+    if candidate.get("kind") != "command_repair_policy":
+        return True
+    evidence = candidate.get("evidence_json")
+    if not isinstance(evidence, dict):
+        return False
+    validation = evidence.get("validation")
+    if not isinstance(validation, dict):
+        return False
+    return bool(validation.get("eligible_for_approval")) and not validation.get("errors")
 
 
 def run_learning_sidecar(
@@ -932,22 +947,24 @@ def approve_meta_candidate(
         config_written = True
         applied = True
         notes = "candidate approved and applied to config"
+        evidence = _candidate_evidence_with_action(
+            candidate,
+            action={"applied_at": _now(), "targets": targets},
+        )
         db.update_meta_candidate_status(
             candidate_id,
             status="applied",
-            evidence_json={
-                "applied_at": _now(),
-                "targets": targets,
-            },
+            evidence_json=evidence,
         )
     else:
+        evidence = _candidate_evidence_with_action(
+            candidate,
+            action={"approved_at": _now(), "targets": _candidate_targets(candidate)},
+        )
         db.update_meta_candidate_status(
             candidate_id,
             status="approved",
-            evidence_json={
-                "approved_at": _now(),
-                "targets": _candidate_targets(candidate),
-            },
+            evidence_json=evidence,
         )
         targets = _candidate_targets(candidate)
 
@@ -960,6 +977,22 @@ def approve_meta_candidate(
         notes=notes,
         candidate=candidate,
     )
+
+
+def _candidate_evidence_with_action(
+    candidate: Dict[str, Any],
+    *,
+    action: Dict[str, Any],
+) -> Dict[str, Any]:
+    evidence = candidate.get("evidence_json")
+    merged = dict(evidence) if isinstance(evidence, dict) else {}
+    actions = merged.get("actions")
+    if not isinstance(actions, list):
+        actions = []
+    actions.append(action)
+    merged["actions"] = actions
+    merged.update(action)
+    return merged
 
 
 def reject_meta_candidate(
