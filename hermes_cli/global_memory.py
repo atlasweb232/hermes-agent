@@ -345,6 +345,50 @@ class PersistedPreCurationResult:
         }
 
 
+@dataclass
+class GlobalHotCacheEntry:
+    id: str
+    global_lesson_id: str
+    tenant_id: Optional[str]
+    repo_id: Optional[str]
+    scope: str
+    sensitivity: str
+    tool: str
+    task_type: str
+    worker_kind: str
+    failure_signature: str
+    success_signature: str
+    compact_text: str
+    confidence: float
+    evidence_refs: List[str] = field(default_factory=list)
+    reuse_stats: Dict[str, int] = field(default_factory=dict)
+    created_at: float = field(default_factory=_now)
+    updated_at: float = field(default_factory=_now)
+    last_used_at: Optional[float] = None
+    expires_at: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class HydratedMemoryPacket:
+    packet_id: str
+    event_id: str
+    status: str
+    hot_cache_hits: List[Dict[str, Any]] = field(default_factory=list)
+    global_lessons: List[Dict[str, Any]] = field(default_factory=list)
+    local_claims: List[Dict[str, Any]] = field(default_factory=list)
+    advisory_items: List[Dict[str, Any]] = field(default_factory=list)
+    estimated_tokens: int = 0
+    token_budget: int = 800
+    retrieval_audit: Dict[str, Any] = field(default_factory=dict)
+    materialized: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -845,6 +889,213 @@ def persist_global_lesson(db: SessionDB, lesson: Dict[str, Any]) -> GlobalLesson
     return record
 
 
+def ensure_global_hot_cache_schema(db: SessionDB) -> None:
+    def _do(conn):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hermes_global_hot_cache (
+                id TEXT PRIMARY KEY,
+                global_lesson_id TEXT NOT NULL,
+                tenant_id TEXT,
+                repo_id TEXT,
+                scope TEXT NOT NULL,
+                sensitivity TEXT NOT NULL,
+                tool TEXT,
+                task_type TEXT,
+                worker_kind TEXT,
+                failure_signature TEXT,
+                success_signature TEXT,
+                compact_text TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                evidence_refs_json TEXT,
+                reuse_stats_json TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                last_used_at REAL,
+                expires_at REAL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_global_hot_cache_exact
+                ON hermes_global_hot_cache(tenant_id, repo_id, failure_signature, success_signature, expires_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_global_hot_cache_scope
+                ON hermes_global_hot_cache(tenant_id, repo_id, scope, sensitivity, updated_at DESC)
+            """
+        )
+
+    db._execute_write(_do)
+
+
+def _compact_lesson_text(lesson: Dict[str, Any], max_chars: int = 360) -> str:
+    text = str(lesson.get("compact_text") or lesson.get("normalized_text") or lesson.get("claim") or "").strip()
+    if not text:
+        failed = str(lesson.get("failure_signature") or lesson.get("failed_path") or "prior failure")
+        success = str(lesson.get("success_signature") or lesson.get("working_path") or "known working path")
+        text = f"Known lesson: when {failed} appears, prefer {success}."
+    text = re.sub(r"\s+", " ", text)
+    return text[:max_chars]
+
+
+def _hot_cache_entry_from_row(row: Any) -> Dict[str, Any]:
+    data = dict(row)
+    return GlobalHotCacheEntry(
+        id=data["id"],
+        global_lesson_id=data["global_lesson_id"],
+        tenant_id=data.get("tenant_id"),
+        repo_id=data.get("repo_id"),
+        scope=data["scope"],
+        sensitivity=data["sensitivity"],
+        tool=data.get("tool") or "",
+        task_type=data.get("task_type") or "",
+        worker_kind=data.get("worker_kind") or "",
+        failure_signature=data.get("failure_signature") or "",
+        success_signature=data.get("success_signature") or "",
+        compact_text=data["compact_text"],
+        confidence=float(data.get("confidence") or 0.0),
+        evidence_refs=_json_list(data.get("evidence_refs_json")),
+        reuse_stats={str(k): int(v) for k, v in _as_json_dict(data.get("reuse_stats_json")).items()},
+        created_at=float(data.get("created_at") or 0.0),
+        updated_at=float(data.get("updated_at") or 0.0),
+        last_used_at=float(data["last_used_at"]) if data.get("last_used_at") is not None else None,
+        expires_at=float(data["expires_at"]) if data.get("expires_at") is not None else None,
+    ).to_dict()
+
+
+def materialize_global_lesson_to_hot_cache(
+    db: SessionDB,
+    lesson: Dict[str, Any],
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    *,
+    ttl_seconds: int = 3600,
+) -> GlobalHotCacheEntry:
+    ensure_global_hot_cache_schema(db)
+    evt = _as_precuration_event(event)
+    source_id = str(lesson.get("id") or lesson.get("global_lesson_id") or "")
+    cache_id = f"ghot_{stable_hash([source_id, evt.tenant_id, evt.repo_id, evt.task_type, evt.tool])[:16]}"
+    now = _now()
+    entry = GlobalHotCacheEntry(
+        id=cache_id,
+        global_lesson_id=source_id,
+        tenant_id=evt.tenant_id or lesson.get("tenant_id"),
+        repo_id=evt.repo_id or lesson.get("repo_id"),
+        scope=str(lesson.get("scope") or "global"),
+        sensitivity=str(lesson.get("sensitivity") or "internal"),
+        tool=evt.tool or str(lesson.get("tool") or ""),
+        task_type=evt.task_type or str(lesson.get("task_type") or ""),
+        worker_kind=evt.worker_kind or str(lesson.get("worker_kind") or ""),
+        failure_signature=evt.failure_signature or str(lesson.get("failure_signature") or ""),
+        success_signature=evt.success_signature or str(lesson.get("success_signature") or ""),
+        compact_text=_compact_lesson_text(lesson),
+        confidence=_lesson_confidence(lesson),
+        evidence_refs=_json_list(lesson.get("evidence_refs") or []),
+        reuse_stats=dict(lesson.get("reuse_stats") or {}),
+        created_at=now,
+        updated_at=now,
+        last_used_at=now,
+        expires_at=now + int(ttl_seconds),
+    )
+
+    def _do(conn):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO hermes_global_hot_cache (
+                id, global_lesson_id, tenant_id, repo_id, scope, sensitivity,
+                tool, task_type, worker_kind, failure_signature,
+                success_signature, compact_text, confidence, evidence_refs_json,
+                reuse_stats_json, created_at, updated_at, last_used_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.id,
+                entry.global_lesson_id,
+                entry.tenant_id,
+                entry.repo_id,
+                entry.scope,
+                entry.sensitivity,
+                entry.tool,
+                entry.task_type,
+                entry.worker_kind,
+                entry.failure_signature,
+                entry.success_signature,
+                entry.compact_text,
+                entry.confidence,
+                json.dumps(entry.evidence_refs, sort_keys=True),
+                json.dumps(entry.reuse_stats, sort_keys=True),
+                entry.created_at,
+                entry.updated_at,
+                entry.last_used_at,
+                entry.expires_at,
+            ),
+        )
+
+    db._execute_write(_do)
+    return entry
+
+
+def retrieve_global_hot_cache_for_event(
+    db: SessionDB,
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    *,
+    limit: int = 3,
+) -> List[Dict[str, Any]]:
+    ensure_global_hot_cache_schema(db)
+    evt = _as_precuration_event(event)
+    now = _now()
+
+    def _fetch(conn):
+        rows = conn.execute(
+            """
+            SELECT * FROM hermes_global_hot_cache
+            WHERE (expires_at IS NULL OR expires_at > ?)
+            ORDER BY last_used_at DESC, confidence DESC
+            LIMIT 200
+            """,
+            (now,),
+        ).fetchall()
+        return [_hot_cache_entry_from_row(row) for row in rows]
+
+    rows = db._execute_write(_fetch)
+    matches: List[Dict[str, Any]] = []
+    for row in rows:
+        lesson_like = {
+            "id": row["global_lesson_id"],
+            "tenant_id": row.get("tenant_id"),
+            "repo_id": row.get("repo_id"),
+            "status": "approved",
+            "scope": row.get("scope"),
+            "sensitivity": row.get("sensitivity"),
+            "failure_signature": row.get("failure_signature"),
+            "success_signature": row.get("success_signature"),
+            "confidence": row.get("confidence"),
+            "cross_tenant_shareable": str(row.get("scope") or "") == "global",
+        }
+        ok, _reason = _event_matches_lesson_scope(evt, lesson_like)
+        if not ok:
+            continue
+        if _exact_lesson_match(evt, lesson_like):
+            matches.append(row)
+    matches.sort(key=lambda item: (-float(item.get("confidence") or 0), str(item.get("id") or "")))
+    selected = matches[: max(0, int(limit))]
+    if selected:
+        ids = [item["id"] for item in selected]
+
+        def _touch(conn):
+            ts = _now()
+            conn.executemany(
+                "UPDATE hermes_global_hot_cache SET last_used_at = ?, updated_at = ? WHERE id = ?",
+                [(ts, ts, cache_id) for cache_id in ids],
+            )
+
+        db._execute_write(_touch)
+    return selected
+
+
 def _global_lesson_from_row(row: Any) -> Dict[str, Any]:
     data = dict(row)
     return GlobalLessonRecord(
@@ -972,6 +1223,87 @@ def run_persisted_global_precuration(
         updated["reuse_stats"] = stats
         persist_global_lesson(db, updated)
     return PersistedPreCurationResult(decision=decision, retrieval=retrieval, metrics=metrics)
+
+
+def estimate_tokens(text: str) -> int:
+    return max(1, (len(str(text or "")) + 3) // 4)
+
+
+def hydrate_task_memory_from_global(
+    db: SessionDB,
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    *,
+    local_claims: Optional[Sequence[Dict[str, Any]]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    hot_limit: int = 3,
+    global_limit: int = 3,
+    token_budget: int = 800,
+    ttl_seconds: int = 3600,
+) -> HydratedMemoryPacket:
+    evt = _as_precuration_event(event)
+    hot_hits = retrieve_global_hot_cache_for_event(db, evt, limit=hot_limit)
+    materialized: List[Dict[str, Any]] = []
+    retrieval_audit: Dict[str, Any] = {"status": "skipped", "reason": "hot_cache_hit"}
+
+    if not hot_hits:
+        retrieved = retrieve_global_lessons_for_event(db, evt, config=config, limit=global_limit)
+        retrieval_audit = retrieved.audit.to_dict()
+        for lesson in retrieved.lessons[:global_limit]:
+            entry = materialize_global_lesson_to_hot_cache(db, lesson, evt, ttl_seconds=ttl_seconds)
+            materialized.append(entry.to_dict())
+        hot_hits = retrieve_global_hot_cache_for_event(db, evt, limit=hot_limit)
+
+    packet_id = f"gmem_{stable_hash([evt.to_dict(), [item.get('id') for item in hot_hits]])[:16]}"
+    advisory_items: List[Dict[str, Any]] = []
+    used_tokens = 0
+
+    def _add_item(source: str, text: str, metadata: Dict[str, Any]) -> None:
+        nonlocal used_tokens
+        token_cost = estimate_tokens(text)
+        if used_tokens + token_cost > int(token_budget):
+            return
+        used_tokens += token_cost
+        advisory_items.append(
+            {
+                "source": source,
+                "text": text,
+                "estimated_tokens": token_cost,
+                **metadata,
+            }
+        )
+
+    for claim in local_claims or []:
+        text = str(claim.get("text") or claim.get("body") or claim.get("claim") or "")
+        if text:
+            _add_item("local_memory", text, {"id": claim.get("id") or claim.get("record_id")})
+
+    for hit in hot_hits:
+        _add_item(
+            "global_hot_cache",
+            hit["compact_text"],
+            {
+                "id": hit["id"],
+                "global_lesson_id": hit["global_lesson_id"],
+                "confidence": hit["confidence"],
+                "evidence_refs": hit.get("evidence_refs") or [],
+                "advisory": True,
+            },
+        )
+
+    status = "ready" if advisory_items else "empty"
+    return HydratedMemoryPacket(
+        packet_id=packet_id,
+        event_id=evt.event_id,
+        status=status,
+        hot_cache_hits=hot_hits,
+        global_lessons=materialized,
+        local_claims=[dict(item) for item in (local_claims or [])],
+        advisory_items=advisory_items,
+        estimated_tokens=used_tokens,
+        token_budget=int(token_budget),
+        retrieval_audit=retrieval_audit,
+        materialized=len(materialized),
+    )
 
 
 def should_curate_locally(

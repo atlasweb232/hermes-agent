@@ -14,10 +14,13 @@ from hermes_cli.global_memory import (
     fanout_discussion_record_to_indexes,
     get_global_memory_bus,
     normalize_proposal,
+    hydrate_task_memory_from_global,
+    materialize_global_lesson_to_hot_cache,
     persist_global_lesson,
     publish_global_proposal,
     record_global_lesson_reuse_metric,
     retrieve_global_lessons_for_event,
+    retrieve_global_hot_cache_for_event,
     run_persisted_global_precuration,
     should_curate_locally,
     simple_simhash,
@@ -828,5 +831,147 @@ def test_curator_policy_pass_calls_model_on_persisted_miss(tmp_path):
         assert len(calls) == 1
         assert result.precuration["records_skipped"] == 0
         assert result.precuration["global_lesson_miss"] == 1
+    finally:
+        db.close()
+
+
+def test_materialize_global_lesson_to_hot_cache_and_retrieve_exact(tmp_path):
+    db = _db(tmp_path)
+    try:
+        lesson = persist_global_lesson(
+            db,
+            {
+                "id": "global-hot-1",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Use direct Claude Code invocation after worker-router failures.",
+                "confidence": 0.92,
+                "evidence_refs": ["global://evidence/1"],
+                "cross_tenant_shareable": True,
+            },
+        )
+        event = {
+            "event_id": "evt-hot",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "failure_signature": "cmd:worker-router:claude:parse-error",
+        }
+
+        entry = materialize_global_lesson_to_hot_cache(db, lesson.to_dict(), event, ttl_seconds=60)
+        hits = retrieve_global_hot_cache_for_event(db, event)
+
+        assert entry.global_lesson_id == "global-hot-1"
+        assert hits[0]["global_lesson_id"] == "global-hot-1"
+        assert hits[0]["evidence_refs"] == ["global://evidence/1"]
+        assert hits[0]["compact_text"]
+    finally:
+        db.close()
+
+
+def test_task_hydration_uses_hot_cache_before_global_lookup(tmp_path):
+    db = _db(tmp_path)
+    try:
+        event = {
+            "event_id": "evt-cache-first",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "failure_signature": "cmd:worker-router:claude:parse-error",
+        }
+        materialize_global_lesson_to_hot_cache(
+            db,
+            {
+                "id": "global-cache-first",
+                "scope": "global",
+                "sensitivity": "internal",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Use direct Claude Code invocation.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+            },
+            event,
+        )
+
+        packet = hydrate_task_memory_from_global(db, event, local_claims=[{"id": "local-1", "text": "Local repo fact."}])
+
+        assert packet.status == "ready"
+        assert packet.materialized == 0
+        assert packet.retrieval_audit["reason"] == "hot_cache_hit"
+        assert [item["source"] for item in packet.advisory_items] == ["local_memory", "global_hot_cache"]
+    finally:
+        db.close()
+
+
+def test_task_hydration_retrieves_global_and_materializes_hot_cache_on_miss(tmp_path):
+    db = _db(tmp_path)
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "global-fallback",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Use direct Claude Code invocation after worker-router failures.",
+                "confidence": 0.92,
+                "cross_tenant_shareable": True,
+            },
+        )
+        event = {
+            "event_id": "evt-fallback",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "failure_signature": "cmd:worker-router:claude:parse-error",
+        }
+
+        packet = hydrate_task_memory_from_global(db, event)
+        hot_hits = retrieve_global_hot_cache_for_event(db, event)
+
+        assert packet.materialized == 1
+        assert packet.retrieval_audit["exact_matches"] == 1
+        assert hot_hits[0]["global_lesson_id"] == "global-fallback"
+        assert packet.advisory_items[0]["source"] == "global_hot_cache"
+    finally:
+        db.close()
+
+
+def test_task_hydration_enforces_token_budget(tmp_path):
+    db = _db(tmp_path)
+    try:
+        event = {
+            "event_id": "evt-budget",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "failure_signature": "cmd:worker-router:claude:parse-error",
+        }
+        materialize_global_lesson_to_hot_cache(
+            db,
+            {
+                "id": "global-budget",
+                "scope": "global",
+                "sensitivity": "internal",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Use direct Claude Code invocation after worker-router failures.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+            },
+            event,
+        )
+
+        packet = hydrate_task_memory_from_global(
+            db,
+            event,
+            local_claims=[{"id": "too-large", "text": "x" * 400}],
+            token_budget=20,
+        )
+
+        assert packet.estimated_tokens <= 20
+        assert [item["source"] for item in packet.advisory_items] == ["global_hot_cache"]
     finally:
         db.close()
