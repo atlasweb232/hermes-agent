@@ -194,6 +194,7 @@
 - [x] T070R [US5] Add tiered sidecar model deployment config so programmatic, low-cost reasoning, balanced reasoning, and strong reasoning roles can be routed transparently to DeepSeek, MiniMax, Codex, Ollama, or future hosted/local providers
 - [x] T070S [US5] Update model-role tests and architecture docs to prove role-specific overrides win over tier defaults and judges/approval gates remain on the strong reasoning tier by default
 - [x] T070T [US5] Add CLI/backend tier configuration surfaces so operators can change a tier once through `hermes config tier set ...` or `/api/model/tiers/{tier}` instead of editing every sidecar role
+- [x] T070U [US5] Add configurable media toolset surfaces for voice/realtime providers, MiniMax `speech-2.8`, xAI/Grok voice, OpenAI `gpt-realtime-2`, and direct Nano Banana Pro image-generation selection
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 

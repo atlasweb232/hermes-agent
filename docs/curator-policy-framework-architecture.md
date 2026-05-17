@@ -1602,3 +1602,26 @@ supervisor:
 Negative tests must prove proposals are not injected, indexed as approved
 memory, queued as goals, applied to config, used by the policy engine, or
 allowed to cross tenant boundaries by default.
+
+## Media Toolset Configuration
+
+Runtime learning and orchestration should expose media capabilities as normal
+toolsets, not special-case prompt instructions. Voice and image generation are
+configured through provider-neutral surfaces:
+
+- `voice` toolset: enables voice-mode/realtime-audio configuration and the
+  existing `text_to_speech` execution tool.
+- `tts` providers: include Edge, OpenAI, xAI/Grok, ElevenLabs, Gemini, local
+  engines, and MiniMax `speech-2.8`.
+- `voice.realtime`: stores the selected realtime provider/model, defaulting to
+  OpenAI `gpt-realtime-2` with MiniMax and xAI as transparent fallback provider
+  names. This is configuration for realtime sessions; existing TTS execution
+  continues through `text_to_speech`.
+- `image_gen`: continues to use provider plugins/FAL backends, with a direct
+  setup row that pins `fal-ai/nano-banana-pro` for Gemini/Nano Banana Pro image
+  generation.
+
+These media choices are operator configuration, not learning-policy output.
+Curator/dreaming/judge sidecars may recommend cheaper media providers, but they
+must not silently enable paid voice/image generation or mutate API-key-backed
+tool configuration without operator approval.

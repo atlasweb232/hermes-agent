@@ -759,6 +759,13 @@ class TestDiscordChannelPromptsConfig:
         assert raw["discord"]["channel_prompts"] == {}
 
 
+class TestVoiceMediaProviderConfig:
+    def test_default_config_voice_media_provider_defaults(self):
+        assert DEFAULT_CONFIG["tts"]["minimax"]["model"] == "speech-2.8"
+        assert DEFAULT_CONFIG["voice"]["realtime"]["model"] == "gpt-realtime-2"
+        assert DEFAULT_CONFIG["voice"]["realtime"]["fallback_providers"] == ["minimax", "xai"]
+
+
 class TestUserMessagePreviewConfig:
     def test_default_config_preview_line_counts(self):
         preview = DEFAULT_CONFIG["display"]["user_message_preview"]

@@ -254,3 +254,9 @@ class TestDefaultPlatformWebSearchCoverage:
 
     def test_hermes_api_server_toolset_includes_web_search(self):
         assert "web_search" in resolve_toolset("hermes-api-server")
+
+
+class TestVoiceToolset:
+    def test_voice_toolset_exposes_tts_tool(self):
+        assert validate_toolset("voice") is True
+        assert resolve_toolset("voice") == ["text_to_speech"]

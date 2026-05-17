@@ -64,6 +64,7 @@ CONFIGURABLE_TOOLSETS = [
     ("x_search",        "🐦 X (Twitter) Search",        "x_search (requires xAI OAuth or XAI_API_KEY)"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
+    ("voice",           "🎙️ Voice / Realtime Audio",    "voice mode, text_to_speech, realtime provider config"),
     ("skills",          "📚 Skills",                    "list, view, manage"),
     ("todo",            "📋 Task Planning",             "todo"),
     ("memory",          "💾 Memory",                    "persistent memory across sessions"),
@@ -199,6 +200,16 @@ TOOL_CATEGORIES = {
                 "tts_provider": "openai",
             },
             {
+                "name": "MiniMax Speech 2.8",
+                "badge": "paid",
+                "tag": "MiniMax speech-2.8 voice generation",
+                "env_vars": [
+                    {"key": "MINIMAX_API_KEY", "prompt": "MiniMax API key", "url": "https://platform.minimax.io/"},
+                    {"key": "MINIMAX_GROUP_ID", "prompt": "MiniMax Group ID (optional)", "url": "https://platform.minimax.io/", "optional": True},
+                ],
+                "tts_provider": "minimax",
+            },
+            {
                 "name": "xAI TTS",
                 "tag": "Grok voices — uses xAI Grok OAuth or XAI_API_KEY",
                 "env_vars": [],
@@ -241,6 +252,45 @@ TOOL_CATEGORIES = {
                 "env_vars": [],
                 "tts_provider": "piper",
                 "post_setup": "piper",
+            },
+        ],
+    },
+    "voice": {
+        "name": "Voice / Realtime Audio",
+        "icon": "🎙️",
+        "providers": [
+            {
+                "name": "MiniMax Speech 2.8",
+                "badge": "paid",
+                "tag": "Low-cost hosted voice generation via MiniMax speech-2.8",
+                "env_vars": [
+                    {"key": "MINIMAX_API_KEY", "prompt": "MiniMax API key", "url": "https://platform.minimax.io/"},
+                    {"key": "MINIMAX_GROUP_ID", "prompt": "MiniMax Group ID (optional)", "url": "https://platform.minimax.io/", "optional": True},
+                ],
+                "tts_provider": "minimax",
+                "voice_realtime_provider": "minimax",
+                "voice_realtime_model": "speech-2.8",
+            },
+            {
+                "name": "xAI Grok Voice",
+                "badge": "paid",
+                "tag": "Grok voice/TTS using xAI OAuth or XAI_API_KEY",
+                "env_vars": [],
+                "post_setup": "xai_grok",
+                "tts_provider": "xai",
+                "voice_realtime_provider": "xai",
+                "voice_realtime_model": "grok-voice",
+            },
+            {
+                "name": "OpenAI GPT Realtime 2",
+                "badge": "paid",
+                "tag": "Realtime voice provider config for future streaming voice sessions",
+                "env_vars": [
+                    {"key": "VOICE_TOOLS_OPENAI_KEY", "prompt": "OpenAI API key", "url": "https://platform.openai.com/api-keys"},
+                ],
+                "tts_provider": "openai",
+                "voice_realtime_provider": "openai",
+                "voice_realtime_model": "gpt-realtime-2",
             },
         ],
     },
@@ -302,6 +352,16 @@ TOOL_CATEGORIES = {
                     {"key": "FAL_KEY", "prompt": "FAL API key", "url": "https://fal.ai/dashboard/keys"},
                 ],
                 "imagegen_backend": "fal",
+            },
+            {
+                "name": "Nano Banana Pro (FAL)",
+                "badge": "paid",
+                "tag": "Pin image generation to fal-ai/nano-banana-pro",
+                "env_vars": [
+                    {"key": "FAL_KEY", "prompt": "FAL API key", "url": "https://fal.ai/dashboard/keys"},
+                ],
+                "imagegen_backend": "fal",
+                "imagegen_model": "fal-ai/nano-banana-pro",
             },
         ],
     },
@@ -1334,7 +1394,8 @@ def _toolset_has_keys(ts_key: str, config: dict = None) -> bool:
             env_vars = provider.get("env_vars", [])
             if not env_vars:
                 return True  # No-key provider (e.g. Local Browser, Edge TTS)
-            if all(get_env_value(e["key"]) for e in env_vars):
+            required_env_vars = [e for e in env_vars if not e.get("optional")]
+            if all(get_env_value(e["key"]) for e in required_env_vars):
                 return True
         return False
 
@@ -1782,7 +1843,8 @@ def _configure_tool_category(ts_key: str, cat: dict, config: dict):
             tag = f" — {p['tag']}" if p.get("tag") else ""
             configured = ""
             env_vars = p.get("env_vars", [])
-            if not env_vars or all(get_env_value(v["key"]) for v in env_vars):
+            required_env_vars = [v for v in env_vars if not v.get("optional")]
+            if not env_vars or all(get_env_value(v["key"]) for v in required_env_vars):
                 if _is_provider_active(p, config):
                     configured = " [active]"
                 elif not env_vars:
@@ -2191,6 +2253,18 @@ def _configure_provider(provider: dict, config: dict):
         tts_cfg["provider"] = provider["tts_provider"]
         tts_cfg["use_gateway"] = bool(managed_feature)
 
+    if provider.get("voice_realtime_provider"):
+        voice_cfg = config.setdefault("voice", {})
+        if not isinstance(voice_cfg, dict):
+            voice_cfg = {}
+            config["voice"] = voice_cfg
+        realtime_cfg = voice_cfg.setdefault("realtime", {})
+        if not isinstance(realtime_cfg, dict):
+            realtime_cfg = {}
+            voice_cfg["realtime"] = realtime_cfg
+        realtime_cfg["provider"] = provider["voice_realtime_provider"]
+        realtime_cfg["model"] = provider.get("voice_realtime_model", "")
+
     # Set browser cloud provider in config if applicable
     if "browser_provider" in provider:
         bp = provider["browser_provider"]
@@ -2245,7 +2319,16 @@ def _configure_provider(provider: dict, config: dict):
         # Imagegen backends prompt for model selection after backend pick.
         backend = provider.get("imagegen_backend")
         if backend:
-            _configure_imagegen_model(backend, config)
+            preferred_model = provider.get("imagegen_model")
+            if preferred_model:
+                img_cfg = config.setdefault("image_gen", {})
+                if not isinstance(img_cfg, dict):
+                    img_cfg = {}
+                    config["image_gen"] = img_cfg
+                img_cfg["model"] = preferred_model
+                _print_success(f"  Image model set to: {preferred_model}")
+            else:
+                _configure_imagegen_model(backend, config)
             # In-tree FAL is the only non-plugin backend today. Keep
             # image_gen.provider clear so the dispatch shim falls through
             # to the legacy FAL path.
@@ -2271,14 +2354,15 @@ def _configure_provider(provider: dict, config: dict):
             if default_val:
                 value = _prompt(f"    {var.get('prompt', var['key'])}", default_val)
             else:
-                value = _prompt(f"    {var.get('prompt', var['key'])}", password=True)
+                value = _prompt(f"    {var.get('prompt', var['key'])}", password=not var.get("optional"))
 
             if value:
                 save_env_value(var["key"], value)
                 _print_success("    Saved")
             else:
                 _print_warning("    Skipped")
-                all_configured = False
+                if not var.get("optional"):
+                    all_configured = False
 
     # Run post-setup hooks if needed
     if provider.get("post_setup") and all_configured:
@@ -2297,7 +2381,16 @@ def _configure_provider(provider: dict, config: dict):
         # Imagegen backends prompt for model selection after env vars are in.
         backend = provider.get("imagegen_backend")
         if backend:
-            _configure_imagegen_model(backend, config)
+            preferred_model = provider.get("imagegen_model")
+            if preferred_model:
+                img_cfg = config.setdefault("image_gen", {})
+                if not isinstance(img_cfg, dict):
+                    img_cfg = {}
+                    config["image_gen"] = img_cfg
+                img_cfg["model"] = preferred_model
+                _print_success(f"  Image model set to: {preferred_model}")
+            else:
+                _configure_imagegen_model(backend, config)
             img_cfg = config.setdefault("image_gen", {})
             if isinstance(img_cfg, dict) and img_cfg.get("provider") not in {None, "", "fal"}:
                 img_cfg["provider"] = "fal"
@@ -2476,6 +2569,21 @@ def _reconfigure_provider(provider: dict, config: dict):
         tts_cfg["use_gateway"] = bool(managed_feature)
         _print_success(f"  TTS provider set to: {provider['tts_provider']}")
 
+    if provider.get("voice_realtime_provider"):
+        voice_cfg = config.setdefault("voice", {})
+        if not isinstance(voice_cfg, dict):
+            voice_cfg = {}
+            config["voice"] = voice_cfg
+        realtime_cfg = voice_cfg.setdefault("realtime", {})
+        if not isinstance(realtime_cfg, dict):
+            realtime_cfg = {}
+            voice_cfg["realtime"] = realtime_cfg
+        realtime_cfg["provider"] = provider["voice_realtime_provider"]
+        realtime_cfg["model"] = provider.get("voice_realtime_model", "")
+        _print_success(
+            f"  Realtime voice provider set to: {provider['voice_realtime_provider']}"
+        )
+
     if "browser_provider" in provider:
         bp = provider["browser_provider"]
         browser_cfg = config.setdefault("browser", {})
@@ -2526,7 +2634,16 @@ def _reconfigure_provider(provider: dict, config: dict):
         # Imagegen backends prompt for model selection on reconfig too.
         backend = provider.get("imagegen_backend")
         if backend:
-            _configure_imagegen_model(backend, config)
+            preferred_model = provider.get("imagegen_model")
+            if preferred_model:
+                img_cfg = config.setdefault("image_gen", {})
+                if not isinstance(img_cfg, dict):
+                    img_cfg = {}
+                    config["image_gen"] = img_cfg
+                img_cfg["model"] = preferred_model
+                _print_success(f"  Image model set to: {preferred_model}")
+            else:
+                _configure_imagegen_model(backend, config)
             if backend == "fal":
                 img_cfg = config.setdefault("image_gen", {})
                 if isinstance(img_cfg, dict):
@@ -2542,7 +2659,10 @@ def _reconfigure_provider(provider: dict, config: dict):
         if url:
             _print_info(f"  Get yours at: {url}")
         default_val = var.get("default", "")
-        value = _prompt(f"    {var.get('prompt', var['key'])} (Enter to keep current)", password=not default_val)
+        value = _prompt(
+            f"    {var.get('prompt', var['key'])} (Enter to keep current)",
+            password=not default_val and not var.get("optional"),
+        )
         if value and value.strip():
             save_env_value(var["key"], value.strip())
             _print_success("    Updated")
@@ -2563,7 +2683,16 @@ def _reconfigure_provider(provider: dict, config: dict):
 
     backend = provider.get("imagegen_backend")
     if backend:
-        _configure_imagegen_model(backend, config)
+        preferred_model = provider.get("imagegen_model")
+        if preferred_model:
+            img_cfg = config.setdefault("image_gen", {})
+            if not isinstance(img_cfg, dict):
+                img_cfg = {}
+                config["image_gen"] = img_cfg
+            img_cfg["model"] = preferred_model
+            _print_success(f"  Image model set to: {preferred_model}")
+        else:
+            _configure_imagegen_model(backend, config)
         if backend == "fal":
             img_cfg = config.setdefault("image_gen", {})
             if isinstance(img_cfg, dict):

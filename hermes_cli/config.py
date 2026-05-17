@@ -1446,6 +1446,17 @@ DEFAULT_CONFIG = {
             "voice": "alloy",
             # Voices: alloy, echo, fable, onyx, nova, shimmer
         },
+        "minimax": {
+            "model": "speech-2.8",
+            "voice_id": "English_Trustworth_Man",
+            "base_url": "https://api.minimax.io/v1/t2a_v2",
+            "speed": 1.0,
+            "vol": 1.0,
+            "pitch": 0,
+            "emotion": "neutral",
+            "sample_rate": 32000,
+            "bitrate": 128000,
+        },
         "xai": {
             "voice_id": "eve",  # or custom voice ID — see https://docs.x.ai/developers/model-capabilities/audio/custom-voices
             "language": "en",
@@ -1499,8 +1510,23 @@ DEFAULT_CONFIG = {
         "beep_enabled": True,         # Play record start/stop beeps in CLI voice mode
         "silence_threshold": 200,     # RMS below this = silence (0-32767)
         "silence_duration": 3.0,      # Seconds of silence before auto-stop
+        "realtime": {
+            "enabled": False,
+            "provider": "openai",
+            "model": "gpt-realtime-2",
+            "base_url": "https://api.openai.com/v1",
+            "fallback_providers": ["minimax", "xai"],
+            "minimax": {
+                "model": "speech-2.8",
+                "base_url": "https://api.minimax.io/v1",
+            },
+            "xai": {
+                "model": "grok-voice",
+                "base_url": "https://api.x.ai/v1",
+            },
+        },
     },
-    
+
     "human_delay": {
         "mode": "off",
         "min_ms": 800,

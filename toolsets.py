@@ -193,6 +193,12 @@ TOOLSETS = {
         "tools": ["text_to_speech"],
         "includes": []
     },
+
+    "voice": {
+        "description": "Voice and realtime-audio capabilities: voice mode plus text-to-speech output",
+        "tools": ["text_to_speech"],
+        "includes": []
+    },
     
     "todo": {
         "description": "Task planning and tracking for multi-step work",

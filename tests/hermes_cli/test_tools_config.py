@@ -77,6 +77,26 @@ def test_get_platform_tools_uses_default_when_platform_not_configured():
 def test_configurable_toolsets_include_messaging():
     assert any(ts_key == "messaging" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
 
+
+def test_configurable_toolsets_include_voice():
+    assert any(ts_key == "voice" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
+    assert "voice" in TOOL_CATEGORIES
+
+
+def test_voice_category_exposes_requested_providers():
+    providers = TOOL_CATEGORIES["voice"]["providers"]
+    names = {provider["name"] for provider in providers}
+
+    assert "MiniMax Speech 2.8" in names
+    assert "xAI Grok Voice" in names
+    assert "OpenAI GPT Realtime 2" in names
+
+
+def test_tts_category_exposes_minimax():
+    providers = TOOL_CATEGORIES["tts"]["providers"]
+
+    assert any(provider.get("tts_provider") == "minimax" for provider in providers)
+
 def test_get_platform_tools_default_telegram_includes_messaging():
     enabled = _get_platform_tools({}, "telegram")
 
@@ -721,6 +741,15 @@ class TestImagegenBackendRegistry:
                 f"{p['name']} missing imagegen_backend tag"
             )
 
+    def test_image_gen_exposes_nano_banana_pro_direct_provider(self):
+        from hermes_cli.tools_config import TOOL_CATEGORIES
+
+        providers = TOOL_CATEGORIES["image_gen"]["providers"]
+        assert any(
+            p.get("imagegen_model") == "fal-ai/nano-banana-pro"
+            for p in providers
+        )
+
 
 class TestImagegenModelPicker:
     """_configure_imagegen_model writes selection to config and respects
@@ -779,6 +808,21 @@ class TestImagegenModelPicker:
             _configure_imagegen_model("fal", config)
         assert isinstance(config["image_gen"], dict)
         assert config["image_gen"]["model"] == "fal-ai/flux-2/klein/9b"
+
+    def test_configure_provider_can_pin_nano_banana_model(self):
+        from hermes_cli.tools_config import _configure_provider
+
+        provider = {
+            "name": "Nano Banana Pro (FAL)",
+            "imagegen_backend": "fal",
+            "imagegen_model": "fal-ai/nano-banana-pro",
+            "env_vars": [],
+        }
+        config = {}
+        _configure_provider(provider, config)
+
+        assert config["image_gen"]["model"] == "fal-ai/nano-banana-pro"
+        assert config["image_gen"].get("provider") in {None, "fal"}
 
 
 def test_save_platform_tools_normalizes_numeric_entries():
