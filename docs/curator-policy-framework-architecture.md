@@ -143,6 +143,59 @@ tool outcome
 The runtime lesson is authoritative evidence. The curator output is a proposed
 interpretation of that evidence.
 
+## Generic Rollup Quality Gates
+
+Generic rollup is intentionally conservative. It should not turn every recent
+memory row into active supervisor guidance.
+
+Before creating or updating a `hermes_meta_candidates` row, rollup applies these
+deterministic gates:
+
+- curator-only record kinds, such as `tool_routing_lesson`, are skipped and left
+  for specialized curator passes
+- memory records with terminal statuses such as `archived`, `rejected`, or
+  `rolled_back` are skipped
+- existing candidates with terminal statuses such as `approved`, `applied`,
+  `archived`, `rejected`, or `rolled_back` are not downgraded back to
+  `proposed`
+- synthetic/test markers such as `Smoke:`, `retry-empty`, `loop forever`,
+  `crashy`, and `prior #` are skipped
+- Kanban `task_outcome` records must be high-signal completed outcomes with a
+  memory packet before they can become candidates
+
+The filters are configurable:
+
+```yaml
+supervisor:
+  learning:
+    rollup_filters:
+      curator_only_record_kinds:
+        - tool_routing_lesson
+      terminal_existing_statuses:
+        - approved
+        - applied
+        - archived
+        - rejected
+        - rolled_back
+      synthetic_title_patterns:
+        - "Smoke:"
+        - retry-empty
+        - retry-corrected
+        - loop forever
+        - crashy
+        - "prior #"
+      task_outcome:
+        enabled: true
+        allowed_event_kinds:
+          - completed
+        require_memory_packet: true
+        min_score: 0.75
+```
+
+Rollup records skip counts in learning-run metrics. This makes it visible when
+old Kanban smoke-test artifacts are being suppressed rather than silently
+promoted.
+
 ## Command-Repair Candidate
 
 A command-repair candidate records:
@@ -384,6 +437,7 @@ Not implemented yet:
 - memory wiki promotion/storage
 - dreaming/offline synthesis phase
 - hot/warm/cold memory tiering
+- supervisor memory injection from approved clean candidates
 
 ## Why This Shape
 

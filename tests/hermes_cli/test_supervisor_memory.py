@@ -192,6 +192,108 @@ def test_learning_rollup_skips_tool_routing_lessons_for_curator(tmp_path, monkey
         db.close()
 
 
+def test_learning_rollup_does_not_resurrect_archived_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_record(
+            record_id="rec-archived-source",
+            kind="claim",
+            title="Archived routing lesson",
+            body="Use the old route",
+            payload_json={"source": "test"},
+            status="active",
+            score=0.9,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+        first = rollup_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+        assert first.candidates_created == 1
+        candidate = db.list_meta_candidates(repo_id="atlas-email-flutter", limit=1)[0]
+        db.update_meta_candidate_status(
+            candidate["id"],
+            status="archived",
+            evidence_json={"reason": "operator cleanup"},
+        )
+
+        second = rollup_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        row = db.get_meta_candidate(candidate["id"])
+        assert row["status"] == "archived"
+        assert second.candidates_updated == 0
+        assert second.metrics["skipped"]["existing_candidate_status:archived"] == 1
+    finally:
+        db.close()
+
+
+def test_learning_rollup_skips_noisy_kanban_task_outcomes(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_record(
+            record_id="kanban_event_noise",
+            kind="task_outcome",
+            title="completed: prior #3",
+            body="task completed",
+            payload_json={
+                "event_kind": "completed",
+                "task_id": "t_noise",
+                "memory_packet_id": "mempkt_noise",
+            },
+            status="active",
+            score=0.8,
+            tenant_id=None,
+            repo_id=None,
+            packet_id="mempkt_noise",
+            evidence_uri="kanban://task/t_noise/event/1",
+        )
+
+        result = rollup_learning_candidates(db)
+
+        assert result.candidates_created == 0
+        assert result.metrics["skipped"]["synthetic_marker"] == 1
+        assert db.list_meta_candidates(limit=10) == []
+    finally:
+        db.close()
+
+
+def test_learning_rollup_requires_memory_packet_for_task_outcome(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_record(
+            record_id="kanban_event_missing_packet",
+            kind="task_outcome",
+            title="completed: useful branch audit",
+            body="task completed",
+            payload_json={
+                "event_kind": "completed",
+                "task_id": "t_useful",
+            },
+            status="active",
+            score=0.8,
+            evidence_uri="kanban://task/t_useful/event/1",
+        )
+
+        result = rollup_learning_candidates(db)
+
+        assert result.candidates_created == 0
+        assert result.metrics["skipped"]["task_outcome_missing_memory_packet"] == 1
+    finally:
+        db.close()
+
+
 def test_learning_monitor_reports_metrics(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

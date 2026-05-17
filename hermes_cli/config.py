@@ -582,6 +582,36 @@ DEFAULT_CONFIG = {
             # Candidate score floor before a record is emitted as a
             # meta-candidate.
             "min_score": 0.2,
+            # Deterministic quality gates before generic rollup creates or
+            # updates meta-candidates. Curator-only kinds are handled by
+            # specialized sidecars; task_outcome records are noisy by default
+            # and must carry enough evidence to become reusable guidance.
+            "rollup_filters": {
+                "curator_only_record_kinds": ["tool_routing_lesson"],
+                "terminal_existing_statuses": [
+                    "approved",
+                    "applied",
+                    "archived",
+                    "rejected",
+                    "rolled_back",
+                ],
+                "synthetic_title_patterns": [
+                    "Smoke:",
+                    "retry-empty",
+                    "retry-corrected",
+                    "loop forever",
+                    "crashy",
+                    "prior #",
+                    "completed: a",
+                    "reclaimed: stuck",
+                ],
+                "task_outcome": {
+                    "enabled": True,
+                    "allowed_event_kinds": ["completed"],
+                    "require_memory_packet": True,
+                    "min_score": 0.75,
+                },
+            },
             # If true, routing hints may auto-fill assignees for new
             # tasks that do not specify one explicitly.
             "auto_route_tasks": True,

@@ -325,6 +325,99 @@ def build_learning_metrics(
     }
 
 
+def _rollup_filter_policy(learning_policy: Dict[str, Any]) -> Dict[str, Any]:
+    policy = learning_policy.get("rollup_filters")
+    return policy if isinstance(policy, dict) else {}
+
+
+def _record_text(record: Dict[str, Any]) -> str:
+    return " ".join(
+        str(part).strip()
+        for part in (
+            record.get("title"),
+            record.get("body"),
+            json.dumps(record.get("payload_json") or {}, ensure_ascii=False),
+        )
+        if part
+    ).strip()
+
+
+def _matches_any_pattern(text: str, patterns: Iterable[str]) -> bool:
+    lowered = text.lower()
+    for pattern in patterns:
+        marker = str(pattern or "").strip().lower()
+        if marker and marker in lowered:
+            return True
+    return False
+
+
+def _memory_record_rollup_skip_reason(
+    record: Dict[str, Any],
+    *,
+    learning_policy: Dict[str, Any],
+) -> Optional[str]:
+    filters = _rollup_filter_policy(learning_policy)
+    kind = str(record.get("kind") or "")
+    status = str(record.get("status") or "")
+    if status in {"archived", "deleted", "rejected", "rolled_back"}:
+        return f"record_status:{status}"
+    curator_only = {
+        str(item)
+        for item in filters.get("curator_only_record_kinds", ["tool_routing_lesson"])
+        if item
+    }
+    if kind in curator_only:
+        return f"curator_only:{kind}"
+
+    text = _record_text(record)
+    if _matches_any_pattern(text, filters.get("synthetic_title_patterns") or []):
+        return "synthetic_marker"
+
+    if kind == "task_outcome":
+        task_policy = filters.get("task_outcome")
+        if not isinstance(task_policy, dict):
+            task_policy = {}
+        if task_policy.get("enabled", True) is False:
+            return "task_outcome_disabled"
+        payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+        event_kind = str(payload.get("event_kind") or "")
+        allowed = {
+            str(item)
+            for item in task_policy.get("allowed_event_kinds", ["completed"])
+            if item
+        }
+        if allowed and event_kind not in allowed:
+            return f"task_outcome_event:{event_kind or 'missing'}"
+        if task_policy.get("require_memory_packet", True):
+            packet_id = record.get("packet_id") or payload.get("memory_packet_id") or payload.get("packet_id")
+            if not packet_id:
+                return "task_outcome_missing_memory_packet"
+        min_task_score = float(task_policy.get("min_score", 0.75) or 0.75)
+        if float(record.get("score") or 0.0) < min_task_score:
+            return "task_outcome_low_score"
+    return None
+
+
+def _existing_candidate_blocks_rollup(
+    candidate: Dict[str, Any],
+    *,
+    learning_policy: Dict[str, Any],
+) -> Optional[str]:
+    filters = _rollup_filter_policy(learning_policy)
+    terminal_statuses = {
+        str(item)
+        for item in filters.get(
+            "terminal_existing_statuses",
+            ["approved", "applied", "archived", "rejected", "rolled_back"],
+        )
+        if item
+    }
+    status = str(candidate.get("status") or "")
+    if status in terminal_statuses:
+        return f"existing_candidate_status:{status}"
+    return None
+
+
 def rollup_learning_candidates(
     db: SessionDB,
     *,
@@ -364,27 +457,28 @@ def rollup_learning_candidates(
     proposed = 0
     seen: set[str] = set()
     candidate_payloads: list[dict[str, Any]] = []
+    skipped: Dict[str, int] = {}
+
+    def mark_skipped(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
     for record in records:
-        if record.get("kind") == "tool_routing_lesson":
-            # Runtime tool lessons are handled by the curator policy pass so
-            # they do not become generic routing hints/playbooks that can be
-            # auto-promoted before validation.
+        skip_reason = _memory_record_rollup_skip_reason(
+            record,
+            learning_policy=learning_policy,
+        )
+        if skip_reason:
+            mark_skipped(skip_reason)
             continue
-        text = " ".join(
-            str(part).strip()
-            for part in (
-                record.get("title"),
-                record.get("body"),
-                json.dumps(record.get("payload_json") or {}, ensure_ascii=False),
-            )
-            if part
-        ).strip()
+        text = _record_text(record)
         if not text:
+            mark_skipped("empty_text")
             continue
         kind = classify_meta_candidate_kind(text)
         claim = (record.get("title") or record.get("body") or text).strip()
         claim = claim[:240]
         if not claim:
+            mark_skipped("empty_claim")
             continue
         candidate_id = _stable_candidate_id(
             kind=kind,
@@ -393,6 +487,7 @@ def rollup_learning_candidates(
             repo_id=repo_id or str(record.get("repo_id") or ""),
         )
         if candidate_id in seen:
+            mark_skipped("duplicate_in_batch")
             continue
         seen.add(candidate_id)
         score = float(record.get("score") or 0.0)
@@ -401,7 +496,17 @@ def rollup_learning_candidates(
         if record.get("status") not in {"active", "promoted", "ready"}:
             score *= 0.8
         if score < min_score:
+            mark_skipped("below_min_score")
             continue
+        existing_candidate = db.get_meta_candidate(candidate_id)
+        if existing_candidate is not None:
+            existing_skip = _existing_candidate_blocks_rollup(
+                existing_candidate,
+                learning_policy=learning_policy,
+            )
+            if existing_skip:
+                mark_skipped(existing_skip)
+                continue
         evidence = {
             "record_id": record.get("id"),
             "packet_id": record.get("packet_id"),
@@ -421,14 +526,8 @@ def rollup_learning_candidates(
 
     for candidate in candidate_payloads:
         proposed += 1
-        existing = db.list_meta_candidates(
-            tenant_id=tenant_id,
-            repo_id=repo_id,
-            kind=candidate["kind"],
-            status=None,
-            limit=max_records,
-        )
-        if any(row["id"] == candidate["candidate_id"] for row in existing):
+        existing = db.get_meta_candidate(candidate["candidate_id"])
+        if existing is not None:
             updated += 1
         else:
             created += 1
@@ -449,6 +548,8 @@ def rollup_learning_candidates(
         "candidates_created": created,
         "candidates_updated": updated,
         "candidates_proposed": proposed,
+        "records_skipped": sum(skipped.values()),
+        "skipped": skipped,
         "min_score": min_score,
         "max_records": max_records,
         "policy": policy,

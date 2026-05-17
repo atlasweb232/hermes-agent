@@ -78,6 +78,8 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["housekeeping"]["enabled"] is True
             assert config["supervisor"]["learning"]["housekeeping"]["interval_seconds"] == 3600
             assert config["supervisor"]["learning"]["housekeeping"]["max_candidates_per_kind"] == 25
+            assert "tool_routing_lesson" in config["supervisor"]["learning"]["rollup_filters"]["curator_only_record_kinds"]
+            assert config["supervisor"]["learning"]["rollup_filters"]["task_outcome"]["require_memory_packet"] is True
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
 
