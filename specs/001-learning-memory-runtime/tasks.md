@@ -208,15 +208,44 @@
 
 ---
 
-## Phase 9: Polish And Integration
+## Phase 9: User Story 7 - Convergent Supervisor Control Plane (Priority: P7)
 
-- [ ] T079 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
-- [ ] T080 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
-- [ ] T081 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
-- [ ] T082 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
-- [ ] T083 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, and policy audit
-- [ ] T084 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
-- [ ] T085 Push branch and record commit hashes for local and VM deployments
+**Goal**: Long-running delegated work converges through leases, heartbeats, drift detection, validation gates, recovery packets, and worker reallocation.
+
+**Independent Test**: Simulate stale workers, repeated errors, no-progress loops, failed validation, and `/goal` continuation; verify supervisor override/reassignment behavior is deterministic and preserves evidence.
+
+### Tests for User Story 7
+
+- [ ] T079 [P] [US7] Add supervisor task ledger schema tests in `tests/hermes_cli/test_supervisor_control_plane.py` covering task states, worker ownership, lease expiry, heartbeat, retry budget, Spec Kit refs, git refs, and recovery history
+- [ ] T080 [P] [US7] Add stale heartbeat and lease reclaim tests proving stale tasks are marked reclaimable without blocking on worker processes
+- [ ] T081 [P] [US7] Add loop/drift detector tests for repeated command/error signatures, unchanged git/test/progress state, invalid worker results, and retry budget exhaustion
+- [ ] T082 [P] [US7] Add recovery packet tests covering partial diff/log summaries, failed commands, validation failures, memory packet refs, and next-worker recommendations
+- [ ] T083 [P] [US7] Add `/goal` integration tests proving goal continuation cannot override reclaimed, blocked, validation-failed, or reassigned task state
+
+### Implementation for User Story 7
+
+- [ ] T084 [US7] Create `hermes_cli/supervisor_control_plane.py` with task ledger, heartbeat, lease, recovery packet, override action, and reassignment helpers
+- [ ] T085 [US7] Add SQLite tables for supervisor task ledger entries, worker heartbeats, recovery packets, and override actions
+- [ ] T086 [US7] Add progress evaluator and loop detector using heartbeat age, repeated signatures, git/test delta, invalid result count, elapsed time, and retry budget
+- [ ] T087 [US7] Add supervisor override actions: interrupt, request status, pause, block, reclaim, reassign, escalate, and abandon with audit records
+- [ ] T088 [US7] Add reallocation policy config for lease duration, heartbeat timeout, no-progress window, retry budget, worker fallback order, and escalation reviewer
+- [ ] T089 [US7] Add CLI/backend-compatible JSON surfaces for task ledger status, heartbeat list, recovery packets, and override actions
+- [ ] T090 [US7] Integrate `/goal` as optional continuation metadata only, ensuring supervisor ledger/validation/reassignment remains authoritative
+- [ ] T091 [US7] Update `docs/curator-policy-framework-architecture.md` with convergence workflow, `/goal` boundaries, override rules, and reassignment sequence
+
+**Checkpoint**: Stuck or drifting delegated work can be reclaimed and reassigned with evidence, and only supervisor validation can complete the task.
+
+---
+
+## Phase 10: Polish And Integration
+
+- [ ] T092 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
+- [ ] T093 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
+- [ ] T094 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
+- [ ] T095 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T096 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, policy audit, dreaming, and supervisor control-plane recovery
+- [ ] T097 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
+- [ ] T098 Push branch and record commit hashes for local and VM deployments
 
 ## Dependencies & Execution Order
 
@@ -227,10 +256,12 @@
 - User Story 4 can continue in parallel after tier fields and packet schemas are available.
 - User Story 5 depends on approved memory from User Story 2 and retrieval/tier rules from User Story 4.
 - User Story 6 can begin after job records are available and should expand as each sidecar path lands.
+- User Story 7 depends on runtime packet schemas, learning jobs, event bus, and observability surfaces so stale/looping work can be audited and recovered.
 
 ## Parallel Opportunities
 
 - Test files for runtime orchestration, judge, bus, wiki, dreaming, and jobs can be developed in parallel.
+- Supervisor control-plane tests can be developed in parallel after runtime packet schemas and learning job helpers are stable.
 - CLI contracts and docs can be updated in parallel with implementation after data-model fields stabilize.
 - Dashboard/backend observability can start once `learning_jobs.py` exposes stable JSON.
 
@@ -252,4 +283,5 @@
 5. Wiki compiler.
 6. Dreaming proposals.
 7. Observability dashboard/API.
-8. Future enforcement mode only after audit evidence, judge approval, and operator approval.
+8. Supervisor convergence control plane.
+9. Future enforcement mode only after audit evidence, judge approval, and operator approval.

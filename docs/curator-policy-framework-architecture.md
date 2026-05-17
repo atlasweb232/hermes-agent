@@ -590,6 +590,109 @@ planners, workers, or reviewers. Task initialization now creates a compact
 memory packet through the supervisor memory router unless the caller passes
 `--no-memory-packet`.
 
+## Supervisor Convergence Control Plane
+
+The supervisor protocol prevents bad dispatch and bad completion, but long
+running work also needs convergence controls. A worker can drift, loop, stop
+heartbeating, or repeatedly fail validation. That cannot be solved by prompt
+instructions alone. It needs a durable task ledger and deterministic override
+rules.
+
+The durable authority chain should be:
+
+```text
+supervisor task ledger
+  -> worker lease
+  -> heartbeat / progress events
+  -> loop and staleness detector
+  -> recovery packet
+  -> supervisor override action
+  -> reassignment or escalation
+  -> validation report
+  -> session summary
+```
+
+Each delegated task should track:
+
+- objective and success criteria
+- task packet, planner packet, worker packet, and Spec Kit artifact refs
+- repo, branch, worktree, owned files, and current git/diff refs
+- active worker, lease owner, lease expiry, and heartbeat timestamp
+- retry count, retry budget, and elapsed runtime
+- progress signature from git/test/log deltas
+- repeated command/error signatures
+- validation status and failed validation evidence
+- memory packet used
+- recovery packet history and override action history
+
+Worker execution is disposable. The durable truth is the supervisor task
+ledger, Spec Kit artifacts, git/worktree evidence, memory packets, validation
+reports, and recovery packets. If a worker stalls, the task is reclaimed; the
+worker does not own the task forever.
+
+Default override rules should be deterministic:
+
+```text
+if heartbeat stale > heartbeat_timeout:
+  mark lease stale
+  create recovery packet
+  reclaim task
+
+if same error signature repeats >= max_repeated_errors:
+  stop retry loop
+  create recovery candidate
+  replan or escalate
+
+if no git/test/progress delta across no_progress_window:
+  request worker status
+  if still no useful progress, reclaim and reassign
+
+if validation fails after retry_budget:
+  escalate to stronger planner/reviewer or alternate worker
+  preserve failed validation evidence
+
+if worker violates constraints:
+  revoke task ownership
+  quarantine output
+  require supervisor/operator review
+```
+
+Reassignment uses a recovery packet instead of raw transcript replay:
+
+```text
+original objective
+  + Spec Kit refs
+  + previous worker packet
+  + partial diff/log summary
+  + failed commands and validation evidence
+  + memory packet used
+  + blocker summary
+  + recommended next action
+  -> next worker
+```
+
+The fallback order is configurable. A typical policy is:
+
+```text
+Codex planner/reviewer
+  -> Claude Code Sonnet implementation
+  -> DeepSeek TUI fallback
+  -> Minimax/Cursor fallback
+  -> Codex recovery review
+```
+
+This layer is also where `/goal` must be constrained. `/goal` is a session
+continuation mechanism, not task authority. It may enqueue continuation prompts
+for an already-authorized task, but it must not override lease ownership,
+reclaim decisions, blocked state, reassignment, Spec Kit requirements, or
+validation-gated completion.
+
+The convergence layer should publish learning events for stale leases,
+repeated-error loops, no-progress loops, failed validations, reassignments, and
+successful recoveries. Those events can later feed the memory wiki, training
+corpus, and dreaming proposals without giving any of those layers direct
+control over live execution.
+
 ## Learning Judge Boundary
 
 The learning judge is a separate auxiliary-model approval gate for proposed

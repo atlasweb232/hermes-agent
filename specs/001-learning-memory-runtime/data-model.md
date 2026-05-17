@@ -118,6 +118,70 @@
 - `owned_files`: write scope
 - `status`: `active`, `released`, `blocked`, `abandoned`
 
+## SupervisorTaskLedgerEntry
+
+- `id`: stable ledger entry id
+- `task_packet_id`: parent supervisor task packet
+- `status`: `created`, `planned`, `delegated`, `running`, `validating`, `completed`, `blocked`, `failed`, `reclaimed`, `reassigned`, or `abandoned`
+- `active_worker_id`: current worker, if any
+- `active_delegation_packet_id`: current worker packet, if any
+- `lease_owner`: worker or supervisor process holding the task
+- `lease_expires_at`: timestamp when the task may be reclaimed
+- `heartbeat_at`: last worker/progress heartbeat
+- `retry_count`: recovery or validation retry count
+- `retry_budget`: maximum retry count before escalation
+- `progress_signature`: compact summary of latest git/test/progress state
+- `last_error_signature`: repeated command/error signature, if any
+- `validation_status`: `unknown`, `passed`, `failed`, or `blocked`
+- `spec_refs`: Spec Kit artifact refs
+- `git_refs`: branch, worktree, commit, and diff summary refs
+- `memory_packet_id`: memory packet used for the current attempt
+- `recovery_packet_ids`: recovery packets created for this task
+- `override_actions`: audited supervisor overrides
+- `created_at`, `updated_at`: timestamps
+
+## WorkerHeartbeat
+
+- `id`: stable heartbeat id
+- `task_packet_id`: parent supervisor task packet
+- `delegation_packet_id`: worker packet, if any
+- `worker_id`: worker emitting progress
+- `action`: current action or command class
+- `progress_summary`: concise progress update
+- `command_signature`: normalized command signature, if any
+- `error_signature`: normalized error signature, if any
+- `git_delta`: changed-file or diff summary
+- `test_delta`: validation/test progress summary
+- `status`: `running`, `blocked`, `failed`, or `completed`
+- `created_at`: timestamp
+
+## RecoveryPacket
+
+- `id`: stable recovery packet id
+- `task_packet_id`: parent supervisor task packet
+- `source_delegation_packet_id`: worker packet being recovered, if any
+- `reason`: `stale_lease`, `repeated_error`, `no_progress`, `validation_failed`, `constraint_violation`, or `operator_override`
+- `objective`: original bounded task objective
+- `partial_work_summary`: git diff/log/worktree summary
+- `failed_commands`: failed command/error evidence
+- `validation_failures`: failed validation evidence
+- `memory_packet_id`: memory packet used by the failed attempt
+- `recommended_next_action`: replan, retry, alternate worker, stronger reviewer, or abandon
+- `next_worker_candidates`: ordered worker/model fallback candidates
+- `created_at`: timestamp
+
+## SupervisorOverrideAction
+
+- `id`: stable override action id
+- `task_packet_id`: parent supervisor task packet
+- `action`: `interrupt`, `request_status`, `pause`, `block`, `reclaim`, `reassign`, `escalate`, or `abandon`
+- `reason`: operator or policy reason
+- `actor`: `operator`, `supervisor_policy`, or service id
+- `previous_worker_id`: worker affected
+- `next_worker_id`: reassigned worker, if any
+- `recovery_packet_id`: recovery packet used, if any
+- `created_at`: timestamp
+
 ## LearningCandidate
 
 - Existing meta candidate fields: `id`, `tenant_id`, `repo_id`, `kind`, `claim`, `evidence_json`, `score`, `status`, timestamps
@@ -319,6 +383,9 @@ approved memory candidate, wiki update, or policy candidate.
 - Runtime event: `pending -> processing -> consumed`
 - Runtime event failure: `processing -> pending` until retry limit, then `failed`
 - Supervisor task packet: `intake -> needs_clarification/planned -> delegated -> validated -> completed`
+- Supervisor task ledger: `created -> planned -> delegated -> running -> validating -> completed`
+- Supervisor task recovery: `running -> blocked/reclaimed -> reassigned -> running`
+- Supervisor task failure: `running/validating -> failed/abandoned`
 - Spec Kit artifact set: `missing -> draft -> validated -> committed`
 - Worker delegation packet: `queued -> running -> completed/failed/blocked`
 - Memory index document: `active -> stale -> deleted`, rebuilt from approved memory when source metadata changes
