@@ -573,6 +573,82 @@ DEFAULT_CONFIG = {
             # Minimum evidence rows required to promote a candidate.
             "min_evidence_items": 1,
         },
+        "runtime_orchestration": {
+            "enabled": True,
+            "require_speckit_for_non_trivial": True,
+            "trivial_task_types": [
+                "read_only_investigation",
+                "trivial_local_fix",
+            ],
+            "allow_user_opt_out": True,
+            "record_skip_reason": True,
+            "require_worker_packet": True,
+            "require_validation_report": True,
+            "require_session_summary": True,
+            "planner": {
+                "role": "planner",
+                "provider": "codex",
+                "model": "gpt-5.5",
+                "fallback_providers": ["codex", "claude-code", "deepseek-tui"],
+            },
+            "speckit_creator": {
+                "role": "speckit_creator",
+                "provider": "codex",
+                "model": "gpt-5.5",
+            },
+            "workers": {
+                "routing": "ranked_fallback",
+                "default": "claude-code-sonnet",
+                "available": [
+                    "claude-code-sonnet",
+                    "minimax-via-claude-code",
+                    "deepseek-tui",
+                    "cursor",
+                    "codex",
+                ],
+            },
+            "templates": {
+                "directory": "runtime_templates",
+                "required": [
+                    "supervisor_intake",
+                    "supervisor_initialization_protocol",
+                    "memory_packet",
+                    "speckit_planner_packet",
+                    "worker_delegation_packet",
+                    "worker_result",
+                    "validation_report",
+                    "session_summary",
+                ],
+            },
+        },
+        "learning_judge": {
+            "enabled": True,
+            "provider": "codex",
+            "model": "codex",
+            "timeout_seconds": 300,
+            "max_candidates": 10,
+            "fail_closed": True,
+            "allow_enforcement_approval": False,
+        },
+        "learning_bus": {
+            "enabled": True,
+            "backend": "sqlite",
+            "lease_seconds": 300,
+            "max_attempts": 3,
+            "max_events_per_run": 50,
+        },
+        "memory_tiers": {
+            "enabled": True,
+            "hot_ttl_seconds": 86400,
+            "warm_min_confidence": 0.6,
+            "cold_min_confidence": 0.75,
+            "demote_after_days": 30,
+        },
+        "learning_jobs": {
+            "enabled": True,
+            "history_limit": 200,
+            "heartbeat_stale_seconds": 600,
+        },
         "learning": {
             "enabled": True,
             # Max recent records examined when synthesizing learning

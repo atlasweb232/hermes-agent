@@ -561,6 +561,23 @@ The role model is intentionally provider-neutral:
 Spec Kit may be skipped only for read-only investigation, trivial local fixes,
 explicit user opt-out, or emergency debugging. The skip reason is recorded.
 
+### Foundation Modules
+
+The first implementation slice adds only deterministic control-plane pieces:
+
+- `hermes_cli/runtime_packets.py` defines packet schemas and validation gates
+- `hermes_cli/runtime_templates.py` loads required supervisor/worker prompt
+  templates from `hermes_cli/runtime_templates/`
+- `hermes_cli/learning_jobs.py` persists background job records in
+  `hermes_learning_jobs`
+- `supervisor.runtime_orchestration`, `supervisor.learning_judge`,
+  `supervisor.learning_bus`, `supervisor.memory_tiers`, and
+  `supervisor.learning_jobs` config blocks define defaults
+
+These modules do not dispatch workers yet. They establish the runtime contracts
+that future orchestration, judge, bus, retrieval, wiki, and dreaming slices must
+use.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

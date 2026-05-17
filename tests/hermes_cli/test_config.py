@@ -89,6 +89,16 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["policy_engine"]["mode"] == "audit"
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
+            assert config["supervisor"]["runtime_orchestration"]["enabled"] is True
+            assert config["supervisor"]["runtime_orchestration"]["require_speckit_for_non_trivial"] is True
+            assert config["supervisor"]["runtime_orchestration"]["require_worker_packet"] is True
+            assert config["supervisor"]["runtime_orchestration"]["planner"]["provider"] == "codex"
+            assert "claude-code-sonnet" in config["supervisor"]["runtime_orchestration"]["workers"]["available"]
+            assert "supervisor_intake" in config["supervisor"]["runtime_orchestration"]["templates"]["required"]
+            assert config["supervisor"]["learning_judge"]["fail_closed"] is True
+            assert config["supervisor"]["learning_bus"]["backend"] == "sqlite"
+            assert config["supervisor"]["memory_tiers"]["enabled"] is True
+            assert config["supervisor"]["learning_jobs"]["enabled"] is True
 
     def test_legacy_root_level_max_turns_migrates_to_agent_config(self, tmp_path):
         with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
