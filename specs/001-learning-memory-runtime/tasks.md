@@ -304,7 +304,7 @@
 
 **Cost Gate**: Do not add production infrastructure or LLM-backed sidecars before the persisted-lesson loop proves value. The required loop is: event signature -> local hot/warm lookup -> persisted approved global lesson retrieval -> compact advisory packet/pre-curation decision -> cheap worker attempt -> outcome feedback -> strong judge/operator only for promotion or enforcement.
 
-**Phase 11A Core Production Path**: Finish `T105D`, `T105E`, `T105F`, `T121`, `T122`, `T123`, `T124`, and `T125` before starting scale-out work.
+**Phase 11A Core Production Path**: Finish `T105D`, `T105E`, `T105F`, `T105H`, `T105I`, `T121`, `T122`, `T123`, `T124`, `T125`, `T129`, `T130`, and `T131` before starting scale-out work.
 
 **Deferred Scale-Out Work**: Keep `T102`, `T103`, `T104`, `T105`, `T109`, `T110`, `T111`, and `T112` out of the immediate implementation path unless the core production path shows measurable value and a concrete deployment need.
 
@@ -324,6 +324,8 @@
 - [x] T105E [P] [US8] Add runtime pre-curation integration tests proving local curator/dreaming calls are skipped only when retrieved persisted lessons produce exact/near approved matches, and still run on storage miss, wrong tenant, secret, rejected, or stale lessons
 - [ ] T105F [P] [US8] Add live failure-learn smoke fixture proving a fresh Hermes task retrieves the stored Claude router failure lesson before repeating the old bad command loop
 - [ ] T105G [P] [US8] Add cost-budget tests proving retrieval/pre-curation uses programmatic logic by default, enforces top-k memory caps, estimates injected token budget, and does not call curator/judge/dreaming LLMs on exact persisted lesson hits
+- [ ] T105H [P] [US8] Add local hot-cache tests proving top-k persisted global lessons can be materialized into task-local hot memory with TTL, tenant/repo/sensitivity gates, reuse counters, and no raw global evidence copy
+- [ ] T105I [P] [US8] Add task-start hydration tests proving task metadata first checks local hot cache, then global exact/simhash lookup, then writes bounded hot-cache entries and produces a compact merged memory packet
 
 ### Implementation for Production Runtime Surfaces
 
@@ -350,6 +352,16 @@
 - [ ] T126 [US8] Implement low-cost model routing budget policy: programmatic retrieval first, cheap model for lightweight confirmation/extraction only, strong model for judge/curator only when confidence is low or promotion/enforcement is requested
 - [ ] T127 [US8] Add minimal JSON observability for cost/value before frontend work: per-task memory hits, token estimate, skipped curator count, repeated-error count, worker model, outcome, and whether memory helped/ignored/hurt
 - [ ] T128 [US8] Audit SQLite learning/global bus queues before Kafka/Redpanda work: list queued/leased/consumed/dead events, drain one batch idempotently, verify replay safety, and document whether a dedicated consumer sidecar is required
+- [ ] T129 [US8] Implement local hot-cache table/helpers for approved global lessons with compact text, signatures, confidence, TTL, last_used_at, reuse stats, source global lesson id, and tenant/repo/sensitivity gates
+- [ ] T130 [US8] Implement task-start hydration helper: classify task metadata, read local hot cache, retrieve persisted global lessons on miss, materialize top-k into hot cache, and return a compact global/local advisory packet
+- [ ] T131 [US8] Merge hydrated global hot-cache entries with local memory wiki/retrieval packets using strict token caps, source labels, evidence ids, and advisory wording so low-cost workers get the smallest useful context
+
+### Deferred Phase 11B Global Indexing And Sync Sidecars
+
+- [ ] T132 [US8] Implement `global_indexer_sidecar` only after Phase 11A VM value is proven; it should index approved canonical global lessons into lexical/vector/graph backends behind config, never raw proposals
+- [ ] T133 [US8] Implement `local_sync_sidecar` only after Phase 11A VM value is proven; it should pull approved sync deltas relevant to configured tenants/repos/tools into warm cache without blocking foreground work
+- [ ] T134 [US8] Add sync-delta protocol tests for global-to-local cache updates, idempotency, TTL demotion, deleted/retired lesson removal, and no private/secret lesson sync
+- [ ] T135 [US8] Add optional vector/graph indexing tests for global lessons only after hash/signature/SQLite hot-cache retrieval shows measured low-end-worker improvement
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 

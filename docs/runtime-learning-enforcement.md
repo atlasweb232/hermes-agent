@@ -174,15 +174,20 @@ Immediate order:
 2. Retrieve persisted lessons for runtime events with hard metadata filters
    before any semantic matching.
 3. Wire retrieved lessons into pre-curation before local curator or dreaming.
-4. Add CLI/API JSON surfaces for operator testing and dashboard/backend use.
-5. Add cost/value counters: memory hit, near hit, miss, skipped curator,
+4. Materialize relevant approved global lessons into local hot cache for the
+   task run using TTL, top-k, and tenant/repo/sensitivity gates.
+5. Hydrate task-start memory by checking local hot cache first, persisted global
+   lessons second, and merging the result with local memory wiki/policy hints
+   into a compact advisory packet.
+6. Add CLI/API JSON surfaces for operator testing and dashboard/backend use.
+7. Add cost/value counters: memory hit, near hit, miss, skipped curator,
    skipped dreaming, estimated packet tokens, repeated error count, model used,
    and outcome feedback.
-6. Run VM restart smoke with the Claude router lesson coming from durable
+8. Run VM restart smoke with the Claude router lesson coming from durable
    storage.
-7. Run a live Hermes task and verify the old command loop is avoided or
+9. Run a live Hermes task and verify the old command loop is avoided or
    explicitly escalated.
-8. Run low-end model baseline vs memory-assisted eval.
+10. Run low-end model baseline vs memory-assisted eval.
 
 Deferred until the above passes:
 
@@ -191,6 +196,8 @@ Deferred until the above passes:
 - Large training corpus export.
 - Realtime voice.
 - Full observability frontend beyond minimal JSON/status surfaces.
+- Global indexer and local sync sidecars until local hot-cache hydration proves
+  value.
 
 Budget rule:
 
@@ -199,6 +206,18 @@ Budget rule:
 - Near persisted lesson hit: cheap confirmation only if needed.
 - Strong model: only for promotion, enforcement, contradiction, low confidence,
   or explicit operator request.
+
+Shortest low-overhead runtime path:
+
+```text
+task metadata
+  -> local hot cache
+  -> persisted global exact/simhash lookup on miss
+  -> materialize top-k to local hot cache
+  -> merge with local wiki/policy hints
+  -> compact advisory packet
+  -> cheap worker
+```
 
 ## Enforced Today
 

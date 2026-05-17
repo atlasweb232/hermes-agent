@@ -503,6 +503,46 @@ Global dreaming may suggest that many local lessons should be consolidated, but
 only the global reconcile/judge/operator chain can make a canonical global
 write.
 
+## Least-Overhead Runtime Path
+
+The cheapest useful path is to pull only the relevant approved global memory
+down into local hot memory for the task run. Do not make every task call a
+global sidecar, vector database, graph service, or LLM.
+
+```text
+task starts
+  -> classify task metadata/signatures programmatically
+  -> check local hot cache
+  -> if miss, query persisted global lessons by exact signature/hash
+  -> if exact miss, query bounded simhash/lexical near matches
+  -> materialize top-k approved lessons into local hot cache
+  -> merge local hot cache + local memory wiki + policy hints
+  -> build compact advisory packet
+  -> dispatch worker
+  -> record helped/ignored/hurt feedback
+```
+
+Local hot cache entries should be compact and task-oriented:
+
+- source global lesson id
+- tenant/repo/tool/task/error signatures
+- compact advisory text
+- confidence
+- sensitivity/scope labels
+- evidence id refs, not raw evidence blobs
+- ttl/expires_at
+- last_used_at
+- reuse stats
+
+Hot-cache materialization must not copy private raw global evidence. It stores
+only the approved claim/lesson summary and refs needed for audit. If a task
+needs full evidence, it must use the evidence reference under the normal access
+control path.
+
+This path is Phase 11A because it directly reduces worker mistakes and token
+spend. Global indexer and sync sidecars are Phase 11B because they are useful
+for scale, not necessary to prove the value loop.
+
 ## Persisted Lesson Retrieval For Pre-Curation
 
 The deterministic pre-curation gate is not complete until it reads approved
@@ -578,6 +618,47 @@ The pre-curation runtime must never treat global memory as stronger than local
 facts, tests, logs, git state, or explicit operator instruction. It may suppress
 expensive local recuration only when the retrieved persisted lesson passes the
 same gates that the in-process deterministic helper uses.
+
+## Task-Start Hydration
+
+Task-start hydration is the point where global memory helps workers before they
+fault.
+
+Inputs:
+
+- tenant id
+- repo id
+- task type
+- tool/provider/model hints
+- worker kind
+- failure/success signatures when available
+- branch/file/framework entities
+- local memory packet
+- policy audit hints
+
+Outputs:
+
+- local hot-cache hits
+- persisted global lesson hits
+- compact merged advisory packet
+- retrieval audit
+- estimated packet tokens
+
+Merge order:
+
+```text
+1. explicit operator/master instruction
+2. current git/tests/logs/task facts
+3. deterministic policy audit blocks/warnings
+4. local hot memory exact hits
+5. local repo memory wiki claims
+6. approved global hot-cache lessons
+7. approved persisted global lessons materialized during hydration
+```
+
+The packet must stay advisory unless policy engine or operator explicitly
+escalates it. Workers should see concrete prior failures and working paths, not
+large summaries.
 
 ## Failure-Lesson Learn Acceptance Test
 
