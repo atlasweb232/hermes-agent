@@ -11747,7 +11747,7 @@ Examples:
     observe_list.add_argument("--repo-id", default="", help="Repository scope")
     observe_list.add_argument("--task-id", default="", help="Task scope")
     observe_list.add_argument("--worker-id", default="", help="Worker/owner filter")
-    observe_list.add_argument("--item-type", choices=["job", "candidate"], default="", help="Line item type")
+    observe_list.add_argument("--item-type", choices=["job", "candidate", "supervisor_task"], default="", help="Line item type")
     observe_list.add_argument("--job-type", default="", help="Learning job type filter")
     observe_list.add_argument("--candidate-kind", default="", help="Memory candidate kind filter")
     observe_list.add_argument("--status", default="", help="Status filter")
