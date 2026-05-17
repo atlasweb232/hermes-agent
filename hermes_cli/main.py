@@ -11276,6 +11276,11 @@ Examples:
     candidates_list.add_argument("--repo-id", default="", help="Repository scope")
     candidates_list.add_argument("--status", default="", help="Filter by status")
     candidates_list.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="Include archived and rolled-back candidates when no --status is set",
+    )
+    candidates_list.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON output",
@@ -11602,12 +11607,19 @@ Examples:
                 else:
                     cand_cmd = getattr(args, "memory_candidates_command", None) or "list"
                     if cand_cmd == "list":
+                        status_filter = getattr(args, "status", "") or None
                         rows = db.list_meta_candidates(
                             tenant_id=getattr(args, "tenant_id", "") or None,
                             repo_id=getattr(args, "repo_id", "") or None,
-                            status=getattr(args, "status", "") or None,
+                            status=status_filter,
                             limit=50,
                         )
+                        if status_filter is None and not getattr(args, "include_archived", False):
+                            rows = [
+                                row
+                                for row in rows
+                                if row.get("status") not in {"archived", "rolled_back"}
+                            ]
                         if getattr(args, "json", False):
                             print(json.dumps(rows, indent=2, ensure_ascii=False))
                         else:

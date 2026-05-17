@@ -751,3 +751,39 @@ def test_cli_candidates_list_renders_structured_fields(tmp_path, monkeypatch, ca
     assert "match=oauth callback" in out
     assert "assignee=jules" in out
     assert "workspace=worktree" in out
+
+
+def test_cli_candidates_list_hides_archived_by_default(tmp_path, monkeypatch, capsys):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = SessionDB()
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_visible",
+            kind="playbook",
+            claim="active candidate",
+            evidence_json={},
+            score=0.7,
+            status="proposed",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_archived",
+            kind="playbook",
+            claim="archived candidate",
+            evidence_json={},
+            score=0.1,
+            status="archived",
+        )
+    finally:
+        db.close()
+
+    argv = ["hermes", "memory", "candidates", "list", "--json"]
+    from hermes_cli import main as hermes_main
+
+    with patch.object(sys, "argv", argv):
+        hermes_main.main()
+
+    rows = json.loads(capsys.readouterr().out.strip())
+    ids = {row["id"] for row in rows}
+    assert "metacand_visible" in ids
+    assert "metacand_archived" not in ids
