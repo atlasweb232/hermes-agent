@@ -639,6 +639,53 @@ DEFAULT_CONFIG = {
             "max_attempts": 3,
             "max_events_per_run": 50,
         },
+        "global_memory_wiki": {
+            "enabled": False,
+            "instance_id": "auto",
+            "namespace": "default",
+            "local_cache_root": "~/.hermes/memory-wiki",
+            "object_store": {
+                "backend": "local",
+                "uri": "~/.hermes/memory-wiki/global",
+                "raw_prefix": "raw/",
+                "evidence_prefix": "evidence/",
+            },
+            "state_store": {
+                "backend": "sqlite",
+                "uri": "~/.hermes/memory-wiki/global/state.sqlite",
+            },
+            "lexical_index": {
+                "backend": "sqlite_fts",
+                "uri": "~/.hermes/memory-wiki/global/lexical.sqlite",
+            },
+            "vector_index": {
+                "backend": "disabled",
+                "uri": "",
+                "embedding_provider": "openai",
+                "embedding_model": "text-embedding-3-large",
+            },
+            "graph_index": {
+                "backend": "sqlite",
+                "uri": "~/.hermes/memory-wiki/global/graph.sqlite",
+            },
+            "limits": {
+                "max_local_cache_gb": 50,
+                "raw_retention_days": 30,
+                "hot_cache_days": 30,
+                "max_ingest_batch": 500,
+            },
+            "require_global_approval": True,
+        },
+        "global_memory_bus": {
+            "enabled": False,
+            "backend": "sqlite",
+            "brokers": [],
+            "topic_prefix": "hermes.memory",
+            "consumer_group": "hermes-global-memory",
+            "exactly_once": False,
+            "idempotency_required": True,
+            "dead_letter_topic": "hermes.memory.dead_letter",
+        },
         "memory_tiers": {
             "enabled": True,
             "hot_ttl_seconds": 86400,
