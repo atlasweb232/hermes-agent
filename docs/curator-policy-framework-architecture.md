@@ -837,3 +837,44 @@ wiki claim
 
 Memory wiki claims are therefore a retrieval and training substrate, not direct
 runtime authority.
+
+## Native Goal Loop Relationship
+
+Hermes also has a native `/goal` mechanism in `hermes_cli/goals.py` and
+gateway wiring. It is a per-session continuation controller, not a memory
+compiler and not a dreaming sidecar.
+
+The goal mechanism works as follows:
+
+```text
+operator sets /goal
+  -> GoalState is persisted in SessionDB state_meta as goal:<session_id>
+  -> normal agent turn runs
+  -> auxiliary goal_judge evaluates final response
+  -> if done: mark goal done
+  -> if not done and budget remains: enqueue a normal continuation user prompt
+  -> if budget exhausted or judge repeatedly emits malformed output: pause
+```
+
+Important properties:
+
+- The continuation is a normal user-message turn, not a system-prompt mutation.
+- The goal loop does not swap toolsets or bypass runtime approvals.
+- Goal judge failures are fail-open to continuation, with parse-failure
+  auto-pause after repeated malformed judge output.
+- User messages preempt queued continuation prompts.
+- `/subgoal` adds explicit completion criteria that the judge must verify.
+
+This can help supervisor orchestration as a native progress loop. For example,
+the supervisor may use a goal to continue a long Spec Kit implementation until
+validation evidence and session summary criteria are met. It should not replace
+the supervisor protocol: task packets, planner packets, worker delegation
+packets, validation reports, session summaries, memory packets, judge/operator
+approval, and policy boundaries remain the authoritative orchestration records.
+
+Dreaming is different. Dreaming is offline pattern synthesis over wiki claims,
+events, candidates, job history, policy audits, and worker outcomes. It emits
+proposal records only. A goal loop may keep working on an already-authorized
+task; dreaming may only propose future work or policy ideas. Dreaming output
+must not be queued as a goal, injected into worker context, or applied as
+policy unless it passes the normal judge/operator gates.
