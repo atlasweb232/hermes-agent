@@ -736,3 +736,104 @@ One-off failure fixes do not scale. Hermes needs reusable machinery:
 This lets small local models like Ollama `gemma2:2b` do cheap background
 curation while stronger providers such as Codex or Cerebras GPT-OSS can be used
 for higher-quality policy synthesis when configured.
+
+## Memory Wiki And Dreaming Roadmap
+
+The memory wiki is the durable knowledge layer above raw events and learning
+candidates. Raw events are too noisy to retrieve directly at large scale, and
+candidates are still operational suggestions. Wiki claims normalize approved,
+evidence-backed memory into stable knowledge records that can feed future
+lexical, vector, and graph indexes.
+
+The intended flow is:
+
+```text
+raw runtime events
+  -> learning bus
+  -> rollup / curator
+  -> proposed candidates
+  -> judge / operator approval
+  -> approved memory
+  -> memory wiki claims
+  -> retrieval index / graph index / future training corpus
+  -> task-specific memory packets
+  -> supervisor / worker orchestration
+```
+
+A candidate may say:
+
+```text
+Prefer direct Claude invocation after worker-router Claude failures.
+```
+
+A wiki claim should be more normalized and scoped:
+
+```text
+Claim:
+On the AWS Linux Hermes VM, Claude Code direct CLI invocation with
+`claude --model sonnet -p` is more reliable than `worker-router claude`
+when the wrapper emits argument parsing failures.
+
+Evidence:
+- approved candidate ids
+- learning event ids
+- command audit ids
+- successful command result
+
+Scope:
+tenant=atlas, repo=hermes-agent, tool=claude-code, platform=aws-linux
+
+Confidence:
+0.91
+```
+
+At scale, the wiki prevents thousands of repeated orchestrations from creating
+thousands of duplicate prompt memories. It provides stable deduplicated claims,
+attached evidence, explicit scope, confidence, and safety metadata. That makes
+retrieval cleaner across tenants, repositories, tools, machines, providers,
+models, task types, error signatures, and success signatures.
+
+The wiki should feed both retrieval indexes:
+
+- Vector index: compact claim text, summary, task type, tool, failure pattern,
+  success pattern, and evidence summary.
+- Graph index: claim relationships such as `APPLIES_TO tenant/repo/tool`,
+  `OBSERVED_ON machine/platform`, `AVOIDS_ERROR error_signature`,
+  `RECOMMENDS_ACTION command/playbook`, and `SUPPORTED_BY event/candidate`.
+
+Dreaming is separate. It is an offline synthesis phase that reads wiki claims,
+unresolved candidates, repeated failures, job histories, policy audits, and
+worker outcomes. It emits proposal-only records such as new playbooks, tests,
+routing changes, cleanup candidates, or policy ideas. Dreaming output must not
+be injected into prompts, applied to config, or enforced directly. It must pass
+judge and operator gates before it can affect runtime behavior.
+
+The long-term training-data value comes from this separation. Raw transcripts
+and logs are not appropriate proprietary training data. The useful substrate is
+curated records with:
+
+- goal and task type
+- tenant/repo/platform/tool scope
+- failure signature
+- successful action
+- evidence references
+- confidence
+- approval provenance
+- safety metadata such as `secret_safe` and cross-tenant shareability
+
+Those records can support future AGI-centric model training without collapsing
+tenant boundaries or treating speculative proposals as operational truth.
+
+The authority chain remains:
+
+```text
+wiki claim
+  -> retrieved into task packet as advisory context
+  -> deterministic high-confidence memory may become a policy candidate
+  -> judge reviews
+  -> operator approves
+  -> policy engine audits or enforces
+```
+
+Memory wiki claims are therefore a retrieval and training substrate, not direct
+runtime authority.

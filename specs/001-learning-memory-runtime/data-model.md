@@ -251,7 +251,11 @@
 - `title`: concise title
 - `body`: durable claim
 - `evidence`: list of approved memory or event pointers
+- `scope`: tenant, repo, machine, platform, tool, provider, model, task type, error signature, and success signature labels
 - `confidence`: numeric confidence
+- `safety`: `secret_safe`, `cross_tenant_shareable`, redaction status, and export eligibility
+- `index_payload`: compact text and metadata suitable for lexical, vector, and graph indexing
+- `training_payload`: optional curated training-data shape derived from the claim, never raw transcript text
 - `last_verified_at`: timestamp
 - `status`: `active`, `stale`, `archived`
 
@@ -262,8 +266,27 @@
 - `summary`: proposal text
 - `rationale`: why it may help
 - `evidence`: wiki/memory/event pointers
+- `scope`: proposed applicability boundaries
 - `risk`: `low`, `medium`, `high`
 - `status`: `proposed`, `judged`, `approved`, `rejected`, `archived`
+
+Dreaming proposals are not retrieval memory and are not policies. They become
+runtime-relevant only after judge/operator approval converts them into an
+approved memory candidate, wiki update, or policy candidate.
+
+## TrainingCorpusRecord
+
+- `id`: stable export record id
+- `source_wiki_claim_id`: source wiki claim
+- `goal`: normalized goal or task type
+- `scope`: tenant, repo, platform, tool, provider/model, and shareability boundary
+- `failure_signature`: compact failure pattern if applicable
+- `successful_action`: verified action or playbook if applicable
+- `evidence_refs`: wiki, candidate, event, session, and policy audit pointers
+- `confidence`: numeric confidence at export time
+- `approval_provenance`: judge/operator/version metadata
+- `safety`: redaction, secret safety, and cross-tenant shareability flags
+- `payload`: sanitized structured training payload
 
 ## LearningJob
 

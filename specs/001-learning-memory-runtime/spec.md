@@ -160,10 +160,14 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **FR-030**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
 - **FR-031**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
 - **FR-032**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
-- **FR-033**: System MUST run dreaming as proposal-only background synthesis.
-- **FR-034**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-035**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-036**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-033**: Memory wiki claims MUST carry scope, confidence, evidence references, and safety metadata suitable for future lexical, vector, graph, and training-data pipelines.
+- **FR-034**: System MUST keep wiki claims advisory unless they are converted into judge/operator-approved policy candidates.
+- **FR-035**: System MUST run dreaming as proposal-only background synthesis.
+- **FR-036**: Dreaming proposals MUST NOT be injected into prompts, applied to config, or enforced directly.
+- **FR-037**: Training-data exports MUST use curated wiki/approved-memory records rather than raw transcripts or raw logs, and MUST preserve tenant/shareability boundaries.
+- **FR-038**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-039**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-040**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 
@@ -171,8 +175,8 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Learning Candidate**: Curator-generated proposed lesson with evidence, score, kind, scope, and status.
 - **Judge Decision**: Structured approval, rejection, or needs-human decision for a candidate or policy proposal.
 - **Approved Memory**: Candidate promoted for retrieval after passing quality, judge, and operator gates.
-- **Memory Wiki Claim**: Curated durable knowledge derived from approved memory with evidence and confidence.
-- **Dreaming Proposal**: Offline suggestion for playbooks, routing, tests, or policies that cannot affect runtime until approved.
+- **Memory Wiki Claim**: Curated durable knowledge derived from approved memory with scope, evidence, confidence, safety metadata, and indexing/training suitability.
+- **Dreaming Proposal**: Offline suggestion for playbooks, routing, tests, cleanup, architecture, or policies that cannot affect runtime until approved.
 - **Policy Audit**: Non-enforcing evaluation that records what a policy would have done.
 - **Memory Tier**: Hot, warm, or cold storage classification that controls retrieval latency, prompt budget, and summarization.
 - **Learning Job**: Background execution record for sidecar, judge, wiki, dreaming, housekeeping, or reconcile work.
@@ -182,6 +186,7 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Memory Index Document**: Redacted compact text and metadata used for lexical and vector search.
 - **Memory Graph Node**: Typed node representing tenant, repo, machine, tool, worker, provider, model, task type, signature, memory, wiki claim, proposal, or policy.
 - **Memory Graph Edge**: Typed relationship explaining where memory applies, what it avoids, what it recommends, and what evidence produced it.
+- **Training Corpus Record**: Sanitized, scoped, evidence-backed export derived from wiki claims or approved memory, never raw transcripts.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Supervisor Task Packet**: Structured intake record for a user or dashboard request before planning or delegation.
 - **Planner Packet**: Bounded request sent to the planner agent to create or update Spec Kit artifacts.
