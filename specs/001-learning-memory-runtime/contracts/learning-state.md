@@ -40,8 +40,11 @@ task invocation
   -> supervisor initialization protocol
   -> create SupervisorTaskPacket
   -> classify into TaskRetrievalQuery
-  -> retrieve approved memory candidates by hard scope filters
-  -> score candidates using exact matches, semantic matches, confidence, recency, tier, and penalties
+  -> retrieve approved memory candidates by hard metadata/scope filters
+  -> run lexical search for exact identifiers
+  -> run vector search over eligible compact memory documents
+  -> expand graph neighbors for eligible related nodes
+  -> score candidates using exact matches, lexical matches, vector similarity, graph proximity, confidence, recency, tier, and penalties
   -> build compact MemoryPacket from top-k results
   -> inject advisory packet into supervisor or worker context
   -> record OutcomeFeedback after task completion
@@ -55,6 +58,7 @@ task invocation
 - Repo-specific claims must not cross repo boundaries.
 - Machine-specific command routing policies may cross repos only on the same machine or explicitly matching environment.
 - Global memory requires explicit `global_safe` scope and stronger judge/operator approval.
+- Vector similarity cannot bypass scope, status, evidence, approval, or secret-safety filters.
 
 ## Policy Escalation Rules
 

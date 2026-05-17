@@ -509,7 +509,8 @@ The implementation sequence is:
    summaries.
 2. Learning judge with strict schema and fail-closed approval.
 3. SQLite-backed runtime event bus for asynchronous learning signals.
-4. Tiered hot/warm/cold retrieval and advisory injection.
+4. Hybrid metadata/lexical/vector/graph retrieval with tiered hot/warm/cold
+   advisory injection.
 5. Memory wiki compiler for durable evidence-backed claims.
 6. Dreaming phase for proposal-only offline synthesis.
 7. Learning job observability through CLI/API/dashboard surfaces.
@@ -559,6 +560,48 @@ The role model is intentionally provider-neutral:
 
 Spec Kit may be skipped only for read-only investigation, trivial local fixes,
 explicit user opt-out, or emergency debugging. The skip reason is recorded.
+
+## Hybrid Memory Retrieval
+
+Hermes should not use pure vector RAG for operational memory. Vector similarity
+is useful, but scope and evidence are more important than semantic closeness.
+The retrieval pipeline is:
+
+```text
+TaskRetrievalQuery
+  -> hard metadata filters
+  -> lexical search for exact identifiers
+  -> vector search over eligible compact memory documents
+  -> graph expansion over eligible relationships
+  -> rerank/scoring
+  -> compact MemoryPacket
+```
+
+Hard filters run before vector similarity. They exclude non-approved memory,
+missing evidence, wrong tenant/repo/machine scopes, archived/rejected status,
+and secret-unsafe content. Vector search only ranks eligible compact memory
+documents; it never makes a memory trusted by itself.
+
+The first implementation should stay local-first:
+
+- SQLite metadata tables for scope, task type, tool, signatures, status,
+  confidence, tier, and timestamps
+- SQLite FTS5 for lexical matches on commands, flags, files, branches, tools,
+  providers, models, and error signatures
+- optional local vector backend such as `sqlite-vec`, `sqlite-vss`, or LanceDB
+- SQLite graph node/edge tables before considering Neo4j or another graph
+  service
+
+Graph edges explain why memory applies:
+
+- memory applies to tenant/repo/machine/tool/task type
+- memory avoids an error signature
+- memory recommends a success signature or action
+- memory derives from an event or was promoted into a wiki claim/policy
+
+Every retrieval run should be auditable: query features, hard filters, lexical
+candidates, vector candidates, graph paths, final score features, and packet
+output are recorded for later inspection.
 
 ## Why This Shape
 

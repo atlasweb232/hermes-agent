@@ -177,9 +177,52 @@
 - `memory_id`: approved memory being scored
 - `query_id`: retrieval query or task invocation id
 - `score`: final numeric relevance score
-- `features_json`: exact match, semantic match, recency, confidence, tier, and penalty components
+- `features_json`: exact match, lexical match, vector similarity, graph proximity, semantic match, recency, confidence, tier, and penalty components
 - `decision`: `include`, `exclude`, or `defer`
 - `reason`: short explanation for audit
+
+## MemoryIndexDocument
+
+- `id`: stable index document id
+- `memory_id`: approved memory represented by the document
+- `tier`: `hot`, `warm`, or `cold`
+- `text`: compact redacted text for lexical/vector indexing
+- `metadata_json`: tenant, repo, machine, tool, task type, signatures, scope, status, confidence, and timestamps
+- `embedding_model`: model used for vectorization, if any
+- `embedding_ref`: local vector row id or external vector backend id
+- `fts_rowid`: lexical index row id, if any
+- `status`: `active`, `stale`, `deleted`
+- `created_at`, `updated_at`: timestamps
+
+## MemoryGraphNode
+
+- `id`: stable node id
+- `node_type`: `tenant`, `repo`, `machine`, `tool`, `worker`, `provider`, `model`, `task_type`, `error_signature`, `success_signature`, `memory`, `wiki_claim`, `dreaming_proposal`, or `policy`
+- `key`: normalized unique key within the node type
+- `label`: human-readable label
+- `metadata_json`: optional redacted node metadata
+
+## MemoryGraphEdge
+
+- `id`: stable edge id
+- `source_node_id`: source node
+- `target_node_id`: target node
+- `edge_type`: `APPLIES_TO`, `OBSERVED_ON`, `USES_TOOL`, `USES_MODEL`, `AVOIDS_ERROR`, `RECOMMENDS_ACTION`, `DERIVED_FROM`, `PROMOTED_TO`, or `RELATED_TO`
+- `weight`: numeric edge strength
+- `evidence_uri`: evidence pointer for the relationship
+- `created_at`: timestamp
+
+## RetrievalRun
+
+- `id`: stable retrieval run id
+- `query_id`: task retrieval query id
+- `hard_filters_json`: required metadata filters
+- `lexical_candidates_json`: candidate ids and lexical scores
+- `vector_candidates_json`: candidate ids and vector similarities
+- `graph_candidates_json`: candidate ids and graph paths
+- `reranked_candidates_json`: final ranked candidates and feature contributions
+- `packet_id`: resulting memory packet id
+- `created_at`: timestamp
 
 ## MemoryPacket
 
@@ -240,6 +283,8 @@
 - Supervisor task packet: `intake -> needs_clarification/planned -> delegated -> validated -> completed`
 - Spec Kit artifact set: `missing -> draft -> validated -> committed`
 - Worker delegation packet: `queued -> running -> completed/failed/blocked`
+- Memory index document: `active -> stale -> deleted`, rebuilt from approved memory when source metadata changes
+- Retrieval run: immutable audit record after packet construction
 - Candidate: `proposed -> approved` only after quality gate and judge/operator rules
 - Candidate rejection: `proposed -> rejected` or `needs_human`
 - Approved memory: `active -> superseded -> archived`

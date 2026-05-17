@@ -124,21 +124,27 @@
 - [ ] T042 [P] [US4] Add meta-search scope tests for tenant, repo, tool, and machine matching in `tests/hermes_cli/test_supervisor_memory.py`
 - [ ] T043 [P] [US4] Add prompt injection budget tests in `tests/hermes_cli/test_kanban_db.py`
 - [ ] T044 [P] [US4] Add task classifier tests for tenant, repo, tool, task type, intent, entities, and signatures in `tests/hermes_cli/test_memory_retrieval.py`
-- [ ] T045 [P] [US4] Add relevance scorer tests for exact match, semantic match, recency, confidence, and cross-scope penalties in `tests/hermes_cli/test_memory_retrieval.py`
-- [ ] T046 [P] [US4] Add memory packet builder tests for top-k compaction, evidence labels, scope labels, and advisory header in `tests/hermes_cli/test_memory_retrieval.py`
-- [ ] T047 [P] [US4] Add policy escalation tests for deterministic approved memory in `tests/hermes_cli/test_policy_engine.py`
-- [ ] T048 [P] [US4] Add outcome feedback tests for helpful, irrelevant, harmful, and unknown memory in `tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T045 [P] [US4] Add lexical index tests for commands, flags, file paths, branch names, tool names, and error signatures in `tests/hermes_cli/test_memory_index.py`
+- [ ] T046 [P] [US4] Add vector index tests proving vector matches cannot bypass hard scope/status/evidence filters in `tests/hermes_cli/test_memory_index.py`
+- [ ] T047 [P] [US4] Add graph index tests for node/edge creation, graph expansion, and explanation paths in `tests/hermes_cli/test_memory_graph.py`
+- [ ] T048 [P] [US4] Add relevance scorer tests for exact match, lexical match, vector similarity, graph proximity, recency, confidence, and cross-scope penalties in `tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T049 [P] [US4] Add retrieval-run audit tests for filters, lexical/vector/graph candidates, rerank features, and packet output in `tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T050 [P] [US4] Add memory packet builder tests for top-k compaction, evidence labels, scope labels, and advisory header in `tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T051 [P] [US4] Add policy escalation tests for deterministic approved memory in `tests/hermes_cli/test_policy_engine.py`
+- [ ] T052 [P] [US4] Add outcome feedback tests for helpful, irrelevant, harmful, and unknown memory in `tests/hermes_cli/test_memory_retrieval.py`
 
 ### Implementation for User Story 4
 
-- [ ] T049 [US4] Create `hermes_cli/memory_retrieval.py` with task classifier, metadata normalizer, relevance scorer, and memory packet builder
-- [ ] T050 [US4] Add hot/warm/cold tier fields and transition helpers in `hermes_cli/supervisor_memory.py`
-- [ ] T051 [US4] Extend `retrieve_learning_context` to consume `memory_retrieval.py` scoring and packet building in `hermes_cli/supervisor_memory.py`
-- [ ] T052 [US4] Add config knobs for retrieval limits, scope penalties, semantic matching, packet size, and tier thresholds in `hermes_cli/config.py`
-- [ ] T053 [US4] Add outcome feedback persistence and confidence/tier adjustment helpers in `hermes_cli/supervisor_memory.py`
-- [ ] T054 [US4] Add deterministic policy escalation from approved memory to audit/advisory candidates in `hermes_cli/policy_engine.py`
-- [ ] T055 [US4] Ensure worker context injection keeps the advisory warning in `hermes_cli/kanban_db.py`
-- [ ] T056 [US4] Document retrieval, packet building, feedback, and escalation policy in `docs/curator-policy-framework-architecture.md`
+- [ ] T053 [US4] Create `hermes_cli/memory_retrieval.py` with task classifier, metadata normalizer, relevance scorer, retrieval-run audit, and memory packet builder
+- [ ] T054 [US4] Create `hermes_cli/memory_index.py` with SQLite metadata, FTS5 lexical, and optional local vector backend abstractions
+- [ ] T055 [US4] Create `hermes_cli/memory_graph.py` with SQLite node/edge tables and graph expansion helpers
+- [ ] T056 [US4] Add hot/warm/cold tier fields and transition helpers in `hermes_cli/supervisor_memory.py`
+- [ ] T057 [US4] Extend `retrieve_learning_context` to consume metadata filters, lexical/vector/graph candidates, reranking, and packet building in `hermes_cli/supervisor_memory.py`
+- [ ] T058 [US4] Add config knobs for retrieval limits, scope penalties, lexical search, vector backend, graph expansion, packet size, and tier thresholds in `hermes_cli/config.py`
+- [ ] T059 [US4] Add outcome feedback persistence and confidence/tier adjustment helpers in `hermes_cli/supervisor_memory.py`
+- [ ] T060 [US4] Add deterministic policy escalation from approved memory to audit/advisory candidates in `hermes_cli/policy_engine.py`
+- [ ] T061 [US4] Ensure worker context injection keeps the advisory warning in `hermes_cli/kanban_db.py`
+- [ ] T062 [US4] Document hybrid retrieval, packet building, feedback, and escalation policy in `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Retrieval improves prompt context without admitting unapproved or unrelated memory.
 
@@ -152,17 +158,17 @@
 
 ### Tests for User Story 5
 
-- [ ] T057 [P] [US5] Add memory wiki compiler tests in `tests/hermes_cli/test_memory_wiki.py`
-- [ ] T058 [P] [US5] Add dreaming proposal tests in `tests/hermes_cli/test_memory_dreaming.py`
-- [ ] T059 [P] [US5] Add negative tests proving dreaming proposals are not injected or enforced in `tests/hermes_cli/test_memory_dreaming.py`
+- [ ] T063 [P] [US5] Add memory wiki compiler tests in `tests/hermes_cli/test_memory_wiki.py`
+- [ ] T064 [P] [US5] Add dreaming proposal tests in `tests/hermes_cli/test_memory_dreaming.py`
+- [ ] T065 [P] [US5] Add negative tests proving dreaming proposals are not injected or enforced in `tests/hermes_cli/test_memory_dreaming.py`
 
 ### Implementation for User Story 5
 
-- [ ] T060 [US5] Create `hermes_cli/memory_wiki.py` for evidence-backed wiki claims
-- [ ] T061 [US5] Create `hermes_cli/memory_dreaming.py` for proposal-only synthesis
-- [ ] T062 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`
-- [ ] T063 [US5] Add `hermes memory dream run/status` CLI wiring in `hermes_cli/main.py`
-- [ ] T064 [US5] Add wiki and dreaming sections to `docs/curator-policy-framework-architecture.md`
+- [ ] T066 [US5] Create `hermes_cli/memory_wiki.py` for evidence-backed wiki claims
+- [ ] T067 [US5] Create `hermes_cli/memory_dreaming.py` for proposal-only synthesis
+- [ ] T068 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`
+- [ ] T069 [US5] Add `hermes memory dream run/status` CLI wiring in `hermes_cli/main.py`
+- [ ] T070 [US5] Add wiki and dreaming sections to `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 
@@ -176,17 +182,17 @@
 
 ### Tests for User Story 6
 
-- [ ] T065 [P] [US6] Add learning job list/filter tests in `tests/hermes_cli/test_learning_jobs.py`
-- [ ] T066 [P] [US6] Add dashboard/backend API tests for learning jobs in `tests/plugins/test_kanban_dashboard_plugin.py`
-- [ ] T067 [P] [US6] Add sidecar metrics regression tests in `tests/hermes_cli/test_supervisor_memory.py`
+- [ ] T071 [P] [US6] Add learning job list/filter tests in `tests/hermes_cli/test_learning_jobs.py`
+- [ ] T072 [P] [US6] Add dashboard/backend API tests for learning jobs in `tests/plugins/test_kanban_dashboard_plugin.py`
+- [ ] T073 [P] [US6] Add sidecar metrics regression tests in `tests/hermes_cli/test_supervisor_memory.py`
 
 ### Implementation for User Story 6
 
-- [ ] T068 [US6] Add `hermes memory jobs list/status` CLI wiring in `hermes_cli/main.py`
-- [ ] T069 [US6] Record learning jobs for sidecar, judge, bus consumer, wiki, dreaming, housekeeping, and reconcile paths
-- [ ] T070 [US6] Add backend endpoints for active jobs, historical jobs, candidates, decisions, and policy audits under `plugins/kanban/dashboard/`
-- [ ] T071 [US6] Add dashboard-facing DTOs and filters for date, repo, task, worker, status, and blocker fields
-- [ ] T072 [US6] Document observability workflow in `docs/curator-policy-framework-architecture.md`
+- [ ] T074 [US6] Add `hermes memory jobs list/status` CLI wiring in `hermes_cli/main.py`
+- [ ] T075 [US6] Record learning jobs for sidecar, judge, bus consumer, wiki, dreaming, housekeeping, and reconcile paths
+- [ ] T076 [US6] Add backend endpoints for active jobs, historical jobs, candidates, decisions, and policy audits under `plugins/kanban/dashboard/`
+- [ ] T077 [US6] Add dashboard-facing DTOs and filters for date, repo, task, worker, status, and blocker fields
+- [ ] T078 [US6] Document observability workflow in `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Operator can see what ran, why it changed memory, what is blocked, and what remains advisory.
 
@@ -194,12 +200,13 @@
 
 ## Phase 9: Polish And Integration
 
-- [ ] T073 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
-- [ ] T074 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
-- [ ] T075 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
-- [ ] T076 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, and policy audit
-- [ ] T077 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
-- [ ] T078 Push branch and record commit hashes for local and VM deployments
+- [ ] T079 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
+- [ ] T080 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
+- [ ] T081 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
+- [ ] T082 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
+- [ ] T083 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, and policy audit
+- [ ] T084 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
+- [ ] T085 Push branch and record commit hashes for local and VM deployments
 
 ## Dependencies & Execution Order
 
@@ -231,7 +238,7 @@
 1. Supervisor orchestration protocol.
 2. Learning judge.
 3. SQLite event bus.
-4. Tiered retrieval and injection.
+4. Hybrid metadata/lexical/vector/graph retrieval and injection.
 5. Wiki compiler.
 6. Dreaming proposals.
 7. Observability dashboard/API.

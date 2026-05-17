@@ -37,6 +37,26 @@
 - Store everything in hot memory: prompt bloat and stale lessons.
 - Keep only cold wiki: misses useful in-session lessons.
 
+## Decision: Hybrid Retrieval Over Pure RAG Or Pure Graph
+
+**Rationale**: Vector search is useful for fuzzy matching but unsafe as the first gate because scope, approval, tenant, repo, machine, and evidence constraints are operationally more important than semantic similarity. Graph search is useful for explainable cross-scope relationships, but it cannot handle fuzzy phrasing alone. Hermes should use structured metadata filters first, lexical search for exact operational identifiers second, vector search only over eligible compact approved memory documents, graph expansion for explainable related candidates, and a final reranker.
+
+**Alternatives considered**:
+
+- Pure vector RAG: retrieves semantically similar but operationally wrong memories across tenant/repo/machine boundaries.
+- Pure graph retrieval: misses semantically equivalent phrasing and requires too much perfect normalization up front.
+- External vector database first: adds operational complexity before local SQLite-backed retrieval limits are proven.
+
+## Decision: SQLite-First Retrieval Indexes
+
+**Rationale**: Hermes is local-first and VM-friendly. SQLite metadata, FTS5 lexical search, and SQLite graph edge tables are deterministic and easy to test. Vector search should start with an optional local backend such as `sqlite-vec`, `sqlite-vss`, or LanceDB before introducing a service dependency.
+
+**Alternatives considered**:
+
+- Neo4j: too heavy for first implementation.
+- Qdrant/Chroma service-first: useful later but unnecessary before local retrieval behavior is proven.
+- Embedding raw logs/transcripts: unsafe and noisy; only compact approved memory summaries should be embedded.
+
 ## Decision: Dreaming Produces Proposals Only
 
 **Rationale**: Dreaming can synthesize playbooks and improvement ideas, but it is speculative. Proposals must pass judge/operator gates before affecting runtime behavior.

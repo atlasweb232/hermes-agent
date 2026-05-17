@@ -75,6 +75,8 @@ As a worker or supervisor, I want only relevant approved learning context inject
 3. **Given** a task whose tokens only partially overlap a memory item, **When** retrieval runs, **Then** substring-only false positives are excluded.
 4. **Given** a prior mistake from another repo and tenant with the same tool and error signature, **When** a new task has the same task type and tool, **Then** the memory may be retrieved with cross-scope penalty but is labeled advisory and never treated as repo-specific truth.
 5. **Given** a deterministic approved memory item such as a known bad command pattern and known working replacement, **When** policy escalation runs, **Then** it creates an audit/advisory policy candidate and requires judge plus operator approval before enforcement.
+6. **Given** semantically similar memory from the wrong tenant, repo, machine, or scope, **When** vector retrieval finds it, **Then** hard metadata filters exclude it or downgrade it before packet construction.
+7. **Given** approved memory connected to matching tool, task type, and error-signature graph nodes, **When** graph expansion runs, **Then** the graph can add explainable candidates but cannot bypass approval, scope, or evidence gates.
 
 ---
 
@@ -146,16 +148,22 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **FR-018**: System MUST classify each task invocation into a structured retrieval query that includes tenant, repo, task type, tools, intent, entities, error signatures, success signatures, and scope.
 - **FR-019**: System MUST store approved memory with metadata fields sufficient for targeted retrieval, including tenant, repo, tool, task type, error signature, success signature, confidence, tier, scope, source, and verification timestamps.
 - **FR-020**: System MUST score memory relevance using exact scope matches, task type, tool, error/success signatures, semantic similarity, confidence, recency, and cross-tenant/repo penalties.
-- **FR-021**: System MUST build compact top-k memory packets from scored approved memory and include evidence, scope, confidence, and advisory priority labels.
-- **FR-022**: System MUST provide policy escalation for deterministic approved memory, producing audit/advisory/enforcement candidates without enabling enforcement automatically.
-- **FR-023**: System MUST record outcome feedback that marks injected memory as helpful, irrelevant, harmful, or unknown and adjusts confidence or tier according to policy.
-- **FR-024**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
-- **FR-025**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
-- **FR-026**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
-- **FR-027**: System MUST run dreaming as proposal-only background synthesis.
-- **FR-028**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
-- **FR-029**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
-- **FR-030**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
+- **FR-021**: System MUST maintain structured metadata indexes, lexical indexes, vector indexes, and graph edges for approved memory without embedding raw secrets, raw logs, or full transcripts.
+- **FR-022**: System MUST apply hard metadata filters before vector similarity can affect retrieval ranking.
+- **FR-023**: System MUST support lexical search for exact identifiers, commands, files, branches, error signatures, and tool names.
+- **FR-024**: System MUST support vector search over compact approved memory summaries, failure patterns, success patterns, task types, tool context, and evidence summaries.
+- **FR-025**: System MUST support graph expansion over approved memory relationships such as tenant, repo, machine, tool, worker, provider, model, task type, error signature, success signature, wiki claim, and policy.
+- **FR-026**: System MUST rerank retrieval candidates using structured match features, lexical match, vector similarity, graph proximity, confidence, recency, tier, and penalties.
+- **FR-027**: System MUST build compact top-k memory packets from scored approved memory and include evidence, scope, confidence, and advisory priority labels.
+- **FR-028**: System MUST provide policy escalation for deterministic approved memory, producing audit/advisory/enforcement candidates without enabling enforcement automatically.
+- **FR-029**: System MUST record outcome feedback that marks injected memory as helpful, irrelevant, harmful, or unknown and adjusts confidence or tier according to policy.
+- **FR-030**: System MUST retrieve learning context using quality gates, evidence requirements, scope filters, and exact or semantic matching rules that avoid substring-only false positives.
+- **FR-031**: System MUST label injected learning context as advisory and lower priority than current evidence and explicit instructions.
+- **FR-032**: System MUST compile approved durable memory into evidence-backed memory wiki claims.
+- **FR-033**: System MUST run dreaming as proposal-only background synthesis.
+- **FR-034**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
+- **FR-035**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
+- **FR-036**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
 
 ### Key Entities
 
@@ -171,6 +179,10 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **Task Retrieval Query**: Structured representation of a task invocation used to find relevant approved memory.
 - **Memory Packet**: Compact prompt-ready advisory context built from top-ranked approved memory.
 - **Outcome Feedback**: Post-task record describing whether injected memory helped, was irrelevant, was harmful, or had unknown impact.
+- **Memory Index Document**: Redacted compact text and metadata used for lexical and vector search.
+- **Memory Graph Node**: Typed node representing tenant, repo, machine, tool, worker, provider, model, task type, signature, memory, wiki claim, proposal, or policy.
+- **Memory Graph Edge**: Typed relationship explaining where memory applies, what it avoids, what it recommends, and what evidence produced it.
+- **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Supervisor Task Packet**: Structured intake record for a user or dashboard request before planning or delegation.
 - **Planner Packet**: Bounded request sent to the planner agent to create or update Spec Kit artifacts.
 - **Spec Kit Artifact Set**: Branch/worktree plus `spec.md`, `plan.md`, `tasks.md`, and related design docs.
@@ -194,6 +206,8 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - **SC-008**: Non-trivial implementation tasks produce Spec Kit artifacts and a git branch/worktree record before worker execution in protocol tests.
 - **SC-009**: Worker dispatch is rejected in tests when required delegation packet fields are missing.
 - **SC-010**: Supervisor completion is rejected in tests when validation evidence, git preservation, or session summary is missing.
+- **SC-011**: Vector retrieval cannot inject semantically similar memory that fails hard scope, status, evidence, or approval filters.
+- **SC-012**: Retrieval run audits explain why each injected memory item was selected, including metadata, lexical/vector/graph, and rerank contributions.
 
 ## Assumptions
 
@@ -204,3 +218,4 @@ As the Hermes operator, I want historical and active learning jobs visible by da
 - Existing learning sidecar, curator policy runner, housekeeping, retrieval, and policy audit code remain the base implementation.
 - Operator approval means explicit user or admin action through CLI/API/config, not implicit model confidence.
 - Non-trivial implementation work defaults to Spec Kit preservation; trivial fixes and explicit user opt-out are recorded as exceptions.
+- SQLite metadata and FTS5 are the first retrieval index layer; vector and graph backends must be optional/configurable and can start with SQLite-backed implementations.

@@ -6,15 +6,15 @@
 
 ## Summary
 
-Extend the current Hermes runtime learning work from advisory retrieval and policy audit into a complete, auditable learning framework. The first slice is a supervisor orchestration protocol that converts user/dashboard requests into Spec Kit-preserved work, memory packets, planner packets, worker delegation packets, validation reports, and session summaries. Follow-on slices are a fail-closed learning judge, a SQLite-backed runtime event bus, tiered memory retrieval, memory wiki compilation, offline dreaming proposals, and learning observability. Enforcement remains audit-only until judge and operator approval are both present.
+Extend the current Hermes runtime learning work from advisory retrieval and policy audit into a complete, auditable learning framework. The first slice is a supervisor orchestration protocol that converts user/dashboard requests into Spec Kit-preserved work, memory packets, planner packets, worker delegation packets, validation reports, and session summaries. Follow-on slices are a fail-closed learning judge, a SQLite-backed runtime event bus, hybrid metadata/lexical/vector/graph retrieval, tiered memory retrieval, memory wiki compilation, offline dreaming proposals, and learning observability. Enforcement remains audit-only until judge and operator approval are both present.
 
 ## Technical Context
 
 **Language/Version**: Python 3.11+
 
-**Primary Dependencies**: Existing Hermes CLI modules, `sqlite3`, existing auxiliary model client, pytest, existing dashboard/backend patterns
+**Primary Dependencies**: Existing Hermes CLI modules, `sqlite3`, SQLite FTS5, optional local vector backend such as `sqlite-vec`, `sqlite-vss`, or LanceDB, existing auxiliary model client, pytest, existing dashboard/backend patterns
 
-**Storage**: Hermes `state.db` SQLite database, existing config YAML, future optional Redis/Kafka only after SQLite limits are proven
+**Storage**: Hermes `state.db` SQLite database, SQLite-backed metadata/graph/FTS indexes, optional local vector index, existing config YAML, future optional Redis/Kafka/vector DB only after SQLite/local limits are proven
 
 **Testing**: pytest focused unit and integration tests under `tests/hermes_cli/` and `tests/tools/`
 
@@ -24,7 +24,7 @@ Extend the current Hermes runtime learning work from advisory retrieval and poli
 
 **Performance Goals**: Foreground command/chat/delegation paths must not block on background learning jobs; retrieval must keep injected memory compact enough for prompt use
 
-**Constraints**: Non-trivial implementation work must go through Spec Kit unless explicitly skipped with recorded reason; fail-closed judge behavior; advisory/audit default; no secret storage in learned memory; no active enforcement without judge plus operator approval
+**Constraints**: Non-trivial implementation work must go through Spec Kit unless explicitly skipped with recorded reason; vector similarity never overrides hard metadata filters; fail-closed judge behavior; advisory/audit default; no secret storage in learned memory; no active enforcement without judge plus operator approval
 
 **Scale/Scope**: Single-node SQLite-first implementation supporting later migration to Redis Streams or Kafka
 
@@ -36,7 +36,7 @@ Extend the current Hermes runtime learning work from advisory retrieval and poli
 - Separation of learning layers: PASS. Data model preserves separate tables/records for raw events, candidates, decisions, memory, wiki, proposals, and policies.
 - Human-controlled enforcement: PASS. Enforcement mode is explicitly out of MVP and requires future operator approval.
 - Bounded background work: PASS. Event bus and jobs use leases, retries, intervals, and one-shot CLI execution; supervisor protocol uses explicit packets rather than hidden blocking work.
-- Testable runtime contracts: PASS. Every story includes JSON CLI/API contracts, packet schemas, runtime gates, and focused pytest coverage.
+- Testable runtime contracts: PASS. Every story includes JSON CLI/API contracts, packet schemas, retrieval-index contracts, runtime gates, and focused pytest coverage.
 
 ## Project Structure
 
@@ -71,6 +71,8 @@ hermes_cli/
 ├── learning_judge.py
 ├── memory_wiki.py
 ├── memory_dreaming.py
+├── memory_index.py
+├── memory_graph.py
 └── learning_jobs.py
 
 tools/
