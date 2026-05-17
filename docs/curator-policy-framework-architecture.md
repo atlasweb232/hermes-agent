@@ -158,6 +158,7 @@ deterministic gates:
 - existing candidates with terminal statuses such as `approved`, `applied`,
   `archived`, `rejected`, or `rolled_back` are not downgraded back to
   `proposed`
+- candidates need structured evidence before promotion or active retention
 - synthetic/test markers such as `Smoke:`, `retry-empty`, `loop forever`,
   `crashy`, and `prior #` are skipped
 - Kanban `task_outcome` records must be high-signal completed outcomes with a
@@ -175,7 +176,9 @@ supervisor:
     rollup_filters:
       curator_only_record_kinds:
         - tool_routing_lesson
+      require_evidence_for_candidates: true
       archive_invalid_proposed: true
+      archive_invalid_approved: true
       terminal_existing_statuses:
         - approved
         - applied

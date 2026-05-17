@@ -622,6 +622,53 @@ def test_reconcile_learning_candidates_skips_noisy_kanban_candidate(tmp_path, mo
         db.close()
 
 
+def test_reconcile_learning_candidates_requires_evidence(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_ready",
+            query="ready",
+            status="ready",
+            scopes=["global"],
+            claims_json=[],
+            evidence_json=[],
+            contradictions_json=[],
+            freshness_json={},
+            confidence=0.9,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_no_evidence",
+            kind="playbook",
+            claim="active candidate",
+            evidence_json={},
+            score=0.9,
+            status="proposed",
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            config={
+                "supervisor": {
+                    "learning": {
+                        "promotion": {"enabled": True, "min_score": 0.7, "min_ready_ratio": 0.1},
+                        "rollback": {"enabled": False},
+                        "rollup_filters": {},
+                    },
+                    "monitoring": {"enabled": True, "recent_runs": 20},
+                }
+            },
+        )
+
+        assert result.promoted == 0
+        assert result.metrics["promotion_skipped"]["quality_gate:missing_evidence"] == 1
+    finally:
+        db.close()
+
+
 def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -850,6 +897,32 @@ def test_candidate_housekeeping_archives_invalid_proposed_kanban_candidate(tmp_p
         assert result.archived == 1
         assert "quality gate failed" in result.items[0].reason
         assert db.get_meta_candidate("metacand_invalid_kanban")["status"] == "archived"
+    finally:
+        db.close()
+
+
+def test_candidate_housekeeping_archives_invalid_approved_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_invalid_approved",
+            kind="playbook",
+            claim="active candidate",
+            evidence_json={},
+            score=0.8,
+            status="approved",
+        )
+
+        result = run_candidate_housekeeping(
+            db,
+            config={"supervisor": {"learning": {"housekeeping": {}, "rollup_filters": {}}}},
+        )
+
+        assert result.archived == 1
+        assert result.items[0].reason == "quality gate failed: missing_evidence"
+        assert db.get_meta_candidate("metacand_invalid_approved")["status"] == "archived"
     finally:
         db.close()
 

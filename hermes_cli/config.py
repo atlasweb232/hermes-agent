@@ -588,7 +588,9 @@ DEFAULT_CONFIG = {
             # and must carry enough evidence to become reusable guidance.
             "rollup_filters": {
                 "curator_only_record_kinds": ["tool_routing_lesson"],
+                "require_evidence_for_candidates": True,
                 "archive_invalid_proposed": True,
+                "archive_invalid_approved": True,
                 "terminal_existing_statuses": [
                     "approved",
                     "applied",

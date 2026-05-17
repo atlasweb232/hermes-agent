@@ -426,6 +426,9 @@ def _candidate_quality_skip_reason(
     filters = _rollup_filter_policy(learning_policy)
     claim = str(candidate.get("claim") or "")
     evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    filters = _rollup_filter_policy(learning_policy)
+    if filters.get("require_evidence_for_candidates", True) and not evidence:
+        return "missing_evidence"
     evidence_text = json.dumps(evidence, ensure_ascii=False)
     combined = f"{claim} {evidence_text}"
     if _matches_any_pattern(combined, filters.get("synthetic_title_patterns") or []):
@@ -903,6 +906,9 @@ def run_candidate_housekeeping(
     archive_invalid_proposed = bool(
         _rollup_filter_policy(learning_policy).get("archive_invalid_proposed", True)
     )
+    archive_invalid_approved = bool(
+        _rollup_filter_policy(learning_policy).get("archive_invalid_approved", True)
+    )
 
     rows = db.list_meta_candidates(
         tenant_id=tenant_id,
@@ -964,7 +970,10 @@ def run_candidate_housekeeping(
             plan_archive(row, f"rejected candidate older than {rejected_ttl_days:g} days")
         elif status == "approved" and approved_ttl_days > 0 and age_days(row) >= approved_ttl_days:
             plan_archive(row, f"approved candidate older than {approved_ttl_days:g} days")
-        elif status == "proposed" and archive_invalid_proposed:
+        elif (
+            (status == "proposed" and archive_invalid_proposed)
+            or (status == "approved" and archive_invalid_approved)
+        ):
             quality_skip = _candidate_quality_skip_reason(row, learning_policy=learning_policy)
             if quality_skip:
                 plan_archive(row, f"quality gate failed: {quality_skip}")
