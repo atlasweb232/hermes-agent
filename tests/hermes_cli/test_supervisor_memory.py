@@ -146,6 +146,37 @@ def test_learning_rollup_creates_candidates(tmp_path, monkeypatch):
         db.close()
 
 
+def test_learning_rollup_skips_tool_routing_lessons_for_curator(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_record(
+            record_id="memrec_tool_routing",
+            kind="tool_routing_lesson",
+            title="Claude Code direct invocation works after worker-router failures",
+            body="worker-router claude failed and claude -p worked",
+            payload_json={"failed_path": "worker-router claude"},
+            status="active",
+            score=0.9,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        result = rollup_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+        )
+
+        assert result.status == "completed"
+        assert result.records_scanned == 1
+        assert result.candidates_created == 0
+        assert db.list_meta_candidates(repo_id="atlas-email-flutter", limit=10) == []
+    finally:
+        db.close()
+
+
 def test_learning_monitor_reports_metrics(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

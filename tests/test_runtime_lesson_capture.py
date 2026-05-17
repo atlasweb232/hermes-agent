@@ -100,7 +100,7 @@ def test_observer_counts_hermes_worker_router_wrapper_failures():
     assert lesson.evidence["working_command"] == 'claude -p "two plus two" --model sonnet'
 
 
-def test_persist_runtime_lesson_writes_memory_and_candidate(tmp_path):
+def test_persist_runtime_lesson_writes_memory_only(tmp_path):
     observer = RuntimeLessonObserver(min_failures=1)
     observer.observe(
         ToolOutcome(
@@ -123,11 +123,9 @@ def test_persist_runtime_lesson_writes_memory_and_candidate(tmp_path):
 
     assert capture["lesson_captured"] is True
     records = db.list_memory_records(kind="tool_routing_lesson", limit=5)
-    candidates = db.list_meta_candidates(kind="routing_hint", limit=5)
     assert records[0]["id"] == capture["record_id"]
     assert records[0]["payload_json"]["secret_safe"] is True
-    assert candidates[0]["id"] == capture["candidate_id"]
-    assert candidates[0]["status"] == "proposed"
+    assert db.list_meta_candidates(kind="routing_hint", limit=5) == []
 
 
 def test_append_lesson_capture_note_preserves_json_result():
@@ -135,7 +133,6 @@ def test_append_lesson_capture_note_preserves_json_result():
         json.dumps({"exit_code": 0, "stdout": "4"}),
         {
             "lesson_captured": True,
-            "candidate_id": "metacand_1",
             "record_id": "memrec_1",
             "kind": "routing_hint",
             "claim": "prefer direct claude",
@@ -145,6 +142,7 @@ def test_append_lesson_capture_note_preserves_json_result():
     parsed = json.loads(result)
     assert parsed["exit_code"] == 0
     assert parsed["runtime_lesson_capture"]["status"] == "captured"
+    assert "candidate_id" not in parsed["runtime_lesson_capture"]
 
 
 def test_agent_observer_hook_persists_lesson(tmp_path, monkeypatch):
@@ -183,4 +181,4 @@ def test_agent_observer_hook_persists_lesson(tmp_path, monkeypatch):
     parsed = json.loads(result)
     assert parsed["runtime_lesson_capture"]["status"] == "captured"
     assert db.list_memory_records(kind="tool_routing_lesson", limit=1)
-    assert db.list_meta_candidates(kind="routing_hint", limit=1)
+    assert db.list_meta_candidates(kind="routing_hint", limit=1) == []

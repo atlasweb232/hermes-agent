@@ -35,7 +35,6 @@ class ToolOutcome:
 
 @dataclass
 class RuntimeLesson:
-    candidate_id: str
     record_id: str
     kind: str
     claim: str
@@ -153,10 +152,10 @@ class RuntimeLessonObserver:
             'Prefer direct Claude Code invocation `claude --model sonnet -p "<prompt>"` '
             "when `worker-router claude` repeatedly fails on this machine."
         )
-        candidate_id = _stable_id("metacand", claim)
-        if candidate_id in self._emitted:
+        record_id = _stable_id("memrec", claim)
+        if record_id in self._emitted:
             return None
-        self._emitted.add(candidate_id)
+        self._emitted.add(record_id)
 
         failed_commands = [redact_sensitive_text(event.command, max_chars=300) for event in failures[-8:]]
         evidence = {
@@ -177,8 +176,7 @@ class RuntimeLessonObserver:
             "the worker-router wrapper is fixed."
         )
         return RuntimeLesson(
-            candidate_id=candidate_id,
-            record_id=_stable_id("memrec", claim),
+            record_id=record_id,
             kind="routing_hint",
             claim=claim,
             title="Claude Code direct invocation works after worker-router failures",
@@ -189,7 +187,13 @@ class RuntimeLessonObserver:
 
 
 def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
-    """Persist a lesson as both durable memory and a meta-learning candidate."""
+    """Persist a lesson as durable memory.
+
+    Curator policy candidates are generated later by `hermes curator policy-run`.
+    Runtime capture intentionally does not create ordinary meta-candidates,
+    because generic learning reconciliation may auto-promote those before the
+    curator validator has run.
+    """
     db.upsert_memory_record(
         record_id=lesson.record_id,
         kind="tool_routing_lesson",
@@ -198,19 +202,10 @@ def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
         payload_json=lesson.evidence,
         status="active",
         score=lesson.score,
-        evidence_uri=f"hermes:runtime-lesson:{lesson.candidate_id}",
-    )
-    db.upsert_meta_candidate(
-        candidate_id=lesson.candidate_id,
-        kind=lesson.kind,
-        claim=lesson.claim,
-        evidence_json=lesson.evidence,
-        score=lesson.score,
-        status="proposed",
+        evidence_uri=f"hermes:runtime-lesson:{lesson.record_id}",
     )
     return {
         "lesson_captured": True,
-        "candidate_id": lesson.candidate_id,
         "record_id": lesson.record_id,
         "kind": lesson.kind,
         "claim": lesson.claim,
@@ -223,7 +218,6 @@ def append_lesson_capture_note(result: Any, capture: dict[str, Any]) -> Any:
     note = {
         "runtime_lesson_capture": {
             "status": "captured",
-            "candidate_id": capture.get("candidate_id"),
             "record_id": capture.get("record_id"),
             "kind": capture.get("kind"),
             "claim": capture.get("claim"),

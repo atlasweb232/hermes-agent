@@ -334,6 +334,11 @@ def rollup_learning_candidates(
     seen: set[str] = set()
     candidate_payloads: list[dict[str, Any]] = []
     for record in records:
+        if record.get("kind") == "tool_routing_lesson":
+            # Runtime tool lessons are handled by the curator policy pass so
+            # they do not become generic routing hints/playbooks that can be
+            # auto-promoted before validation.
+            continue
         text = " ".join(
             str(part).strip()
             for part in (
