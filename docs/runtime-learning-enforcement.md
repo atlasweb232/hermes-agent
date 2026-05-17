@@ -8,6 +8,32 @@ This branch records how the VM Hermes runtime enforces the learning architecture
 - Runtime branch: `runtime-learning-enforcement`
 - Base learning port: `memory-framework-on-current-main`
 
+## Local Phase 10 Validation
+
+Local validation on branch `132-learning-memory-runtime` completed on
+2026-05-17 before VM deployment/smoke testing:
+
+```bash
+pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q
+# 92 passed
+
+pytest tests/hermes_cli/test_learning_*.py -q
+# 21 passed
+
+pytest tests/hermes_cli/test_runtime_*.py -q
+# 124 passed
+
+pytest tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py -q
+# 7 passed
+```
+
+Total focused Phase 10 local coverage: 244 tests passed.
+
+VM smoke validation is still pending. The VM sequence must verify the installed
+runtime binary, sidecar service, judge/curator config, memory retrieval,
+policy-audit behavior, dreaming status, supervisor control-plane recovery, and
+low-cost worker improvement tests after deployment.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:

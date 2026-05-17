@@ -288,10 +288,10 @@
 
 ## Phase 10: Polish And Integration
 
-- [ ] T092 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
-- [ ] T093 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
-- [ ] T094 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
-- [ ] T095 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
+- [x] T092 Run focused learning and policy tests: `pytest tests/hermes_cli/test_supervisor_memory.py tests/hermes_cli/test_policy_engine.py tests/hermes_cli/test_config.py -q`
+- [x] T093 Run new learning framework tests under `tests/hermes_cli/test_learning_*.py`
+- [x] T094 Run runtime orchestration tests under `tests/hermes_cli/test_runtime_*.py`
+- [x] T095 Run hybrid retrieval tests under `tests/hermes_cli/test_memory_index.py tests/hermes_cli/test_memory_graph.py tests/hermes_cli/test_memory_retrieval.py`
 - [ ] T096 Run VM smoke sequence for supervisor protocol, sidecar, judge, bus, retrieval, policy audit, dreaming, and supervisor control-plane recovery
 - [ ] T097 Update `docs/runtime-learning-enforcement.md` with implementation status and VM validation notes
 - [ ] T098 Push branch and record commit hashes for local and VM deployments
