@@ -11,6 +11,7 @@ from hermes_cli.supervisor_memory import (
     approve_meta_candidate,
     create_memory_packet,
     evaluate_memory_readiness,
+    memory_tier_for_candidate,
     monitor_learning,
     reject_meta_candidate,
     reconcile_learning_candidates,
@@ -94,6 +95,68 @@ def test_create_memory_packet_round_trip(tmp_path, monkeypatch):
         assert packets
         assert packets[0]["id"] == packet.packet_id
         assert packets[0]["claims_json"]
+    finally:
+        db.close()
+
+
+def test_memory_tiers_use_age_and_confidence(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    now = 1_000_000.0
+    config = {
+        "supervisor": {
+            "memory_tiers": {
+                "enabled": True,
+                "hot_ttl_seconds": 100,
+                "warm_min_confidence": 0.6,
+                "cold_min_confidence": 0.85,
+            }
+        }
+    }
+
+    assert memory_tier_for_candidate({"score": 0.7, "updated_at": now - 50}, config=config, now=now) == "hot"
+    assert memory_tier_for_candidate({"score": 0.7, "updated_at": now - 500}, config=config, now=now) == "warm"
+    assert memory_tier_for_candidate({"score": 0.9, "updated_at": now - 500}, config=config, now=now) == "cold"
+
+
+def test_retrieve_learning_context_honors_tenant_repo_scope(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_good_scope",
+            kind="routing_hint",
+            claim="Use direct claude after worker-router claude failures",
+            evidence_json={"failed_path": "worker-router claude", "working_path": "claude --model sonnet -p"},
+            score=0.95,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_bad_scope",
+            kind="routing_hint",
+            claim="Use unrelated claude memory",
+            evidence_json={"failed_path": "worker-router claude", "working_path": "claude other"},
+            score=0.99,
+            status="approved",
+            tenant_id="other",
+            repo_id="other-repo",
+        )
+
+        result = retrieve_learning_context(
+            db,
+            query="worker-router claude failed",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            config={"supervisor": {"learning": {"injection": {"enabled": True, "min_score": 0.5}}}},
+        )
+
+        ids = [candidate["id"] for candidate in result["candidates"]]
+        assert "metacand_good_scope" in ids
+        assert "metacand_bad_scope" not in ids
+        assert result["packet"]["header"].startswith("ADVISORY MEMORY ONLY")
     finally:
         db.close()
 

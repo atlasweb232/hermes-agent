@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from hermes_cli.policy_engine import evaluate_command_policy
+from hermes_cli.policy_engine import evaluate_command_policy, escalate_approved_memory_to_policy_candidate
 from hermes_state import SessionDB
 from tools.terminal_tool import terminal_tool
 
@@ -86,3 +86,31 @@ def test_terminal_tool_attaches_policy_audit_without_rewriting(tmp_path, monkeyp
     assert audit["effective_command"] == audit["original_command"]
     assert audit["matches"][0]["policy_type"] == "command_repair"
     assert audit["matches"][0]["action"] == "would_rewrite"
+
+
+def test_policy_escalation_from_approved_memory_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = SessionDB(db_path=home / "state.db")
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_escalate",
+            kind="routing_hint",
+            claim="Claude direct invocation works",
+            evidence_json={
+                "failed_path": "worker-router claude",
+                "working_path": "claude --model sonnet -p",
+            },
+            score=0.9,
+            status="approved",
+        )
+
+        policy_id = escalate_approved_memory_to_policy_candidate(db, memory_candidate_id="metacand_escalate")
+
+        assert policy_id == "curpol_metacand_escalate"
+        row = db.get_meta_candidate(policy_id)
+        assert row["kind"] == "command_repair_policy"
+        assert row["status"] == "proposed"
+        assert row["evidence_json"]["source_candidate_id"] == "metacand_escalate"
+    finally:
+        db.close()

@@ -968,6 +968,37 @@ def _candidate_matches_query(candidate: Dict[str, Any], query: str) -> bool:
     return any(token in candidate_tokens for token in tokens)
 
 
+def memory_tier_for_candidate(candidate: Dict[str, Any], *, config: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> str:
+    cfg = config or load_config()
+    tiers = (cfg.get("supervisor") or {}).get("memory_tiers") or {}
+    if not isinstance(tiers, dict) or tiers.get("enabled", True) is False:
+        return "warm"
+    evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    if evidence.get("tier") in {"hot", "warm", "cold"}:
+        return str(evidence["tier"])
+    score = float(candidate.get("score") or 0.0)
+    current = _now() if now is None else now
+    created = float(candidate.get("updated_at") or candidate.get("created_at") or current)
+    age = max(0.0, current - created)
+    if age <= float(tiers.get("hot_ttl_seconds", 86400) or 86400):
+        return "hot"
+    if score >= float(tiers.get("cold_min_confidence", 0.75) or 0.75):
+        return "cold"
+    return "warm" if score >= float(tiers.get("warm_min_confidence", 0.6) or 0.6) else "cold"
+
+
+def update_memory_candidate_feedback(
+    db: SessionDB,
+    *,
+    candidate_id: str,
+    outcome: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    from hermes_cli.memory_retrieval import record_memory_feedback
+
+    return record_memory_feedback(db, candidate_id=candidate_id, outcome=outcome, reason=reason)
+
+
 def retrieve_learning_context(
     db: SessionDB,
     *,
@@ -1002,6 +1033,83 @@ def retrieve_learning_context(
     min_score = float(injection.get("min_score", 0.6) or 0.6)
     max_chars = max(200, int(injection.get("max_chars", 2500) or 2500))
     require_match = bool(injection.get("require_match", True))
+    use_structured = bool(injection.get("structured_retrieval", True))
+
+    if use_structured:
+        from hermes_cli.memory_retrieval import (
+            build_memory_packet,
+            classify_task_query,
+            retrieve_memory_candidates,
+        )
+
+        task_query = classify_task_query(query, tenant_id=tenant_id, repo_id=repo_id)
+        result = retrieve_memory_candidates(
+            db,
+            query=task_query,
+            statuses=statuses,
+            limit=max_candidates,
+            min_score=min_score,
+        )
+        structured_skipped: Dict[str, int] = {}
+        for status in statuses:
+            for candidate in db.list_meta_candidates(
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+                status=status,
+                limit=max(max_candidates * 4, 20),
+            ):
+                quality_skip = _candidate_quality_skip_reason(
+                    candidate,
+                    learning_policy=learning,
+                )
+                if quality_skip:
+                    key = f"quality_gate:{quality_skip}"
+                    structured_skipped[key] = structured_skipped.get(key, 0) + 1
+        packet = build_memory_packet(
+            query=task_query,
+            candidates=result["candidates"],
+            max_chars=max_chars,
+        )
+        candidates = []
+        for item in result["candidates"]:
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+            candidates.append(
+                {
+                    "id": item.get("id"),
+                    "kind": item.get("kind"),
+                    "claim": item.get("claim"),
+                    "score": item.get("score"),
+                    "status": item.get("status"),
+                    "match": evidence.get("match"),
+                    "policy_type": evidence.get("policy_type"),
+                    "mode": evidence.get("mode"),
+                    "failed_path": evidence.get("failed_path"),
+                    "working_path": evidence.get("working_path"),
+                    "source_record_id": evidence.get("source_record_id") or evidence.get("record_id"),
+                    "evidence_uri": evidence.get("evidence_uri"),
+                    "features": item.get("features"),
+                    "tier": memory_tier_for_candidate(
+                        {"score": item.get("score"), "status": item.get("status"), "evidence_json": evidence},
+                        config=config,
+                    ),
+                }
+            )
+        return {
+            "status": "ready" if candidates else "empty",
+            "query": query,
+            "candidates": candidates,
+            "packet": packet,
+            "metrics": {
+                **result["audit"],
+                "returned": len(candidates),
+                "skipped": structured_skipped,
+                "statuses": statuses,
+                "min_score": min_score,
+                "max_candidates": max_candidates,
+                "max_chars": max_chars,
+                "require_match": require_match,
+            },
+        }
 
     selected: List[Dict[str, Any]] = []
     skipped: Dict[str, int] = {}

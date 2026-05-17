@@ -706,6 +706,12 @@ DEFAULT_CONFIG = {
                 "min_score": 0.6,
                 "max_chars": 2500,
                 "require_match": True,
+                "structured_retrieval": True,
+                "scope_penalty": 0.35,
+                "lexical_weight": 0.15,
+                "vector_backend": "disabled",
+                "graph_expansion_limit": 5,
+                "packet_top_k": 5,
             },
             # Promotion policy: candidates must clear these thresholds
             # before being auto-approved / auto-applied.

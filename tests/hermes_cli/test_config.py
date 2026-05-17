@@ -85,6 +85,9 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["rollup_filters"]["task_outcome"]["require_memory_packet"] is True
             assert config["supervisor"]["learning"]["injection"]["enabled"] is True
             assert config["supervisor"]["learning"]["injection"]["statuses"] == ["approved", "applied"]
+            assert config["supervisor"]["learning"]["injection"]["structured_retrieval"] is True
+            assert config["supervisor"]["learning"]["injection"]["vector_backend"] == "disabled"
+            assert config["supervisor"]["learning"]["injection"]["graph_expansion_limit"] == 5
             assert config["supervisor"]["policy_engine"]["enabled"] is True
             assert config["supervisor"]["policy_engine"]["mode"] == "audit"
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3

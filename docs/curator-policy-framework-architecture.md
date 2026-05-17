@@ -700,6 +700,29 @@ Every retrieval run should be auditable: query features, hard filters, lexical
 candidates, vector candidates, graph paths, final score features, and packet
 output are recorded for later inspection.
 
+The first implementation lands the local scaffolding:
+
+- `hermes_cli/memory_retrieval.py` classifies task queries, normalizes
+  candidate metadata, scores relevance, emits retrieval-run audit fields,
+  builds compact advisory packets, and records outcome feedback.
+- `hermes_cli/memory_index.py` stores local metadata and lexical/vector
+  placeholders in SQLite. Vector matching is disabled as a backend by default
+  and cannot bypass hard tenant, repo, status, or evidence filters.
+- `hermes_cli/memory_graph.py` stores node/edge relationships so later
+  retrieval can explain why a memory applies to a tenant, repo, tool, task
+  type, error signature, or success signature.
+- `retrieve_learning_context` now uses structured retrieval by default and
+  returns both compact candidates and a packet header that clearly marks memory
+  as advisory.
+
+Hot/warm/cold tiers are currently computed from candidate age and confidence.
+Hot means recent operational memory, warm means usable lower-confidence memory,
+and cold means durable high-confidence or old memory. Outcome feedback nudges
+candidate confidence up for helpful memory and down for irrelevant or harmful
+memory. Deterministic command-repair memories can be escalated into proposed
+policy candidates, but they still require judge/operator approval before
+runtime enforcement.
+
 ## Why This Shape
 
 One-off failure fixes do not scale. Hermes needs reusable machinery:

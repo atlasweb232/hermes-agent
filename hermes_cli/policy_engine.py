@@ -174,6 +174,41 @@ def evaluate_command_policy(
     )
 
 
+def escalate_approved_memory_to_policy_candidate(
+    db: SessionDB,
+    *,
+    memory_candidate_id: str,
+) -> Optional[str]:
+    """Create a deterministic command-repair policy candidate from approved memory."""
+    candidate = db.get_meta_candidate(memory_candidate_id)
+    if candidate is None or candidate.get("status") not in {"approved", "applied"}:
+        return None
+    evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    failed_path = str(evidence.get("failed_path") or "").strip()
+    working_path = str(evidence.get("working_path") or "").strip()
+    if not failed_path or not working_path:
+        return None
+    policy_id = f"curpol_{memory_candidate_id}"
+    db.upsert_meta_candidate(
+        candidate_id=policy_id,
+        kind="command_repair_policy",
+        claim=f"Advisory command repair policy: prefer {working_path} after {failed_path} failures",
+        evidence_json={
+            "policy_type": "command_repair",
+            "mode": "advisory",
+            "source_candidate_id": memory_candidate_id,
+            "failed_path": failed_path,
+            "working_path": working_path,
+            "validation": {"status": "valid", "eligible_for_approval": True, "errors": []},
+        },
+        score=float(candidate.get("score") or 0.0),
+        status="proposed",
+        tenant_id=candidate.get("tenant_id"),
+        repo_id=candidate.get("repo_id"),
+    )
+    return policy_id
+
+
 def compact_policy_metadata(decision: PolicyDecision) -> Optional[Dict[str, Any]]:
     if decision.status not in {"matched", "skipped"}:
         return None

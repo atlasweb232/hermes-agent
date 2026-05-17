@@ -232,6 +232,42 @@ def test_build_worker_context_injects_db_learning_context(kanban_home):
     assert "metacand_bad" not in ctx
 
 
+def test_build_worker_context_retrieved_learning_context_stays_budgeted_and_advisory(kanban_home):
+    cfg = load_config()
+    cfg.setdefault("supervisor", {}).setdefault("learning", {}).setdefault("injection", {})
+    cfg["supervisor"]["learning"]["injection"].update(
+        {
+            "enabled": True,
+            "max_candidates": 2,
+            "min_score": 0.1,
+            "max_chars": 500,
+            "structured_retrieval": True,
+        }
+    )
+    save_config(cfg)
+    memory_db = SessionDB()
+    try:
+        for idx in range(5):
+            memory_db.upsert_meta_candidate(
+                candidate_id=f"metacand_budget_{idx}",
+                kind="playbook",
+                claim="claude worker-router lesson " + ("x" * 300),
+                evidence_json={"failed_path": "worker-router claude", "working_path": "claude --model sonnet -p"},
+                score=0.9,
+                status="approved",
+            )
+    finally:
+        memory_db.close()
+
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="worker-router claude failed", body="ask claude")
+        ctx = kb.build_worker_context(conn, tid)
+
+    assert "Supervisor retrieved learning context" in ctx
+    assert "Use this as advisory memory only" in ctx
+    assert ctx.count("metacand_budget_") <= 2
+
+
 # ---------------------------------------------------------------------------
 # Task creation + status inference
 # ---------------------------------------------------------------------------
