@@ -67,6 +67,58 @@ def test_observability_lists_jobs_and_candidates_by_tenant_scope(tmp_path):
         db.close()
 
 
+def test_observability_lists_and_details_supervisor_task_ledger(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        from hermes_cli.supervisor_control_plane import (
+            create_task_ledger_entry,
+            record_worker_heartbeat,
+        )
+
+        create_task_ledger_entry(
+            db,
+            task_id="task_supervisor",
+            tenant_id="atlas",
+            repo_id="repo-a",
+            task_description="Recover a delegated migration task",
+            worker_id="codex",
+            spec_kit_refs=["specs/001-learning-memory-runtime/tasks.md"],
+            git_refs=["branch:132-learning-memory-runtime"],
+            metadata={"supervisor_packet_ref": "packet_1"},
+        )
+        record_worker_heartbeat(
+            db,
+            task_id="task_supervisor",
+            worker_id="codex",
+            status="failed",
+            progress_signature="same",
+            command_signature="pytest",
+            error_signature="AssertionError",
+        )
+
+        rows = list_observability_items(
+            db,
+            ObservabilityFilters(tenant_id="atlas", repo_id="repo-a", item_type="supervisor_task"),
+        )
+        assert [row.id for row in rows] == ["obs_supervisor_task_task_supervisor"]
+        assert rows[0].worker_id == "codex"
+
+        bundle = build_evidence_bundle(
+            db,
+            line_item_id="obs_supervisor_task_task_supervisor",
+            tenant_id="atlas",
+            repo_id="repo-a",
+        )
+        assert bundle.supervisor_packet_ref == "packet_1"
+        assert bundle.speckit_refs == ["specs/001-learning-memory-runtime/tasks.md"]
+        assert bundle.branch_refs == ["branch:132-learning-memory-runtime"]
+        assert bundle.event_refs[0]["kind"] == "worker_heartbeat"
+        assert bundle.validation_refs[0]["kind"] == "convergence_assessment"
+        assert bundle.raw_transcript_included is False
+    finally:
+        db.close()
+
+
 def test_observability_detail_and_ask_are_scoped_and_read_only(tmp_path):
     db = _make_db(tmp_path)
     try:

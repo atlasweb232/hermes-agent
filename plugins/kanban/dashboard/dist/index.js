@@ -1090,9 +1090,10 @@
           h(Select, Object.assign({
             value: itemType || "__all__",
           }, selectChangeHandler(function (v) { setItemType(v === "__all__" ? "" : v); })),
-            h(SelectOption, { value: "__all__" }, "Jobs + candidates"),
+            h(SelectOption, { value: "__all__" }, "All line items"),
             h(SelectOption, { value: "job" }, "Jobs"),
             h(SelectOption, { value: "candidate" }, "Candidates"),
+            h(SelectOption, { value: "supervisor_task" }, "Supervisor tasks"),
           ),
         ),
         h("label", null,

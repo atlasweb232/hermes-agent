@@ -195,6 +195,27 @@ def list_observability_items(db: SessionDB, filters: ObservabilityFilters) -> Li
             limit=filters.limit,
         )
         items.extend(_job_to_line_item(job) for job in jobs)
+    if filters.item_type in {None, "", "supervisor_task"} and not filters.job_type and not filters.candidate_kind:
+        try:
+            from hermes_cli.supervisor_control_plane import list_task_ledger_entries
+
+            tasks = list_task_ledger_entries(
+                db,
+                tenant_id=filters.tenant_id,
+                repo_id=filters.repo_id,
+                state=filters.status,
+                limit=filters.limit,
+            )
+        except Exception:
+            tasks = []
+        for task in tasks:
+            if filters.task_id and task.task_id != filters.task_id:
+                continue
+            if filters.worker_id and task.worker_id != filters.worker_id:
+                continue
+            item = _supervisor_task_to_line_item(task)
+            if _within_date_window(item.updated_at, filters.date_from, filters.date_to):
+                items.append(item)
     if filters.item_type in {None, "", "candidate"} and not filters.task_id and not filters.worker_id and not filters.job_type:
         try:
             candidates = db.list_meta_candidates(
@@ -253,6 +274,37 @@ def _candidate_to_line_item(candidate: Dict[str, Any]) -> ObservabilityLineItem:
     )
 
 
+def _supervisor_task_to_line_item(task: Any) -> ObservabilityLineItem:
+    blocker = None
+    if task.state in {"blocked", "reclaimed", "validation_failed", "needs_operator"}:
+        blocker = task.state
+    return ObservabilityLineItem(
+        id=f"obs_supervisor_task_{task.task_id}",
+        tenant_id=task.tenant_id,
+        repo_id=task.repo_id,
+        item_type="supervisor_task",
+        item_id=task.task_id,
+        task_id=task.task_id,
+        worker_id=task.worker_id,
+        title=_safe_text(task.task_description or f"Supervisor task {task.task_id}"),
+        status=task.state,
+        blocker=blocker,
+        completion_state="completed" if task.state == "completed" else ("failed" if task.state in {"abandoned", "validation_failed"} else task.state),
+        validation_state="unknown",
+        started_at=task.created_at,
+        updated_at=task.updated_at,
+        summary_json={
+            "worker_kind": task.worker_kind,
+            "lease_owner": task.lease_owner,
+            "lease_expires_at": task.lease_expires_at,
+            "heartbeat_at": task.heartbeat_at,
+            "retry_budget": task.retry_budget,
+            "retry_count": task.retry_count,
+            "metadata": _redacted_json(task.metadata_json),
+        },
+    )
+
+
 def _within_date_window(value: Optional[float], date_from: Optional[float], date_to: Optional[float]) -> bool:
     if value is None:
         return True
@@ -268,6 +320,8 @@ def _parse_line_item_id(line_item_id: str) -> tuple[str, str]:
         return "job", line_item_id[len("obs_job_") :]
     if line_item_id.startswith("obs_candidate_"):
         return "candidate", line_item_id[len("obs_candidate_") :]
+    if line_item_id.startswith("obs_supervisor_task_"):
+        return "supervisor_task", line_item_id[len("obs_supervisor_task_") :]
     raise ValueError(f"unsupported observability line item id: {line_item_id}")
 
 
@@ -281,6 +335,14 @@ def build_evidence_bundle(
     item_type, source_id = _parse_line_item_id(line_item_id)
     if item_type == "candidate":
         return _candidate_evidence_bundle(
+            db,
+            source_id=source_id,
+            line_item_id=line_item_id,
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+        )
+    if item_type == "supervisor_task":
+        return _supervisor_task_evidence_bundle(
             db,
             source_id=source_id,
             line_item_id=line_item_id,
@@ -317,6 +379,82 @@ def build_evidence_bundle(
         secret_safe=_secret_safe({"metrics": metrics, "error": error, "evidence": evidence}),
     )
     return bundle
+
+
+def _supervisor_task_evidence_bundle(
+    db: SessionDB,
+    *,
+    source_id: str,
+    line_item_id: str,
+    tenant_id: Optional[str],
+    repo_id: Optional[str],
+) -> ObservabilityEvidenceBundle:
+    from hermes_cli.supervisor_control_plane import (
+        assess_task_convergence,
+        get_task_ledger_entry,
+        list_worker_heartbeats,
+    )
+
+    task = get_task_ledger_entry(db, source_id)
+    if task is None:
+        raise ValueError(f"unknown supervisor task: {source_id}")
+    _assert_scope(task.tenant_id, task.repo_id, tenant_id=tenant_id, repo_id=repo_id)
+    heartbeats = list_worker_heartbeats(db, task_id=source_id, limit=10)
+    try:
+        assessment = assess_task_convergence(db, task_id=source_id).to_dict()
+    except Exception as exc:
+        assessment = {"status": "error", "error": str(exc)}
+    return ObservabilityEvidenceBundle(
+        id=f"obs_bundle_{uuid.uuid4().hex[:16]}",
+        tenant_id=task.tenant_id,
+        repo_id=task.repo_id,
+        task_id=task.task_id,
+        line_item_id=line_item_id,
+        task_description=_safe_text(task.task_description or f"supervisor task {source_id}"),
+        supervisor_packet_ref=task.metadata_json.get("supervisor_packet_ref"),
+        initial_assignment={
+            "worker_id": task.worker_id,
+            "worker_kind": task.worker_kind,
+            "lease_owner": task.lease_owner,
+            "lease_expires_at": task.lease_expires_at,
+        },
+        agent_refs=[
+            {
+                "kind": "worker",
+                "id": task.worker_id,
+                "worker_kind": task.worker_kind,
+                "heartbeat_at": task.heartbeat_at,
+            }
+        ] if task.worker_id else [],
+        speckit_refs=task.spec_kit_refs,
+        branch_refs=task.git_refs,
+        validation_refs=[
+            {
+                "kind": "convergence_assessment",
+                "id": f"assessment:{task.task_id}",
+                "status": assessment.get("status"),
+                "reasons": assessment.get("reasons", []),
+                "recommended_action": assessment.get("recommended_action"),
+            }
+        ],
+        memory_refs=[],
+        event_refs=[
+            {
+                "kind": "worker_heartbeat",
+                "id": hb.id,
+                "status": hb.status,
+                "worker_id": hb.worker_id,
+                "progress_signature": hb.progress_signature,
+                "command_signature": hb.command_signature,
+                "error_signature": hb.error_signature,
+                "created_at": hb.created_at,
+            }
+            for hb in heartbeats
+        ],
+        artifact_refs=[],
+        raw_transcript_included=False,
+        secret_safe=_secret_safe({"task": task.to_dict(), "heartbeats": [hb.to_dict() for hb in heartbeats]}),
+    )
 
 
 def _candidate_evidence_bundle(
