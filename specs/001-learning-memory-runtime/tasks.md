@@ -302,6 +302,12 @@
 
 **Independent Test**: Run the same branch-inspection, repair, and form-fill planning tasks with a low-cost worker model before and after memory/judge/sidecar injection. Verify fewer repeated mistakes, fewer failed tool calls, better validation evidence, bounded token use, and no unauthorized memory/policy/config mutation.
 
+**Cost Gate**: Do not add production infrastructure or LLM-backed sidecars before the persisted-lesson loop proves value. The required loop is: event signature -> local hot/warm lookup -> persisted approved global lesson retrieval -> compact advisory packet/pre-curation decision -> cheap worker attempt -> outcome feedback -> strong judge/operator only for promotion or enforcement.
+
+**Phase 11A Core Production Path**: Finish `T105D`, `T105E`, `T105F`, `T121`, `T122`, `T123`, `T124`, and `T125` before starting scale-out work.
+
+**Deferred Scale-Out Work**: Keep `T102`, `T103`, `T104`, `T105`, `T109`, `T110`, `T111`, and `T112` out of the immediate implementation path unless the core production path shows measurable value and a concrete deployment need.
+
 ### Tests for Production Runtime Surfaces
 
 - [ ] T099 [P] [US8] Add low-end model baseline eval fixtures for repeated command failure, branch triage, validation discipline, and worker handoff quality in `tests/hermes_cli/test_low_end_model_evals.py`
@@ -317,6 +323,7 @@
 - [ ] T105D [P] [US8] Add persisted global lesson storage/retrieval tests proving approved command-repair lessons are written to the configured global memory backend and read back through `retrieve_global_lessons_for_event(...)`, not injected as in-process test dictionaries
 - [ ] T105E [P] [US8] Add runtime pre-curation integration tests proving local curator/dreaming calls are skipped only when retrieved persisted lessons produce exact/near approved matches, and still run on storage miss, wrong tenant, secret, rejected, or stale lessons
 - [ ] T105F [P] [US8] Add live failure-learn smoke fixture proving a fresh Hermes task retrieves the stored Claude router failure lesson before repeating the old bad command loop
+- [ ] T105G [P] [US8] Add cost-budget tests proving retrieval/pre-curation uses programmatic logic by default, enforces top-k memory caps, estimates injected token budget, and does not call curator/judge/dreaming LLMs on exact persisted lesson hits
 
 ### Implementation for Production Runtime Surfaces
 
@@ -340,6 +347,9 @@
 - [ ] T123 [US8] Wire retrieved persisted global lessons into the pre-curation path before local curator and local dreaming, recording `global_lesson_hit`, `global_lesson_near_hit`, or `global_lesson_miss` as aggregate feedback without copying private local evidence globally
 - [ ] T124 [US8] Add CLI/API surfaces for operator testing: `hermes memory global lesson add/list/get`, `hermes memory global retrieve --event-json`, and JSON output suitable for backend/dashboard invocation
 - [ ] T125 [US8] Update VM smoke to persist the Claude router repair lesson in the real global memory backend, restart Hermes, run a fresh retrieval/pre-curation check, and then run a live Hermes task to verify the stored lesson is found before the old failure loop repeats
+- [ ] T126 [US8] Implement low-cost model routing budget policy: programmatic retrieval first, cheap model for lightweight confirmation/extraction only, strong model for judge/curator only when confidence is low or promotion/enforcement is requested
+- [ ] T127 [US8] Add minimal JSON observability for cost/value before frontend work: per-task memory hits, token estimate, skipped curator count, repeated-error count, worker model, outcome, and whether memory helped/ignored/hurt
+- [ ] T128 [US8] Audit SQLite learning/global bus queues before Kafka/Redpanda work: list queued/leased/consumed/dead events, drain one batch idempotently, verify replay safety, and document whether a dedicated consumer sidecar is required
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 
@@ -353,7 +363,7 @@
 - User Story 5 depends on approved memory from User Story 2 and retrieval/tier rules from User Story 4.
 - User Story 6 can begin after job records are available and should expand as each sidecar path lands.
 - User Story 7 depends on runtime packet schemas, learning jobs, event bus, and observability surfaces so stale/looping work can be audited and recovered.
-- User Story 8 depends on Phase 10 validation and should start with low-end model eval instrumentation before production backend scale-out.
+- User Story 8 depends on Phase 10 validation and must finish persisted lesson storage/retrieval plus cost-budget instrumentation before production backend scale-out.
 
 ## Parallel Opportunities
 
@@ -361,7 +371,7 @@
 - Supervisor control-plane tests can be developed in parallel after runtime packet schemas and learning job helpers are stable.
 - CLI contracts and docs can be updated in parallel with implementation after data-model fields stabilize.
 - Dashboard/backend observability can start once `learning_jobs.py` exposes stable JSON.
-- Low-end model eval fixtures, realtime voice adapters, global bus adapters, memory wiki backends, and training export tests can be developed in parallel because they share only config contracts and DTOs.
+- Low-end model eval fixtures and persisted lesson retrieval can be developed first. Realtime voice adapters, global bus adapters, production memory wiki backends, and training export tests are intentionally deferred until the core loop has measured value.
 
 ## Implementation Strategy
 
@@ -384,3 +394,20 @@
 8. Supervisor convergence control plane.
 9. Future enforcement mode only after audit evidence, judge approval, and operator approval.
 10. Production runtime surfaces and low-end model validation after Phase 10 smoke tests.
+
+### Phase 11A Immediate Order
+
+1. Persist and retrieve approved global lessons using SQLite/local storage.
+2. Wire persisted retrieval into pre-curation before local curator/dreaming.
+3. Add CLI/API operator surfaces for adding, listing, retrieving, and auditing global lessons.
+4. Add cost-budget counters and minimal JSON observability.
+5. Run VM restart smoke and live failure-learn smoke.
+6. Run low-end model before/after eval.
+
+### Phase 11B Deferred Order
+
+1. Resolve command-repair compact packet gap if live smoke shows prompt injection is required in addition to pre-curation.
+2. Audit and drain SQLite bus queues before adding Kafka/Redpanda.
+3. Add production bus/object/vector/graph adapters only when a multi-instance deployment requires them.
+4. Add training corpus export only after approved memory provenance is stable.
+5. Add realtime voice after runtime learning correctness is proven.

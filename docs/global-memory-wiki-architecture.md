@@ -136,6 +136,17 @@ Kafka/Redpanda is useful when:
 Kafka is overkill when there is one VM or one laptop. Start with the same bus
 interface and SQLite backend, then deploy Redpanda/Kafka for global operation.
 
+Before any Kafka/Redpanda work, the SQLite queue must prove:
+
+- queued, leased, consumed, and dead-letter counts are observable
+- one batch can be drained idempotently
+- replay does not duplicate canonical lessons
+- poison events move to dead-letter instead of blocking the worker
+- sidecar queues do not block foreground chat/delegation
+
+If the local SQLite bus cannot demonstrate these properties, adding Kafka will
+hide the failure behind infrastructure rather than fix it.
+
 ## Tiered Sidecar Model Deployment
 
 Global memory sidecars should not all use the same expensive reasoning model.
@@ -166,6 +177,54 @@ later to a local GPU-hosted model, should not require sidecar code changes.
 Operators can inspect and change the routing through `hermes config tiers
 --json`, `hermes config tier set <tier> ...`, `GET /api/model/tiers`, and
 `PUT /api/model/tiers/{tier}`.
+
+## Cost Budget Policy
+
+Token budget is a product requirement. The memory architecture exists to make
+cheaper workers more reliable, not to replace every worker failure with another
+expensive reasoning call.
+
+Default budget order:
+
+```text
+1. Programmatic:
+   signatures, hashes, simhash, hard filters, SQLite/FTS lookup, reuse metrics
+
+2. Cheap model:
+   bounded summarization, discussion capture, candidate extraction,
+   lightweight confirmation for near matches
+
+3. Strong model:
+   curator, judge, contradiction resolution, policy proposal, promotion review
+
+4. Operator:
+   global promotion, enforcement, export, config mutation
+```
+
+Required runtime counters:
+
+- memory lookup count
+- exact global lesson hit count
+- near global lesson hit count
+- skipped curator count
+- skipped dreaming count
+- LLM sidecar calls by role/model
+- estimated memory-packet tokens
+- repeated error signatures before/after memory
+- outcome feedback: helped, ignored, hurt
+
+Hard rules:
+
+- Exact approved persisted lesson hits must not call curator, judge, or dreaming
+  by default.
+- Near matches may use a cheap confirmation model only when programmatic
+  evidence is insufficient.
+- Strong judge/curator calls require low confidence, conflict, promotion,
+  enforcement, or explicit operator request.
+- Memory packet construction must enforce top-k and token caps before a worker
+  prompt is assembled.
+- Retrieval must fail closed on tenant/sensitivity/approval mismatches before
+  any semantic similarity score is considered.
 
 ## Event Topics
 
@@ -589,6 +648,12 @@ claim may be globally proposed only when evidence and approval support it.
 15. Add `retrieve_global_lessons_for_event(...)` and retrieval audits.
 16. Wire persisted retrieval into pre-curation before local curator/dreaming.
 17. Add live failure-lesson learn smoke after restart.
+18. Add cost/value observability for memory hits, token estimates, skipped
+    sidecars, repeated errors, and low-end worker outcomes.
+
+Do not implement production Kafka/Redpanda, production vector/graph backends,
+large training export, realtime voice, or a full dashboard until steps 14-18
+show measurable value on the VM.
 
 ## Production Scale-Out And Evaluation
 

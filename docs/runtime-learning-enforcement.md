@@ -161,6 +161,45 @@ Acceptance criteria:
 - Reuse feedback updates aggregate counters/confidence only.
 - No private local evidence is imported into global memory without approval.
 
+## Phase 11A Production Readiness Order
+
+The next production work should stay narrow until value is measured. The
+priority is not more infrastructure; it is proving that persisted memory makes
+lower-cost workers repeat fewer mistakes.
+
+Immediate order:
+
+1. Persist approved global lessons in the configured local SQLite/global memory
+   backend.
+2. Retrieve persisted lessons for runtime events with hard metadata filters
+   before any semantic matching.
+3. Wire retrieved lessons into pre-curation before local curator or dreaming.
+4. Add CLI/API JSON surfaces for operator testing and dashboard/backend use.
+5. Add cost/value counters: memory hit, near hit, miss, skipped curator,
+   skipped dreaming, estimated packet tokens, repeated error count, model used,
+   and outcome feedback.
+6. Run VM restart smoke with the Claude router lesson coming from durable
+   storage.
+7. Run a live Hermes task and verify the old command loop is avoided or
+   explicitly escalated.
+8. Run low-end model baseline vs memory-assisted eval.
+
+Deferred until the above passes:
+
+- Kafka/Redpanda production bus deployment.
+- Production object/vector/graph backend adapters.
+- Large training corpus export.
+- Realtime voice.
+- Full observability frontend beyond minimal JSON/status surfaces.
+
+Budget rule:
+
+- Exact persisted lesson hit: programmatic only; no curator, judge, dreaming, or
+  strong-model call by default.
+- Near persisted lesson hit: cheap confirmation only if needed.
+- Strong model: only for promotion, enforcement, contradiction, low confidence,
+  or explicit operator request.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:
