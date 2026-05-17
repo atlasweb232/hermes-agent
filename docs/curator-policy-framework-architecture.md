@@ -761,6 +761,79 @@ leases can be reclaimed after restart. Events that exceed retry limits move to
 This bus is intentionally not the memory wiki or dreaming layer. It is the
 durable event transport that those later layers can consume.
 
+## Tenant-Scoped Observability And Drilldown
+
+Observability must be tenant-scoped from the first implementation. A useful
+operator view is not just a raw job table; it is a filtered task/job ledger with
+line-item drilldown:
+
+```text
+tenant selector
+  -> repo filter
+  -> job/task list
+  -> line-item detail drawer
+  -> evidence bundle
+  -> optional read-only Ask analysis
+```
+
+The lean list view should show:
+
+- tenant
+- repo
+- job/task id
+- task description
+- status
+- active worker or agent
+- started and updated time
+- blocker
+- completion and validation state
+- last sidecar, judge, memory, wiki, dreaming, or policy status
+
+Opening a line item should lazy-load detail rather than bloating the list:
+
+```text
+Overview | Agents | Spec Kit | Memory | Validation | Events | Ask
+```
+
+The detail evidence bundle should include refs, not raw transcripts:
+
+- original task request or compact task summary
+- supervisor task packet
+- initial assignment and active/past agents
+- planner/Spec Kit refs: `spec.md`, `plan.md`, `tasks.md`, contracts,
+  quickstart, and architecture docs
+- branch, worktree, commit, and diff summary refs
+- worker delegation packets and worker results
+- validation commands, results, output hashes, and blockers
+- memory packet, approved memory, wiki claims, dreaming proposals, candidates,
+  and policy audit refs
+- sidecar events, learning jobs, recovery packets, and override actions
+- final/session summary when available
+
+The Ask tab is a scoped analysis feature, not a general chat. Its flow is:
+
+```text
+operator question about one line item
+  -> build tenant/repo/task-scoped evidence bundle
+  -> optionally query repo in read-only mode
+  -> call analysis LLM with compact evidence
+  -> return analytical answer with citations
+```
+
+Guardrails:
+
+- tenant and repo filters are mandatory unless the operator has explicit
+  cross-tenant permission
+- repository access is read-only by default
+- evidence bundles exclude raw logs, raw transcripts, and secret-looking values
+- answers must cite task ids, job ids, file refs, commit refs, validation refs,
+  memory ids, or event ids
+- the Ask path cannot mutate tasks, repo files, config, memory, wiki, dreaming
+  proposals, candidates, or policies
+
+This keeps the first dashboard lean while preserving the backend capability to
+answer analytical questions about a specific task or job.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

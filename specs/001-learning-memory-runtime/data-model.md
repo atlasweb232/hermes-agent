@@ -378,6 +378,61 @@ approved memory candidate, wiki update, or policy candidate.
 - `metrics_json`: counts and ratios
 - `error_json`: structured error if failed
 
+## ObservabilityLineItem
+
+- `id`: stable line item id
+- `tenant_id`: tenant scope
+- `repo_id`: repository scope
+- `item_type`: `task`, `job`, `candidate`, `decision`, `policy_audit`, or `override`
+- `item_id`: source record id
+- `task_id`: task scope, if known
+- `worker_id`: active or last worker, if known
+- `title`: compact task/job description
+- `status`: current status
+- `blocker`: current blocker summary, if any
+- `completion_state`: `not_started`, `running`, `blocked`, `failed`, `validated`, or `completed`
+- `validation_state`: `unknown`, `not_run`, `failed`, `passed`, or `blocked`
+- `started_at`, `updated_at`: timestamps
+- `summary_json`: redacted list-row metadata
+
+## ObservabilityEvidenceBundle
+
+- `id`: stable bundle id
+- `tenant_id`: tenant scope
+- `repo_id`: repository scope
+- `task_id`: task scope
+- `line_item_id`: source line item
+- `task_description`: original or summarized task request
+- `supervisor_packet_ref`: supervisor task packet id/path
+- `initial_assignment`: worker/model/branch/worktree assignment summary
+- `agent_refs`: active and historical planner/worker/reviewer ids
+- `speckit_refs`: spec, plan, tasks, contracts, quickstart, architecture docs
+- `branch_refs`: branch, worktree, commit, and diff summary refs
+- `validation_refs`: validation command/result refs and output hashes
+- `memory_refs`: memory packet, approved memory, wiki, dreaming, candidate, and policy refs
+- `event_refs`: bus events, job records, sidecar ticks, overrides, and recovery refs
+- `artifact_refs`: redacted links to logs, reports, screenshots, or summaries
+- `raw_transcript_included`: always false
+- `secret_safe`: boolean
+- `created_at`: timestamp
+
+## ScopedAnalysisRequest
+
+- `id`: stable analysis request id
+- `tenant_id`: tenant scope
+- `repo_id`: repository scope
+- `task_id`: task scope
+- `line_item_id`: target line item
+- `question`: operator question
+- `evidence_bundle_id`: source bundle
+- `repo_query_allowed`: boolean, false by default
+- `repo_query_mode`: `none` or `read_only`
+- `model`: analysis model/provider
+- `answer`: analytical response
+- `citations`: evidence refs used in the answer
+- `mutation_allowed`: always false
+- `created_at`: timestamp
+
 ## State Transitions
 
 - Runtime event: `pending -> processing -> consumed`

@@ -99,17 +99,20 @@ As the Hermes operator, I want stable lessons promoted into a memory wiki and of
 
 ### User Story 6 - Observe Runtime Learning (Priority: P6)
 
-As the Hermes operator, I want historical and active learning jobs visible by date, repo, task, worker, status, completions, blockers, and system overrides, so I can audit effectiveness and diagnose failures.
+As the Hermes operator, I want tenant-scoped historical and active learning jobs visible by date, repo, task, worker, status, completions, blockers, and system overrides, so I can audit effectiveness and diagnose failures without crossing tenant boundaries.
 
 **Why this priority**: Observability is required to trust the learning loop and evaluate whether it improves future sessions.
 
-**Independent Test**: Run sidecar, judge, wiki, dreaming, and housekeeping jobs; verify JSON CLI and backend endpoints expose active jobs, historical jobs, metrics, and failures.
+**Independent Test**: Run sidecar, judge, wiki, dreaming, and housekeeping jobs; verify JSON CLI and backend endpoints expose tenant/repo-filtered active jobs, historical jobs, line-item drilldown, evidence bundles, metrics, failures, and read-only scoped analysis.
 
 **Acceptance Scenarios**:
 
 1. **Given** active background jobs, **When** status is queried, **Then** each job reports owner, lease, progress, and last heartbeat.
 2. **Given** completed jobs, **When** history is queried by date and repo, **Then** results include counts, decisions, failures, and candidate changes.
 3. **Given** a blocked task, **When** observability data is requested, **Then** the current blocker and next recovery action are visible.
+4. **Given** a tenant and repo filter, **When** the job/task list is queried, **Then** only records in the requested scope are returned unless the operator has explicit cross-tenant permission.
+5. **Given** a job or task line item, **When** the operator opens detail, **Then** the response includes the original task description, supervisor packet, initial assignment, active/past agents, Spec Kit refs, architecture/task-list refs, memory packet, validation evidence, sidecar events, and blockers.
+6. **Given** an operator asks a question about one task, **When** the scoped analysis endpoint runs, **Then** the LLM receives only a compact read-only evidence bundle for that tenant/repo/task and returns an analytical answer with evidence links; it cannot mutate repo, config, memory, policy, or task state.
 
 ---
 
@@ -199,13 +202,18 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **FR-045**: System MUST expose CLI and backend-compatible JSON status for active jobs, historical jobs, candidates, decisions, and policy audits.
 - **FR-046**: System MUST expose housekeeping for stale, noisy, low-quality, duplicate, or invalid candidates without deleting audit history.
 - **FR-047**: System MUST document operator approval points, automated promotion points, and forbidden automatic actions.
-- **FR-048**: System MUST maintain a durable supervisor task ledger with task state, active worker, lease expiry, heartbeat, retry budget, validation status, Spec Kit refs, git/worktree refs, memory packet id, and recovery history.
-- **FR-049**: System MUST require workers to emit heartbeat/progress events for delegated work and MUST detect stale leases without waiting on the worker process.
-- **FR-050**: System MUST detect no-progress loops using repeated command/error signatures, unchanged git/test/progress state, retry count, elapsed time, and repeated invalid worker results.
-- **FR-051**: System MUST support supervisor override actions: interrupt, request status, pause, block, reclaim lease, summarize partial work, reassign worker, escalate planner/reviewer, and abandon with evidence.
-- **FR-052**: System MUST produce a recovery packet before reassignment that includes objective, original packet refs, worker history, partial diff/log summary, failed commands, validation failures, memory used, and next recommended action.
-- **FR-053**: System MUST keep `/goal` as an optional continuation controller only; `/goal` MUST NOT override task leases, validation gates, worker ownership, Spec Kit preservation, or supervisor reallocation policy.
-- **FR-054**: System MUST prevent task completion after reclaim/reassignment unless final validation evidence, git/spec preservation, and session summary are present.
+- **FR-048**: Observability list and detail endpoints MUST support tenant, repo, task, worker, status, date range, blocker, and job type filters.
+- **FR-049**: Observability MUST expose line-item detail bundles for jobs/tasks including task description, supervisor packet, initial assignment, planner/Spec Kit refs, worker packets, branch/worktree refs, validation evidence, memory/wiki/dreaming/candidate refs, events, overrides, and summaries.
+- **FR-050**: Observability MUST expose a read-only scoped analysis endpoint that builds a compact evidence bundle and optionally queries the repository in read-only mode before calling an LLM.
+- **FR-051**: The scoped analysis endpoint MUST be tenant/repo/task-scoped, must not include raw secrets, raw logs, or full transcripts, and MUST NOT mutate repo, config, task state, memory, wiki, dreaming proposals, candidates, or policies.
+- **FR-052**: Dashboard UI SHOULD remain lean initially: tenant selector, repo filter, job/task list, detail drawer, lazy-loaded evidence tabs, and an optional Ask tab backed by the read-only analysis endpoint.
+- **FR-053**: System MUST maintain a durable supervisor task ledger with task state, active worker, lease expiry, heartbeat, retry budget, validation status, Spec Kit refs, git/worktree refs, memory packet id, and recovery history.
+- **FR-054**: System MUST require workers to emit heartbeat/progress events for delegated work and MUST detect stale leases without waiting on the worker process.
+- **FR-055**: System MUST detect no-progress loops using repeated command/error signatures, unchanged git/test/progress state, retry count, elapsed time, and repeated invalid worker results.
+- **FR-056**: System MUST support supervisor override actions: interrupt, request status, pause, block, reclaim lease, summarize partial work, reassign worker, escalate planner/reviewer, and abandon with evidence.
+- **FR-057**: System MUST produce a recovery packet before reassignment that includes objective, original packet refs, worker history, partial diff/log summary, failed commands, validation failures, memory used, and next recommended action.
+- **FR-058**: System MUST keep `/goal` as an optional continuation controller only; `/goal` MUST NOT override task leases, validation gates, worker ownership, Spec Kit preservation, or supervisor reallocation policy.
+- **FR-059**: System MUST prevent task completion after reclaim/reassignment unless final validation evidence, git/spec preservation, and session summary are present.
 
 ### Key Entities
 
@@ -234,6 +242,9 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **Validation Report**: Supervisor-owned evidence that the work matches Spec Kit tasks, tests/logs, git diff, and user success criteria.
 - **Session Summary**: Durable summary of master instructions, decisions, delegation, validation, and memory outcome.
 - **Worktree Assignment**: Mapping between branch/worktree, agent, owned files, task scope, and cleanup state.
+- **Observability Line Item**: Tenant-scoped list row for a job/task with repo, status, worker, blocker, updated time, and completion/validation state.
+- **Observability Evidence Bundle**: Compact read-only detail packet for a job/task containing task metadata, packets, Spec Kit refs, events, validation, memory refs, and artifact pointers.
+- **Scoped Analysis Request**: Tenant/repo/task-scoped read-only LLM question over an evidence bundle and optional read-only repo query.
 - **Supervisor Task Ledger Entry**: Durable state record for task progress, lease, heartbeat, worker ownership, retry budget, validation, recovery, and reassignment.
 - **Worker Heartbeat**: Lightweight progress signal emitted by a worker or wrapper with timestamp, current action, progress markers, command/error signature, and optional git/test delta.
 - **Recovery Packet**: Reassignment-ready summary of original task, partial work, worker history, failed validation, blockers, and next recommended action.
@@ -255,9 +266,12 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **SC-010**: Supervisor completion is rejected in tests when validation evidence, git preservation, or session summary is missing.
 - **SC-011**: Vector retrieval cannot inject semantically similar memory that fails hard scope, status, evidence, or approval filters.
 - **SC-012**: Retrieval run audits explain why each injected memory item was selected, including metadata, lexical/vector/graph, and rerank contributions.
-- **SC-013**: Stale worker leases are reclaimed deterministically in tests without losing Spec Kit/git/task history.
-- **SC-014**: Repeated error/no-progress loops trigger recovery or reassignment before exhausting the task indefinitely.
-- **SC-015**: `/goal` continuation cannot mark reclaimed, blocked, or validation-failed work as complete.
+- **SC-013**: Tenant/repo filters prevent observability list, detail, and analysis endpoints from returning out-of-scope records in tests.
+- **SC-014**: Line-item detail bundles include task description, agents, initial assignment, Spec Kit refs, validation, memory refs, events, and blockers without raw transcripts.
+- **SC-015**: Scoped analysis answers cite evidence refs and cannot mutate repo, config, task state, memory, wiki, candidates, proposals, or policy.
+- **SC-016**: Stale worker leases are reclaimed deterministically in tests without losing Spec Kit/git/task history.
+- **SC-017**: Repeated error/no-progress loops trigger recovery or reassignment before exhausting the task indefinitely.
+- **SC-018**: `/goal` continuation cannot mark reclaimed, blocked, or validation-failed work as complete.
 
 ## Assumptions
 
