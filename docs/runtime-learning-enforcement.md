@@ -219,6 +219,53 @@ task metadata
   -> cheap worker
 ```
 
+## VM Phase 11A Persisted Lesson Smoke
+
+VM persisted global lesson validation completed on 2026-05-17.
+
+Deployment:
+
+- VM host: `52.4.43.41`
+- VM repo: `/home/rakib/.hermes/hermes-agent`
+- Branch: `132-learning-memory-runtime`
+- Commit deployed: `7e7e3434f`
+- Runtime version after editable reinstall: `Hermes Agent v0.14.0 (2026.5.16)`
+
+Smoke sequence:
+
+1. Persisted the Claude router repair lesson through CLI:
+   `hermes memory global lesson add --lesson-json ... --json`
+2. Retrieved the lesson from durable SQLite global memory:
+   `hermes memory global retrieve --event-json ... --json`
+3. Hydrated task memory:
+   `hermes memory global hydrate --event-json ... --json`
+4. Ran curator policy pass:
+   `hermes curator policy-run --json`
+5. Ran learning sidecar once and monitor checks.
+
+Results:
+
+- Global lesson `global-claude-router-repair` was stored durably.
+- Retrieval returned `exact_matches=1`, `returned=1`, and no rejected rows.
+- Hydration materialized one local hot-cache entry:
+  `ghot_b43927edc0c39ee8`.
+- Hydrated packet included one compact advisory item:
+  prefer direct `claude --model sonnet -p` after `worker-router claude`
+  failures.
+- Curator policy pass scanned one runtime routing lesson and skipped it:
+  `records_skipped=1`, `global_lesson_hit=1`, `candidates_created=0`.
+- This proves persisted memory suppressed an expensive curator path without a
+  strong-model call.
+- `hermes memory sidecar --once --json` completed.
+- `hermes memory monitor --json` remained `healthy`.
+
+Remaining validation:
+
+- Run an actual fresh `hermes chat`/worker task and verify the supervisor
+  receives the hydrated advisory packet before attempting the old command loop.
+- Audit the SQLite bus queue: sidecar reported queued events, so consumer drain
+  behavior still needs `T128`.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:
