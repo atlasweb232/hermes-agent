@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 import time
-from typing import Any, Dict, Iterable, List, Optional, Protocol
+from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Protocol, Sequence
 
 from hermes_state import SessionDB
 
@@ -217,6 +217,62 @@ class DiscussionSidecarDefinition:
         return asdict(self)
 
 
+@dataclass
+class DreamingSidecarDefinition:
+    name: str
+    scope: str
+    enabled: bool
+    llm_role: str
+    input_topic: str
+    output_topic: str
+    source: str
+    interval_seconds: int
+    timeout_seconds: int
+    lease_seconds: int
+    require_judge: bool
+    require_operator_approval: bool
+    allow_private_raw_logs: bool
+    mutates_runtime_state: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class GlobalPreCurationEvent:
+    event_id: str
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    task_type: str = ""
+    tool: str = ""
+    worker_kind: str = ""
+    failure_signature: str = ""
+    success_signature: str = ""
+    scope_signature: str = ""
+    evidence_signature: str = ""
+    normalized_text: str = ""
+    sensitivity: str = "internal"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class GlobalPreCurationDecision:
+    action: str
+    reason: str
+    metric: str
+    should_run_expensive_curator: bool
+    local_confirmation_required: bool = False
+    global_claim_id: Optional[str] = None
+    confidence: float = 0.0
+    matched_claim: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -414,6 +470,257 @@ def discussion_sidecar_definitions(config: Dict[str, Any]) -> List[DiscussionSid
             )
         )
     return result
+
+
+def dreaming_sidecar_definitions(config: Dict[str, Any]) -> List[DreamingSidecarDefinition]:
+    supervisor = (config or {}).get("supervisor") or {}
+    local_cfg = supervisor.get("dreaming") if isinstance(supervisor.get("dreaming"), dict) else {}
+    global_cfg = supervisor.get("global_dreaming") if isinstance(supervisor.get("global_dreaming"), dict) else {}
+
+    return [
+        DreamingSidecarDefinition(
+            name="local_dreaming",
+            scope="tenant_repo",
+            enabled=bool(local_cfg.get("enabled", False)),
+            llm_role="dreaming",
+            input_topic="memory.local.approved",
+            output_topic="memory.local.dreaming.proposed",
+            source=str(local_cfg.get("source") or "approved_local_memory"),
+            interval_seconds=int(local_cfg.get("interval_seconds") or 3600),
+            timeout_seconds=int(local_cfg.get("timeout_seconds") or 300),
+            lease_seconds=int(local_cfg.get("lease_seconds") or 300),
+            require_judge=bool(local_cfg.get("require_judge", True)),
+            require_operator_approval=bool(local_cfg.get("require_operator_approval", True)),
+            allow_private_raw_logs=bool(local_cfg.get("allow_private_raw_logs", False)),
+        ),
+        DreamingSidecarDefinition(
+            name="global_dreaming",
+            scope="global_redacted",
+            enabled=bool(global_cfg.get("enabled", False)),
+            llm_role="global_dreaming",
+            input_topic="memory.global.canonical.approved",
+            output_topic="memory.global.dreaming.proposed",
+            source=str(global_cfg.get("source") or "approved_shareable_global_memory"),
+            interval_seconds=int(global_cfg.get("interval_seconds") or 21600),
+            timeout_seconds=int(global_cfg.get("timeout_seconds") or 300),
+            lease_seconds=int(global_cfg.get("lease_seconds") or 600),
+            require_judge=bool(global_cfg.get("require_judge", True)),
+            require_operator_approval=bool(global_cfg.get("require_operator_approval", True)),
+            allow_private_raw_logs=bool(global_cfg.get("allow_private_raw_logs", False)),
+        ),
+    ]
+
+
+def _precuration_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    supervisor = (config or {}).get("supervisor") or {}
+    wiki = supervisor.get("global_memory_wiki") if isinstance(supervisor.get("global_memory_wiki"), dict) else {}
+    raw = wiki.get("precuration") if isinstance(wiki.get("precuration"), dict) else {}
+    defaults = {
+        "enabled": True,
+        "near_hamming_distance": 8,
+        "min_near_confidence": 0.75,
+        "skip_expensive_curator_on_exact": True,
+        "skip_expensive_curator_on_near": True,
+    }
+    defaults.update(raw)
+    return defaults
+
+
+def _as_precuration_event(event: GlobalPreCurationEvent | Dict[str, Any]) -> GlobalPreCurationEvent:
+    if isinstance(event, GlobalPreCurationEvent):
+        return event
+    data = dict(event or {})
+    return GlobalPreCurationEvent(
+        event_id=str(data.get("event_id") or data.get("id") or f"event_{stable_hash(data)[:16]}"),
+        tenant_id=str(data.get("tenant_id") or "") or None,
+        repo_id=str(data.get("repo_id") or "") or None,
+        task_type=str(data.get("task_type") or ""),
+        tool=str(data.get("tool") or ""),
+        worker_kind=str(data.get("worker_kind") or ""),
+        failure_signature=str(data.get("failure_signature") or ""),
+        success_signature=str(data.get("success_signature") or ""),
+        scope_signature=str(data.get("scope_signature") or ""),
+        evidence_signature=str(data.get("evidence_signature") or ""),
+        normalized_text=_normalize_text(str(data.get("normalized_text") or data.get("text") or data.get("claim") or "")),
+        sensitivity=str(data.get("sensitivity") or "internal"),
+        metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
+    )
+
+
+def _lesson_is_usable_for_event(event: GlobalPreCurationEvent, lesson: Dict[str, Any]) -> bool:
+    status = str(lesson.get("approval_state") or lesson.get("status") or "").lower()
+    if status not in {"approved", "canonical", "applied"}:
+        return False
+    sensitivity = str(lesson.get("sensitivity") or "").lower()
+    if sensitivity == "secret":
+        return False
+    lesson_tenant = str(lesson.get("tenant_id") or "")
+    shareable = bool(
+        lesson.get("cross_tenant_shareable")
+        or lesson.get("global_shareable")
+        or lesson.get("shareable")
+        or str(lesson.get("scope") or "").lower() == "global"
+    )
+    if lesson_tenant and event.tenant_id and lesson_tenant != event.tenant_id and not shareable:
+        return False
+    if sensitivity == "confidential" and lesson_tenant and event.tenant_id != lesson_tenant and not shareable:
+        return False
+    return True
+
+
+def _lesson_confidence(lesson: Dict[str, Any]) -> float:
+    try:
+        return float(lesson.get("confidence", lesson.get("score", 0.0)) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _exact_lesson_match(event: GlobalPreCurationEvent, lesson: Dict[str, Any]) -> bool:
+    for key in ("failure_signature", "success_signature", "scope_signature", "evidence_signature"):
+        event_value = str(getattr(event, key) or "")
+        lesson_value = str(lesson.get(key) or "")
+        if event_value and lesson_value and event_value == lesson_value:
+            return True
+    if event.normalized_text:
+        lesson_text_hash = str(lesson.get("text_hash") or "")
+        if lesson_text_hash and lesson_text_hash == text_hash(event.normalized_text):
+            return True
+    return False
+
+
+def _near_lesson_match(event: GlobalPreCurationEvent, lesson: Dict[str, Any], *, max_distance: int) -> bool:
+    if not event.normalized_text:
+        return False
+    lesson_simhash = str(lesson.get("simhash") or "")
+    if not lesson_simhash:
+        lesson_text = str(lesson.get("normalized_text") or lesson.get("claim") or "")
+        if not lesson_text:
+            return False
+        lesson_simhash = simple_simhash(lesson_text)
+    return hamming_distance_hex(simple_simhash(event.normalized_text), lesson_simhash) <= max_distance
+
+
+def should_curate_locally(
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    approved_global_lessons: Sequence[Dict[str, Any]],
+    *,
+    local_lessons: Optional[Sequence[Dict[str, Any]]] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> GlobalPreCurationDecision:
+    """Decide whether a local expensive curator should run for a runtime event.
+
+    This is intentionally deterministic and LLM-free. It lets hot/warm local
+    lessons and approved global lessons suppress duplicate curation before any
+    model-backed sidecar spends tokens.
+    """
+    cfg = _precuration_config(config)
+    evt = _as_precuration_event(event)
+    if not cfg.get("enabled", True):
+        return GlobalPreCurationDecision(
+            action="curate_locally",
+            reason="global pre-curation disabled",
+            metric="global_lesson_miss",
+            should_run_expensive_curator=True,
+        )
+
+    for lesson in local_lessons or []:
+        if str(lesson.get("tier") or "").lower() not in {"hot", "warm"}:
+            continue
+        if _lesson_is_usable_for_event(evt, lesson) and _exact_lesson_match(evt, lesson):
+            return GlobalPreCurationDecision(
+                action="skip_local_exact_hit",
+                reason="approved local hot/warm lesson already covers event",
+                metric="local_lesson_hit",
+                should_run_expensive_curator=False,
+                global_claim_id=str(lesson.get("id") or "") or None,
+                confidence=_lesson_confidence(lesson),
+                matched_claim=dict(lesson),
+            )
+
+    usable_global = [lesson for lesson in approved_global_lessons if _lesson_is_usable_for_event(evt, lesson)]
+    for lesson in usable_global:
+        if _exact_lesson_match(evt, lesson):
+            return GlobalPreCurationDecision(
+                action="skip_global_exact_hit",
+                reason="approved global lesson exactly covers event",
+                metric="global_lesson_hit",
+                should_run_expensive_curator=not bool(cfg.get("skip_expensive_curator_on_exact", True)),
+                global_claim_id=str(lesson.get("id") or "") or None,
+                confidence=_lesson_confidence(lesson),
+                matched_claim=dict(lesson),
+            )
+
+    max_distance = int(cfg.get("near_hamming_distance") or 8)
+    min_confidence = float(cfg.get("min_near_confidence") or 0.75)
+    for lesson in usable_global:
+        confidence = _lesson_confidence(lesson)
+        if confidence >= min_confidence and _near_lesson_match(evt, lesson, max_distance=max_distance):
+            return GlobalPreCurationDecision(
+                action="confirm_global_near_hit",
+                reason="approved global lesson is a near match; require lightweight local confirmation",
+                metric="global_lesson_near_hit",
+                should_run_expensive_curator=not bool(cfg.get("skip_expensive_curator_on_near", True)),
+                local_confirmation_required=True,
+                global_claim_id=str(lesson.get("id") or "") or None,
+                confidence=confidence,
+                matched_claim=dict(lesson),
+            )
+
+    return GlobalPreCurationDecision(
+        action="curate_locally",
+        reason="no approved local/global lesson matched event",
+        metric="global_lesson_miss",
+        should_run_expensive_curator=True,
+    )
+
+
+def record_global_lesson_reuse_metric(
+    metrics: MutableMapping[str, int],
+    metric: str,
+    amount: int = 1,
+) -> MutableMapping[str, int]:
+    allowed = {
+        "global_lesson_hit",
+        "global_lesson_near_hit",
+        "global_lesson_used",
+        "global_lesson_helped",
+        "global_lesson_ignored",
+        "global_lesson_hurt",
+        "global_lesson_miss",
+    }
+    if metric not in allowed:
+        raise ValueError(f"unsupported global lesson reuse metric: {metric}")
+    metrics[metric] = int(metrics.get(metric, 0)) + int(amount)
+    return metrics
+
+
+def update_global_lesson_reuse_feedback(
+    lesson: Dict[str, Any],
+    outcome: str,
+    *,
+    step: float = 0.02,
+) -> Dict[str, Any]:
+    """Return an updated lesson metadata copy after runtime feedback.
+
+    This never imports local private evidence. It only records aggregate reuse
+    counters and bounded confidence movement.
+    """
+    if outcome not in {"used", "helped", "ignored", "hurt"}:
+        raise ValueError(f"unsupported global lesson feedback outcome: {outcome}")
+    updated = dict(lesson or {})
+    stats = dict(updated.get("reuse_stats") or {})
+    record_global_lesson_reuse_metric(stats, f"global_lesson_{outcome}")
+    confidence = _lesson_confidence(updated)
+    if outcome == "helped":
+        confidence += step
+    elif outcome == "ignored":
+        confidence -= step / 2
+    elif outcome == "hurt":
+        confidence -= step * 2
+    updated["confidence"] = max(0.0, min(1.0, confidence))
+    updated["reuse_stats"] = stats
+    updated["last_reuse_feedback_at"] = _now()
+    return updated
 
 
 def ensure_discussion_memory_schema(db: SessionDB) -> None:

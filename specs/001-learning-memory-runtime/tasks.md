@@ -311,9 +311,9 @@
 - [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving idempotent publish/consume/replay/dead-letter behavior
 - [ ] T104 [P] [US8] Add training corpus export tests for JSONL/Parquet bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters
 - [ ] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
-- [ ] T105A [P] [US8] Add global pre-curation dedupe tests proving an exact approved global lesson suppresses local expensive curation, a near match creates only lightweight confirmation, and a miss allows local curation
-- [ ] T105B [P] [US8] Add global lesson reuse metric tests for `global_lesson_hit`, `global_lesson_near_hit`, `global_lesson_used`, `global_lesson_helped`, `global_lesson_ignored`, and `global_lesson_hurt`
-- [ ] T105C [P] [US8] Add local-vs-global dreaming tests proving local dreaming cannot publish globally, global dreaming reads only approved/shareable canonical memory, and neither path mutates live runtime state
+- [x] T105A [P] [US8] Add global pre-curation dedupe tests proving an exact approved global lesson suppresses local expensive curation, a near match creates only lightweight confirmation, and a miss allows local curation
+- [x] T105B [P] [US8] Add global lesson reuse metric tests for `global_lesson_hit`, `global_lesson_near_hit`, `global_lesson_used`, `global_lesson_helped`, `global_lesson_ignored`, and `global_lesson_hurt`
+- [x] T105C [P] [US8] Add local-vs-global dreaming tests proving local dreaming cannot publish globally, global dreaming reads only approved/shareable canonical memory, and neither path mutates live runtime state
 
 ### Implementation for Production Runtime Surfaces
 
@@ -328,9 +328,9 @@
 - [ ] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
 - [ ] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
-- [ ] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
-- [ ] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval
-- [ ] T119 [US8] Split local dreaming and global dreaming role/config/lease definitions so local dreaming stays tenant/repo scoped and global dreaming consumes only approved redacted global memory
+- [x] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
+- [x] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval
+- [x] T119 [US8] Split local dreaming and global dreaming role/config/lease definitions so local dreaming stays tenant/repo scoped and global dreaming consumes only approved redacted global memory
 - [ ] T120 [US8] Update VM smoke to include a duplicate-failure scenario where a global approved command-repair lesson suppresses local recuration and records a global lesson hit
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.

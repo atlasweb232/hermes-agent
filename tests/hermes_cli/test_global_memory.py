@@ -2,10 +2,12 @@ import pytest
 
 from hermes_cli.global_memory import (
     DiscussionMemoryRecord,
+    GlobalPreCurationEvent,
     approval_invocation_allowed,
     build_global_topic,
     build_idempotency_key,
     classify_dedupe,
+    dreaming_sidecar_definitions,
     discussion_sidecar_definitions,
     discussion_storage_config,
     fanout_canonical_claim_to_indexes,
@@ -13,6 +15,11 @@ from hermes_cli.global_memory import (
     get_global_memory_bus,
     normalize_proposal,
     publish_global_proposal,
+    record_global_lesson_reuse_metric,
+    should_curate_locally,
+    simple_simhash,
+    text_hash,
+    update_global_lesson_reuse_feedback,
     upsert_discussion_memory_record,
     validate_proposal,
 )
@@ -67,6 +74,7 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     assert wiki["require_global_approval"] is True
     assert bus["backend"] == "sqlite"
     assert bus["topic_prefix"] == "hermes.memory"
+    assert wiki["precuration"]["skip_expensive_curator_on_exact"] is True
 
 
 def test_discussion_memory_config_and_sidecars_exist(_isolate_hermes_home):
@@ -91,7 +99,7 @@ def test_model_roles_include_discussion_sidecars(_isolate_hermes_home):
     from hermes_cli.model_roles import role_names, get_model_role
 
     names = set(role_names())
-    assert {"discussion_capture", "claim_extractor", "wiki_compiler", "dreaming", "citation_validator"} <= names
+    assert {"discussion_capture", "claim_extractor", "wiki_compiler", "dreaming", "global_dreaming", "citation_validator"} <= names
     role = get_model_role(load_config(), "claim_extractor")
     assert role["path"] == "supervisor.sidecar_models.claim_extractor"
     assert role["tier"] == "low_cost_reasoning"
@@ -378,3 +386,155 @@ def test_approval_guard_accepts_separate_invocations_with_operator():
     )
 
     assert result.valid is True
+
+
+def test_should_curate_locally_skips_expensive_curator_on_exact_global_lesson():
+    event = GlobalPreCurationEvent(
+        event_id="evt-claude-router",
+        tenant_id="atlas",
+        failure_signature="cmd:worker-router:claude:parse-error",
+        normalized_text="worker-router claude fails but direct claude sonnet works",
+    )
+    lesson = {
+        "id": "global-lesson-1",
+        "status": "approved",
+        "scope": "global",
+        "sensitivity": "internal",
+        "failure_signature": "cmd:worker-router:claude:parse-error",
+        "confidence": 0.91,
+        "cross_tenant_shareable": True,
+    }
+
+    decision = should_curate_locally(event, [lesson])
+
+    assert decision.action == "skip_global_exact_hit"
+    assert decision.metric == "global_lesson_hit"
+    assert decision.should_run_expensive_curator is False
+    assert decision.global_claim_id == "global-lesson-1"
+
+
+def test_should_curate_locally_near_global_lesson_requires_lightweight_confirmation():
+    text = "worker router claude failed repeatedly then direct claude model sonnet print mode worked"
+    event = {
+        "event_id": "evt-near",
+        "tenant_id": "atlas",
+        "normalized_text": text,
+    }
+    lesson = {
+        "id": "global-lesson-near",
+        "status": "approved",
+        "scope": "global",
+        "sensitivity": "internal",
+        "simhash": simple_simhash(text),
+        "confidence": 0.88,
+        "cross_tenant_shareable": True,
+    }
+
+    decision = should_curate_locally(event, [lesson])
+
+    assert decision.action == "confirm_global_near_hit"
+    assert decision.metric == "global_lesson_near_hit"
+    assert decision.local_confirmation_required is True
+    assert decision.should_run_expensive_curator is False
+
+
+def test_should_curate_locally_allows_curator_on_miss_and_respects_sensitivity_scope():
+    event = {
+        "event_id": "evt-miss",
+        "tenant_id": "atlas",
+        "failure_signature": "cmd:codex:timeout",
+        "normalized_text": "codex timed out while planning a flutter migration",
+    }
+    unusable = {
+        "id": "private-other-tenant",
+        "status": "approved",
+        "tenant_id": "other",
+        "sensitivity": "confidential",
+        "failure_signature": "cmd:codex:timeout",
+        "confidence": 0.95,
+    }
+
+    decision = should_curate_locally(event, [unusable])
+
+    assert decision.action == "curate_locally"
+    assert decision.metric == "global_lesson_miss"
+    assert decision.should_run_expensive_curator is True
+
+
+def test_should_curate_locally_checks_local_hot_warm_before_global():
+    event = {
+        "event_id": "evt-local",
+        "tenant_id": "atlas",
+        "normalized_text": "branch triage should inspect diff before implementation",
+    }
+    local = {
+        "id": "local-hot-1",
+        "status": "approved",
+        "tier": "hot",
+        "tenant_id": "atlas",
+        "sensitivity": "internal",
+        "text_hash": text_hash("branch triage should inspect diff before implementation"),
+        "confidence": 0.8,
+    }
+
+    decision = should_curate_locally(event, [], local_lessons=[local])
+
+    assert decision.action == "skip_local_exact_hit"
+    assert decision.metric == "local_lesson_hit"
+    assert decision.should_run_expensive_curator is False
+
+
+def test_global_lesson_reuse_metrics_and_feedback_are_aggregate_only():
+    metrics = {}
+
+    for metric in [
+        "global_lesson_hit",
+        "global_lesson_near_hit",
+        "global_lesson_used",
+        "global_lesson_helped",
+        "global_lesson_ignored",
+        "global_lesson_hurt",
+    ]:
+        record_global_lesson_reuse_metric(metrics, metric)
+
+    assert metrics == {
+        "global_lesson_hit": 1,
+        "global_lesson_near_hit": 1,
+        "global_lesson_used": 1,
+        "global_lesson_helped": 1,
+        "global_lesson_ignored": 1,
+        "global_lesson_hurt": 1,
+    }
+
+    lesson = {"id": "global-lesson", "confidence": 0.5, "evidence_refs": ["global://redacted/ref"]}
+    helped = update_global_lesson_reuse_feedback(lesson, "helped")
+    hurt = update_global_lesson_reuse_feedback(helped, "hurt")
+
+    assert helped["confidence"] > lesson["confidence"]
+    assert hurt["confidence"] < helped["confidence"]
+    assert hurt["reuse_stats"]["global_lesson_helped"] == 1
+    assert hurt["reuse_stats"]["global_lesson_hurt"] == 1
+    assert hurt["evidence_refs"] == ["global://redacted/ref"]
+
+
+def test_local_and_global_dreaming_sidecars_are_separate_and_non_mutating(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+
+    cfg = load_config()
+    cfg["supervisor"]["dreaming"]["enabled"] = True
+    cfg["supervisor"]["global_dreaming"]["enabled"] = True
+    sidecars = {item.name: item for item in dreaming_sidecar_definitions(cfg)}
+
+    assert sidecars["local_dreaming"].scope == "tenant_repo"
+    assert sidecars["local_dreaming"].llm_role == "dreaming"
+    assert sidecars["local_dreaming"].source == "approved_local_memory"
+    assert sidecars["local_dreaming"].output_topic == "memory.local.dreaming.proposed"
+    assert sidecars["local_dreaming"].allow_private_raw_logs is False
+    assert sidecars["local_dreaming"].mutates_runtime_state is False
+
+    assert sidecars["global_dreaming"].scope == "global_redacted"
+    assert sidecars["global_dreaming"].llm_role == "global_dreaming"
+    assert sidecars["global_dreaming"].source == "approved_shareable_global_memory"
+    assert sidecars["global_dreaming"].output_topic == "memory.global.dreaming.proposed"
+    assert sidecars["global_dreaming"].allow_private_raw_logs is False
+    assert sidecars["global_dreaming"].mutates_runtime_state is False

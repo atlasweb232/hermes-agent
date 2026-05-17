@@ -112,7 +112,13 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "dreaming": {
         "path": ("supervisor", "sidecar_models", "dreaming"),
-        "description": "Offline proposal synthesis over approved wiki/memory evidence.",
+        "description": "Tenant/repo-scoped offline proposal synthesis over approved local wiki/memory evidence.",
+        "tier": "strong_reasoning",
+        "defaults": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 300},
+    },
+    "global_dreaming": {
+        "path": ("supervisor", "sidecar_models", "global_dreaming"),
+        "description": "Global offline proposal synthesis over approved redacted canonical memory only.",
         "tier": "strong_reasoning",
         "defaults": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 300},
     },
