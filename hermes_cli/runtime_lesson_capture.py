@@ -31,6 +31,7 @@ class ToolOutcome:
     result_excerpt: str = ""
     session_id: Optional[str] = None
     cwd: Optional[str] = None
+    duration_seconds: float = 0.0
 
 
 @dataclass
@@ -122,12 +123,39 @@ def _stable_id(prefix: str, claim: str) -> str:
     return f"{prefix}_{digest}"
 
 
+def _command_family(command: str) -> str:
+    """Return a coarse command family for generic supervisor telemetry.
+
+    The family deliberately avoids provider-specific rules. It groups wrapper
+    invocations by the first executable so repeated attempts through any router
+    or CLI can be detected without hardcoding every possible failure mode.
+    """
+    tokens = _command_tokens(command)
+    if not tokens:
+        return "unknown"
+    executable = tokens[0]
+    if executable in {"sudo", "env", "timeout", "time"} and len(tokens) > 1:
+        executable = tokens[1]
+    if executable == "hermes" and len(tokens) > 1:
+        return "hermes"
+    return executable
+
+
 class RuntimeLessonObserver:
     """Session-local detector for failure-to-success operational lessons."""
 
-    def __init__(self, *, min_failures: int = 3, max_events: int = 30):
+    def __init__(
+        self,
+        *,
+        min_failures: int = 3,
+        max_events: int = 30,
+        generic_min_failures: int = 5,
+        long_failure_seconds: float = 60.0,
+    ):
         self.min_failures = min_failures
         self.max_events = max_events
+        self.generic_min_failures = generic_min_failures
+        self.long_failure_seconds = long_failure_seconds
         self._events: list[ToolOutcome] = []
         self._emitted: set[str] = set()
 
@@ -137,9 +165,12 @@ class RuntimeLessonObserver:
         self._events.append(outcome)
         if len(self._events) > self.max_events:
             self._events = self._events[-self.max_events :]
-        if outcome.failed or not _is_successful_direct_claude(outcome.command):
-            return None
 
+        if outcome.failed or not _is_successful_direct_claude(outcome.command):
+            generic_lesson = self._observe_generic_supervisor_failure(outcome)
+            if generic_lesson is not None:
+                return generic_lesson
+            return None
         failures = [
             event
             for event in self._events
@@ -185,6 +216,123 @@ class RuntimeLessonObserver:
             evidence=evidence,
         )
 
+    def _observe_generic_supervisor_failure(self, outcome: ToolOutcome) -> Optional[RuntimeLesson]:
+        family = _command_family(outcome.command)
+        recent = self._events[-self.max_events :]
+        recent_failed_family = [
+            event
+            for event in recent
+            if event.failed and _command_family(event.command) == family
+        ]
+        long_failure = outcome.failed and float(outcome.duration_seconds or 0.0) >= self.long_failure_seconds
+        repeated_failure = outcome.failed and len(recent_failed_family) >= self.generic_min_failures
+        if long_failure or repeated_failure:
+            failure_commands = [
+                redact_sensitive_text(event.command, max_chars=300)
+                for event in recent_failed_family[-8:]
+            ]
+            claim = (
+                f"Supervisor observed a command-family failure loop for `{family}` "
+                "and must change strategy or request operator/judge review before claiming completion."
+            )
+            record_id = _stable_id("memrec", claim)
+            if record_id not in self._emitted:
+                self._emitted.add(record_id)
+                evidence = {
+                    "detector": "runtime_lesson_capture.generic_command_family_failure",
+                    "failure_type": "supervisor_tool_loop_failure",
+                    "command_family": family,
+                    "failure_count": len(recent_failed_family),
+                    "duration_seconds": float(outcome.duration_seconds or 0.0),
+                    "thresholds": {
+                        "generic_min_failures": self.generic_min_failures,
+                        "long_failure_seconds": self.long_failure_seconds,
+                    },
+                    "failed_commands": failure_commands,
+                    "last_result_excerpt": redact_sensitive_text(outcome.result_excerpt, max_chars=800),
+                    "session_id": outcome.session_id,
+                    "cwd": outcome.cwd,
+                    "secret_safe": True,
+                    "requires_judge": True,
+                    "operator_approval_required": True,
+                }
+                return RuntimeLesson(
+                    record_id=record_id,
+                    kind="supervisor_tool_loop_failure",
+                    claim=claim,
+                    title=f"Supervisor command-family loop detected: {family}",
+                    body=(
+                        "A terminal command family repeatedly failed or exceeded the long-running "
+                        "failure threshold. The supervisor must not continue repeating the same "
+                        "route or claim success without validated evidence."
+                    ),
+                    score=0.85 if long_failure else 0.75,
+                    evidence=evidence,
+                )
+
+        if outcome.failed:
+            return None
+
+        prior_failures = [
+            event
+            for event in recent[:-1]
+            if event.failed
+            and (
+                float(event.duration_seconds or 0.0) >= self.long_failure_seconds
+                or sum(
+                    1
+                    for candidate in recent[:-1]
+                    if candidate.failed and _command_family(candidate.command) == _command_family(event.command)
+                )
+                >= self.generic_min_failures
+            )
+        ]
+        if not prior_failures:
+            return None
+        failed_family = _command_family(prior_failures[-1].command)
+        if failed_family == family:
+            return None
+        claim = (
+            f"Supervisor switched from failed command family `{failed_family}` to `{family}`; "
+            "completion requires evidence that the new command satisfies the original task intent."
+        )
+        record_id = _stable_id("memrec", claim)
+        if record_id in self._emitted:
+            return None
+        self._emitted.add(record_id)
+        evidence = {
+            "detector": "runtime_lesson_capture.generic_evidence_mismatch",
+            "failure_type": "supervisor_evidence_mismatch",
+            "failed_command_family": failed_family,
+            "substitute_command_family": family,
+            "failure_count": sum(1 for event in recent[:-1] if event.failed and _command_family(event.command) == failed_family),
+            "failed_commands": [
+                redact_sensitive_text(event.command, max_chars=300)
+                for event in recent[:-1]
+                if event.failed and _command_family(event.command) == failed_family
+            ][-8:],
+            "substitute_command": redact_sensitive_text(outcome.command, max_chars=300),
+            "substitute_result_excerpt": redact_sensitive_text(outcome.result_excerpt, max_chars=800),
+            "session_id": outcome.session_id,
+            "cwd": outcome.cwd,
+            "secret_safe": True,
+            "requires_judge": True,
+            "operator_approval_required": True,
+        }
+        return RuntimeLesson(
+            record_id=record_id,
+            kind="supervisor_evidence_mismatch",
+            claim=claim,
+            title=f"Supervisor evidence mismatch: {failed_family} -> {family}",
+            body=(
+                "A supervisor route failed or timed out, then a different command family produced "
+                "a result. The result must be treated as unvalidated until an evidence gate proves "
+                "it satisfies the original task intent."
+            ),
+            score=0.9,
+            evidence=evidence,
+        )
+
 
 def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
     """Persist a lesson as durable memory.
@@ -194,9 +342,12 @@ def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
     because generic learning reconciliation may auto-promote those before the
     curator validator has run.
     """
+    record_kind = "tool_routing_lesson"
+    if lesson.kind in {"supervisor_tool_loop_failure", "supervisor_evidence_mismatch"}:
+        record_kind = "supervisor_runtime_failure"
     db.upsert_memory_record(
         record_id=lesson.record_id,
-        kind="tool_routing_lesson",
+        kind=record_kind,
         title=lesson.title,
         body=lesson.body,
         payload_json=lesson.evidence,

@@ -830,7 +830,7 @@ DEFAULT_CONFIG = {
             # specialized sidecars; task_outcome records are noisy by default
             # and must carry enough evidence to become reusable guidance.
             "rollup_filters": {
-                "curator_only_record_kinds": ["tool_routing_lesson"],
+                "curator_only_record_kinds": ["tool_routing_lesson", "supervisor_runtime_failure"],
                 "require_evidence_for_candidates": True,
                 "archive_invalid_proposed": True,
                 "archive_invalid_approved": True,

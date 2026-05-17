@@ -10988,6 +10988,7 @@ class AIAgent:
         function_args: dict,
         function_result,
         failed: bool,
+        duration_seconds: float = 0.0,
     ):
         """Capture deterministic runtime lessons from observed tool outcomes."""
         try:
@@ -11017,6 +11018,7 @@ class AIAgent:
                     result_excerpt=redact_sensitive_text(str(function_result or ""), max_chars=800),
                     session_id=getattr(self, "session_id", None),
                     cwd=str(function_args.get("workdir") or os.getenv("TERMINAL_CWD") or os.getcwd()),
+                    duration_seconds=float(duration_seconds or 0.0),
                 )
             )
             if lesson is None:
@@ -11463,7 +11465,7 @@ class AIAgent:
                     except Exception as _ver_err:
                         logging.debug("file-mutation verifier record failed: %s", _ver_err)
                     function_result = self._observe_runtime_lesson(
-                        function_name, function_args, function_result, is_error,
+                        function_name, function_args, function_result, is_error, tool_duration,
                     )
 
                 if not blocked and self.tool_progress_callback:
@@ -11900,7 +11902,7 @@ class AIAgent:
                 except Exception as _ver_err:
                     logging.debug("file-mutation verifier record failed: %s", _ver_err)
                 function_result = self._observe_runtime_lesson(
-                    function_name, function_args, function_result, _is_error_result,
+                    function_name, function_args, function_result, _is_error_result, tool_duration,
                 )
 
             if not _execution_blocked and self.tool_progress_callback:

@@ -52,10 +52,9 @@ Hermes captures only evidence-backed lessons observed from tool outcomes.
 
 5. `hermes_cli.runtime_lesson_capture`
 
-   Detects narrow failure-to-success patterns, redacts sensitive text, writes a
-   durable memory record, and writes a proposed meta-learning candidate. Curator
-   and learning sidecars may later consolidate or promote the candidate, but
-   initial capture does not depend on an LLM deciding to save memory.
+   Detects evidence-backed runtime failures, redacts sensitive text, and writes
+   durable memory records before curator/judge sidecars run. Initial capture
+   does not depend on an LLM deciding to save memory.
 
 ## Default Checks
 
@@ -147,8 +146,10 @@ it is clearly marked untrusted.
 
 ## Runtime Lesson Capture
 
-Hermes now captures operational lessons when tool evidence proves a reusable
-pattern. The first supported detector is intentionally narrow:
+Hermes captures operational lessons when tool evidence proves a reusable
+pattern.
+
+The specific command-repair detector remains intentionally narrow:
 
 ```text
 three or more failed terminal calls matching:
@@ -161,7 +162,6 @@ followed by a successful terminal call matching:
 When this happens, Hermes writes:
 
 - a `hermes_memory_records` row with kind `tool_routing_lesson`
-- a `hermes_meta_candidates` row with kind `routing_hint` and status `proposed`
 - a `runtime_lesson_capture` note appended to the terminal tool result
 
 The candidate claim is:
@@ -175,6 +175,33 @@ This makes the supervisor deterministic: the user does not have to ask Hermes to
 remember the lesson, and the curator is no longer responsible for first capture.
 The curator's job is later consolidation, dedupe, archival, or promotion.
 
+## Generic Supervisor Failure Capture
+
+The supervisor also records generic failure telemetry without provider-specific
+rules. These detectors classify terminal calls by command family and emit
+`hermes_memory_records(kind=supervisor_runtime_failure)` when either condition
+is observed:
+
+- a command family repeatedly fails or exceeds the long-failure threshold
+- a failed/long-running command family is followed by a successful unrelated
+  command family, meaning completion evidence may not match the original intent
+
+This is designed to catch failures like an external-worker route timing out and
+the supervisor answering with an unrelated local shortcut. The detector does not
+hardcode a provider or a command repair. It records:
+
+- failed command family
+- substitute command family, if any
+- duration and failure counts
+- redacted command/result excerpts
+- session and cwd metadata
+- `requires_judge=true`
+- `operator_approval_required=true`
+
+Curator and judge sidecars may later summarize the event, but capture is
+mandatory and deterministic. Agent-side capture should reuse the same event
+shape later; this slice applies it first to the supervisor runtime.
+
 ## Limitations
 
 - Repo inference is best-effort. Hermes detects absolute git repo paths in the
@@ -185,9 +212,9 @@ The curator's job is later consolidation, dedupe, archival, or promotion.
   Runtime lesson evidence is persisted to state DB. A future extension should
   persist completion-gate validation runs to state DB for dashboard and learning
   rollups.
-- Runtime lesson capture currently supports the Claude wrapper fallback pattern.
-  New detectors should require an explicit failure signature, an explicit
-  successful alternative, secret redaction, and unit tests.
+- Runtime lesson capture currently stores generic supervisor failures as memory
+  records only. Promotion into policy, global lessons, or enforcement still
+  requires curator/judge/operator gates.
 
 ## Why This Prevents The Observed Failure
 

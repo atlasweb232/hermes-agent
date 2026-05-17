@@ -143,6 +143,24 @@ tool outcome
 The runtime lesson is authoritative evidence. The curator output is a proposed
 interpretation of that evidence.
 
+Supervisor runtime failures use the same first-capture principle but a separate
+record kind:
+
+```text
+supervisor terminal outcome
+  -> generic command-family / evidence-mismatch detector
+  -> hermes_memory_records(kind=supervisor_runtime_failure)
+  -> curator/judge review
+  -> optional approved lesson, wiki entry, or policy candidate
+  -> operator approval before enforcement
+```
+
+This path is intentionally provider-agnostic. It does not encode a specific
+Claude, Codex, DeepSeek, MiniMax, or shell fix. It captures invariant violations:
+long or repeated command-family failure, route substitution, missing matching
+evidence, and potential false completion. Sidecars may interpret the event, but
+the runtime controller owns first capture.
+
 ## Generic Rollup Quality Gates
 
 Generic rollup is intentionally conservative. It should not turn every recent
@@ -151,8 +169,9 @@ memory row into active supervisor guidance.
 Before creating or updating a `hermes_meta_candidates` row, rollup applies these
 deterministic gates:
 
-- curator-only record kinds, such as `tool_routing_lesson`, are skipped and left
-  for specialized curator passes
+- curator-only record kinds, such as `tool_routing_lesson` and
+  `supervisor_runtime_failure`, are skipped and left for specialized curator and
+  judge passes
 - memory records with terminal statuses such as `archived`, `rejected`, or
   `rolled_back` are skipped
 - existing candidates with terminal statuses such as `approved`, `applied`,
@@ -176,6 +195,7 @@ supervisor:
     rollup_filters:
       curator_only_record_kinds:
         - tool_routing_lesson
+        - supervisor_runtime_failure
       require_evidence_for_candidates: true
       archive_invalid_proposed: true
       archive_invalid_approved: true

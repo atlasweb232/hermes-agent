@@ -356,6 +356,9 @@
 - [x] T129 [US8] Implement local hot-cache table/helpers for approved global lessons with compact text, signatures, confidence, TTL, last_used_at, reuse stats, source global lesson id, and tenant/repo/sensitivity gates
 - [x] T130 [US8] Implement task-start hydration helper: classify task metadata, read local hot cache, retrieve persisted global lessons on miss, materialize top-k into hot cache, and return a compact global/local advisory packet
 - [x] T131 [US8] Merge hydrated global hot-cache entries with local memory wiki/retrieval packets using strict token caps, source labels, evidence ids, and advisory wording so low-cost workers get the smallest useful context
+- [x] T131A [US8] Implement supervisor-side generic runtime failure capture for long/repeated command-family failures and evidence-mismatch substitutions, writing mandatory `supervisor_runtime_failure` memory records with judge/operator gates
+- [ ] T131B [US8] Extend the same generic runtime failure capture contract to delegated agents/workers so worker hallucinations, false completions, and route substitutions are captured before curator/judge sidecars run
+- [ ] T131C [US8] Add specialized curator/judge handling for `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
 
 ### Deferred Phase 11B Global Indexing And Sync Sidecars
 
