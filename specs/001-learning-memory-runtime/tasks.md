@@ -221,22 +221,22 @@
 
 ### Tests for User Story 7
 
-- [ ] T079 [P] [US7] Add supervisor task ledger schema tests in `tests/hermes_cli/test_supervisor_control_plane.py` covering task states, worker ownership, lease expiry, heartbeat, retry budget, Spec Kit refs, git refs, and recovery history
-- [ ] T080 [P] [US7] Add stale heartbeat and lease reclaim tests proving stale tasks are marked reclaimable without blocking on worker processes
-- [ ] T081 [P] [US7] Add loop/drift detector tests for repeated command/error signatures, unchanged git/test/progress state, invalid worker results, and retry budget exhaustion
-- [ ] T082 [P] [US7] Add recovery packet tests covering partial diff/log summaries, failed commands, validation failures, memory packet refs, and next-worker recommendations
-- [ ] T083 [P] [US7] Add `/goal` integration tests proving goal continuation cannot override reclaimed, blocked, validation-failed, or reassigned task state
+- [x] T079 [P] [US7] Add supervisor task ledger schema tests in `tests/hermes_cli/test_supervisor_control_plane.py` covering task states, worker ownership, lease expiry, heartbeat, retry budget, Spec Kit refs, git refs, and recovery history
+- [x] T080 [P] [US7] Add stale heartbeat and lease reclaim tests proving stale tasks are marked reclaimable without blocking on worker processes
+- [x] T081 [P] [US7] Add loop/drift detector tests for repeated command/error signatures, unchanged git/test/progress state, invalid worker results, and retry budget exhaustion
+- [x] T082 [P] [US7] Add recovery packet tests covering partial diff/log summaries, failed commands, validation failures, memory packet refs, and next-worker recommendations
+- [x] T083 [P] [US7] Add `/goal` integration tests proving goal continuation cannot override reclaimed, blocked, validation-failed, or reassigned task state
 
 ### Implementation for User Story 7
 
-- [ ] T084 [US7] Create `hermes_cli/supervisor_control_plane.py` with task ledger, heartbeat, lease, recovery packet, override action, and reassignment helpers
-- [ ] T085 [US7] Add SQLite tables for supervisor task ledger entries, worker heartbeats, recovery packets, and override actions
-- [ ] T086 [US7] Add progress evaluator and loop detector using heartbeat age, repeated signatures, git/test delta, invalid result count, elapsed time, and retry budget
-- [ ] T087 [US7] Add supervisor override actions: interrupt, request status, pause, block, reclaim, reassign, escalate, and abandon with audit records
-- [ ] T088 [US7] Add reallocation policy config for lease duration, heartbeat timeout, no-progress window, retry budget, worker fallback order, and escalation reviewer
-- [ ] T089 [US7] Add CLI/backend-compatible JSON surfaces for task ledger status, heartbeat list, recovery packets, and override actions
-- [ ] T090 [US7] Integrate `/goal` as optional continuation metadata only, ensuring supervisor ledger/validation/reassignment remains authoritative
-- [ ] T091 [US7] Update `docs/curator-policy-framework-architecture.md` with convergence workflow, `/goal` boundaries, override rules, and reassignment sequence
+- [x] T084 [US7] Create `hermes_cli/supervisor_control_plane.py` with task ledger, heartbeat, lease, recovery packet, override action, and reassignment helpers
+- [x] T085 [US7] Add SQLite tables for supervisor task ledger entries, worker heartbeats, recovery packets, and override actions
+- [x] T086 [US7] Add progress evaluator and loop detector using heartbeat age, repeated signatures, git/test delta, invalid result count, elapsed time, and retry budget
+- [x] T087 [US7] Add supervisor override actions: interrupt, request status, pause, block, reclaim, reassign, escalate, and abandon with audit records
+- [x] T088 [US7] Add reallocation policy config for lease duration, heartbeat timeout, no-progress window, retry budget, worker fallback order, and escalation reviewer
+- [x] T089 [US7] Add CLI/backend-compatible JSON surfaces for task ledger status, heartbeat list, recovery packets, and override actions
+- [x] T090 [US7] Integrate `/goal` as optional continuation metadata only, ensuring supervisor ledger/validation/reassignment remains authoritative
+- [x] T091 [US7] Update `docs/curator-policy-framework-architecture.md` with convergence workflow, `/goal` boundaries, override rules, and reassignment sequence
 
 **Checkpoint**: Stuck or drifting delegated work can be reclaimed and reassigned with evidence, and only supervisor validation can complete the task.
 

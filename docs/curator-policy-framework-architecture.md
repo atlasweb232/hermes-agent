@@ -861,6 +861,52 @@ Validation/Events are lazy evidence-bundle collections, and Ask is a separate
 read-only analysis response. This keeps observability cheap while leaving room
 for a richer UI later.
 
+## Supervisor Convergence Control Plane
+
+Long-running delegated work needs a supervisor-owned ledger that is more
+authoritative than worker transcripts, `/goal` continuation, or dashboard
+optimism. The control plane records:
+
+- task ledger entries with tenant, repo, state, worker, lease expiry, retry
+  budget, Spec Kit refs, git refs, and compact metadata
+- worker heartbeats with progress, command, error, git, and test signatures
+- recovery packets with failed commands, error signatures, validation failures,
+  memory packet refs, git refs, and next-worker recommendations
+- override actions with operator, reason, previous state, new state, and target
+  worker when reassigned
+
+The convergence workflow is:
+
+```text
+delegate task
+  -> create supervisor ledger entry
+  -> worker sends heartbeats
+  -> progress evaluator checks lease age, heartbeat age, repeated command/error
+     signatures, unchanged progress/git/test signatures, and retry budget
+  -> reclaimable assessment
+  -> recovery packet
+  -> operator or judge-approved override
+  -> pause/block/reclaim/reassign/escalate/abandon
+```
+
+The `/goal` loop is metadata only. It can suggest continuation, but it cannot
+override supervisor ledger states such as `reclaimed`, `blocked`,
+`validation_failed`, `reassigned`, or `abandoned`. Completion authority remains
+with the supervisor validation gate and the ledger state.
+
+The CLI surface is:
+
+- `hermes runtime control create --task-id ... --worker ... --json`
+- `hermes runtime control heartbeat --task-id ... --worker ... --json`
+- `hermes runtime control status [--task-id ...] --json`
+- `hermes runtime control assess --task-id ... --json`
+- `hermes runtime control recovery --task-id ... --reason ... --json`
+- `hermes runtime control override --task-id ... --action reclaim|reassign|... --json`
+
+This phase does not kill OS processes directly. It creates the deterministic
+record and approved recovery action that process managers, worker routers, or
+dashboard controls can consume safely.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

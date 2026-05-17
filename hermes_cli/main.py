@@ -11204,6 +11204,53 @@ Examples:
     runtime_validate.add_argument("--branch-name", required=True, help="Feature branch")
     runtime_validate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_control = runtime_sub.add_parser("control", help="Supervisor convergence control plane")
+    runtime_control_sub = runtime_control.add_subparsers(dest="runtime_control_command")
+    runtime_control_create = runtime_control_sub.add_parser("create", help="Create or update a task ledger entry")
+    runtime_control_create.add_argument("--task-id", default="", help="Task id")
+    runtime_control_create.add_argument("--tenant-id", default="", help="Tenant id")
+    runtime_control_create.add_argument("--repo-id", default="", help="Repository id")
+    runtime_control_create.add_argument("--description", default="", help="Task description")
+    runtime_control_create.add_argument("--worker", default="", help="Current worker")
+    runtime_control_create.add_argument("--worker-kind", default="worker", help="Worker kind")
+    runtime_control_create.add_argument("--lease-seconds", type=float, default=900.0)
+    runtime_control_create.add_argument("--retry-budget", type=int, default=3)
+    runtime_control_create.add_argument("--spec-ref", action="append", default=[])
+    runtime_control_create.add_argument("--git-ref", action="append", default=[])
+    runtime_control_create.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_heartbeat = runtime_control_sub.add_parser("heartbeat", help="Record a worker heartbeat")
+    runtime_control_heartbeat.add_argument("--task-id", required=True)
+    runtime_control_heartbeat.add_argument("--worker", required=True)
+    runtime_control_heartbeat.add_argument("--status", default="running")
+    runtime_control_heartbeat.add_argument("--progress", default="")
+    runtime_control_heartbeat.add_argument("--command", default="")
+    runtime_control_heartbeat.add_argument("--error", default="")
+    runtime_control_heartbeat.add_argument("--git-head", default="")
+    runtime_control_heartbeat.add_argument("--test", default="")
+    runtime_control_heartbeat.add_argument("--lease-seconds", type=float, default=900.0)
+    runtime_control_heartbeat.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_status = runtime_control_sub.add_parser("status", help="List or inspect supervisor task ledger")
+    runtime_control_status.add_argument("--task-id", default="")
+    runtime_control_status.add_argument("--tenant-id", default="")
+    runtime_control_status.add_argument("--repo-id", default="")
+    runtime_control_status.add_argument("--state", default="")
+    runtime_control_status.add_argument("--limit", type=int, default=50)
+    runtime_control_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_assess = runtime_control_sub.add_parser("assess", help="Assess convergence for a task")
+    runtime_control_assess.add_argument("--task-id", required=True)
+    runtime_control_assess.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_recovery = runtime_control_sub.add_parser("recovery", help="Create a recovery packet")
+    runtime_control_recovery.add_argument("--task-id", required=True)
+    runtime_control_recovery.add_argument("--reason", required=True)
+    runtime_control_recovery.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_control_override = runtime_control_sub.add_parser("override", help="Apply an audited supervisor override")
+    runtime_control_override.add_argument("--task-id", required=True)
+    runtime_control_override.add_argument("--action", required=True, choices=["interrupt", "request_status", "pause", "block", "reclaim", "reassign", "escalate", "abandon", "validation_failed"])
+    runtime_control_override.add_argument("--operator", default="operator")
+    runtime_control_override.add_argument("--reason", default="")
+    runtime_control_override.add_argument("--worker", default="")
+    runtime_control_override.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     def cmd_runtime(args):
         from hermes_cli.runtime_orchestrator import (
             create_planner_packet,
@@ -11334,6 +11381,94 @@ Examples:
                 "session_summary": summary.to_dict(),
                 "validation": validation.to_dict(),
             })
+            return
+        if cmd == "control":
+            from hermes_cli.config import load_config
+            from hermes_cli.supervisor_control_plane import (
+                apply_override_action,
+                assess_task_convergence,
+                create_recovery_packet,
+                create_task_ledger_entry,
+                get_task_ledger_entry,
+                list_task_ledger_entries,
+                record_worker_heartbeat,
+            )
+            from hermes_state import SessionDB
+
+            control_cmd = getattr(args, "runtime_control_command", None) or "status"
+            db = SessionDB()
+            try:
+                if control_cmd == "create":
+                    entry = create_task_ledger_entry(
+                        db,
+                        task_id=getattr(args, "task_id", "") or None,
+                        tenant_id=getattr(args, "tenant_id", "") or None,
+                        repo_id=getattr(args, "repo_id", "") or None,
+                        task_description=getattr(args, "description", "") or "",
+                        worker_id=getattr(args, "worker", "") or None,
+                        worker_kind=getattr(args, "worker_kind", "") or None,
+                        lease_owner=getattr(args, "worker", "") or None,
+                        lease_seconds=getattr(args, "lease_seconds", 900.0),
+                        retry_budget=getattr(args, "retry_budget", 3),
+                        spec_kit_refs=getattr(args, "spec_ref", []) or [],
+                        git_refs=getattr(args, "git_ref", []) or [],
+                    )
+                    _emit(entry.to_dict())
+                elif control_cmd == "heartbeat":
+                    heartbeat = record_worker_heartbeat(
+                        db,
+                        task_id=getattr(args, "task_id"),
+                        worker_id=getattr(args, "worker"),
+                        status=getattr(args, "status", "running"),
+                        progress_signature=getattr(args, "progress", "") or None,
+                        command_signature=getattr(args, "command", "") or None,
+                        error_signature=getattr(args, "error", "") or None,
+                        git_head=getattr(args, "git_head", "") or None,
+                        test_signature=getattr(args, "test", "") or None,
+                        lease_seconds=getattr(args, "lease_seconds", 900.0),
+                    )
+                    _emit(heartbeat.to_dict())
+                elif control_cmd == "assess":
+                    result = assess_task_convergence(
+                        db,
+                        task_id=getattr(args, "task_id"),
+                        config=load_config(),
+                    )
+                    _emit(result.to_dict())
+                elif control_cmd == "recovery":
+                    packet = create_recovery_packet(
+                        db,
+                        task_id=getattr(args, "task_id"),
+                        reason=getattr(args, "reason"),
+                        config=load_config(),
+                    )
+                    _emit(packet.to_dict())
+                elif control_cmd == "override":
+                    action = apply_override_action(
+                        db,
+                        task_id=getattr(args, "task_id"),
+                        action=getattr(args, "action"),
+                        operator=getattr(args, "operator", "operator"),
+                        reason=getattr(args, "reason", ""),
+                        worker_id=getattr(args, "worker", "") or None,
+                    )
+                    _emit(action.to_dict())
+                else:
+                    task_id = getattr(args, "task_id", "") or None
+                    if task_id:
+                        entry = get_task_ledger_entry(db, task_id)
+                        _emit(entry.to_dict() if entry else {"status": "missing", "task_id": task_id})
+                    else:
+                        rows = list_task_ledger_entries(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            state=getattr(args, "state", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        _emit([row.to_dict() for row in rows])
+            finally:
+                db.close()
             return
         print("  Use: hermes runtime task|speckit|delegate|validate\n")
 
