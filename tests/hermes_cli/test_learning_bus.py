@@ -45,6 +45,12 @@ def test_learning_bus_publish_consume_ack_round_trip(tmp_path):
         assert [item.id for item in leased.leased] == [event.id]
         assert leased.leased[0].status == "leased"
         assert leased.leased[0].attempts == 1
+        from hermes_cli.learning_jobs import list_learning_jobs
+
+        jobs = list_learning_jobs(db, job_type="learning_bus_consumer", owner="sidecar")
+        assert len(jobs) == 1
+        assert jobs[0].status == "completed"
+        assert jobs[0].metrics_json["leased"] == 1
 
         consumed = mark_learning_event_consumed(db, event.id)
         assert consumed is not None

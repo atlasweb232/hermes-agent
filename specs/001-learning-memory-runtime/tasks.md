@@ -196,12 +196,12 @@
 - [x] T071A [P] [US6] Add observability line-item and evidence-bundle tests in `tests/hermes_cli/test_observability.py` covering task description, initial assignment, agents, Spec Kit refs, validation refs, memory refs, event refs, blockers, and no raw transcript leakage
 - [x] T071B [P] [US6] Add scoped analysis tests in `tests/hermes_cli/test_observability.py` proving tenant/repo/task scope, read-only repo mode, evidence citations, and no mutation authority
 - [x] T072 [P] [US6] Add dashboard/backend API tests for tenant-scoped job/task list, line-item detail, evidence bundle, and Ask analysis endpoints in `tests/plugins/test_kanban_dashboard_observability.py`
-- [ ] T073 [P] [US6] Add sidecar metrics regression tests in `tests/hermes_cli/test_supervisor_memory.py`
+- [x] T073 [P] [US6] Add sidecar metrics regression tests in `tests/hermes_cli/test_supervisor_memory.py`
 
 ### Implementation for User Story 6
 
 - [x] T074 [US6] Add `hermes memory jobs list/status` CLI wiring in `hermes_cli/main.py`
-- [ ] T075 [US6] Record learning jobs for sidecar, judge, bus consumer, wiki, dreaming, housekeeping, and reconcile paths
+- [x] T075 [US6] Record learning jobs for sidecar, judge, bus consumer, wiki, dreaming, housekeeping, and reconcile paths
 - [x] T075A [US6] Create `hermes_cli/observability.py` for tenant-scoped line items, evidence bundles, filter DTOs, and read-only analysis request helpers
 - [x] T075B [US6] Add `hermes memory observe list/detail/ask --json` CLI surfaces for tenant-scoped list rows, line-item drilldown, and scoped read-only LLM analysis
 - [x] T076 [US6] Add backend endpoints for active jobs, historical jobs, candidates, decisions, policy audits, line-item detail, evidence bundles, and scoped analysis under `plugins/kanban/dashboard/`

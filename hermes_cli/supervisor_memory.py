@@ -24,6 +24,52 @@ def _now() -> float:
     return time.time()
 
 
+def _record_runtime_job(
+    db: SessionDB,
+    *,
+    job_type: str,
+    status: str = "running",
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    owner: str = "supervisor",
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    try:
+        from hermes_cli.learning_jobs import record_learning_job
+
+        return record_learning_job(
+            db,
+            job_type=job_type,
+            status=status,
+            owner=owner,
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            task_id=task_id,
+            metrics=metrics or {},
+        ).id
+    except Exception:
+        return None
+
+
+def _finish_runtime_job(
+    db: SessionDB,
+    job_id: Optional[str],
+    *,
+    status: str,
+    metrics: Optional[Dict[str, Any]] = None,
+    error: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not job_id:
+        return
+    try:
+        from hermes_cli.learning_jobs import update_learning_job
+
+        update_learning_job(db, job_id, status=status, metrics=metrics, error=error)
+    except Exception:
+        pass
+
+
 def _as_list(value: Optional[Iterable[str]]) -> List[str]:
     if value is None:
         return []
@@ -476,16 +522,25 @@ def rollup_learning_candidates(
     learning_policy = (config or load_config()).get("supervisor", {}).get("learning", {})
     if not isinstance(learning_policy, dict):
         learning_policy = {}
+    job_id = _record_runtime_job(
+        db,
+        job_type="learning_rollup",
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        metrics={"phase": "rollup"},
+    )
     if not learning_policy.get("enabled", True):
         run_id = f"learn_{uuid.uuid4().hex[:16]}"
+        disabled_metrics = {"reason": "learning disabled", "enabled": False}
         db.record_learning_run(
             run_id=run_id,
             tenant_id=tenant_id,
             repo_id=repo_id,
             status="disabled",
-            metrics_json={"reason": "learning disabled"},
+            metrics_json=disabled_metrics,
             notes="learning disabled in config",
         )
+        _finish_runtime_job(db, job_id, status="completed", metrics=disabled_metrics)
         return LearningRollupResult(
             run_id=run_id,
             status="disabled",
@@ -642,6 +697,7 @@ def rollup_learning_candidates(
         metrics_json=metrics,
         notes="learning rollup completed",
     )
+    _finish_runtime_job(db, job_id, status="completed", metrics=metrics)
     try:
         from hermes_cli.learning_bus import publish_learning_event_safely
 
@@ -732,6 +788,13 @@ def reconcile_learning_candidates(
         rollback_policy = {}
 
     run_id = f"policy_{uuid.uuid4().hex[:16]}"
+    job_id = _record_runtime_job(
+        db,
+        job_type="learning_reconcile",
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        metrics={"run_id": run_id, "phase": "policy_reconcile"},
+    )
     metrics = build_learning_metrics(
         db,
         tenant_id=tenant_id,
@@ -830,6 +893,16 @@ def reconcile_learning_candidates(
         },
         notes="learning policy reconciliation completed",
     )
+    job_metrics = {
+        "run_id": run_id,
+        "monitor": monitor.to_dict(),
+        "metrics": metrics,
+        "promoted": promoted,
+        "applied": applied,
+        "rolled_back": rolled_back,
+        "promotion_skipped": skipped,
+    }
+    _finish_runtime_job(db, job_id, status="completed", metrics=job_metrics)
     try:
         from hermes_cli.learning_bus import publish_learning_event_safely
 
@@ -1219,6 +1292,14 @@ def run_candidate_housekeeping(
     """Archive stale/noisy meta-candidates without blocking runtime execution."""
     policy = _candidate_housekeeping_policy(config)
     if policy.get("enabled", True) is False:
+        _record_runtime_job(
+            db,
+            job_type="housekeeping",
+            status="completed",
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            metrics={"reason": "housekeeping disabled", "dry_run": bool(dry_run)},
+        )
         return CandidateHousekeepingResult(
             status="disabled",
             scanned=0,
@@ -1230,6 +1311,13 @@ def run_candidate_housekeeping(
 
     now_ts = _now() if now is None else float(now)
     run_id = f"hk_{uuid.uuid4().hex[:16]}"
+    job_id = _record_runtime_job(
+        db,
+        job_type="housekeeping",
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        metrics={"run_id": run_id, "dry_run": bool(dry_run)},
+    )
     max_scan = max(1, int(policy.get("max_scan", 1000) or 1000))
     max_per_run = max(1, int(policy.get("max_candidates_per_run", 100) or 100))
     max_runtime_seconds = max(0.1, float(policy.get("max_runtime_seconds", 10) or 10))
@@ -1333,6 +1421,27 @@ def run_candidate_housekeeping(
     status = "completed" if not errors else "completed_with_errors"
     if dry_run:
         archived = 0
+    result_metrics = {
+        "run_id": run_id,
+        "planned": len(items),
+        "max_scan": max_scan,
+        "max_candidates_per_run": max_per_run,
+        "max_candidates_per_kind": max_candidates_per_kind,
+        "by_kind_status": by_kind_status,
+    }
+    _finish_runtime_job(
+        db,
+        job_id,
+        status="completed" if not errors else "failed",
+        metrics={
+            **result_metrics,
+            "scanned": len(rows),
+            "archived": archived,
+            "skipped": skipped,
+            "dry_run": bool(dry_run),
+        },
+        error={"errors": errors} if errors else None,
+    )
     return CandidateHousekeepingResult(
         status=status,
         scanned=len(rows),
@@ -1340,14 +1449,7 @@ def run_candidate_housekeeping(
         skipped=skipped,
         dry_run=bool(dry_run),
         items=items,
-        metrics={
-            "run_id": run_id,
-            "planned": len(items),
-            "max_scan": max_scan,
-            "max_candidates_per_run": max_per_run,
-            "max_candidates_per_kind": max_candidates_per_kind,
-            "by_kind_status": by_kind_status,
-        },
+        metrics=result_metrics,
         errors=errors,
     )
 
@@ -1396,10 +1498,19 @@ def run_learning_sidecar(
     dreaming_run_on_start = bool(dreaming_policy.get("run_on_start", False))
     last_housekeeping_at = 0.0
     last_dreaming_at = 0.0 if dreaming_run_on_start else _now()
+    sidecar_job_id: Optional[str] = None
     while True:
         tick_errors: List[str] = []
         try:
             with contextlib.closing(db_factory()) as db:
+                if sidecar_job_id is None:
+                    sidecar_job_id = _record_runtime_job(
+                        db,
+                        job_type="learning_sidecar",
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        metrics={"interval_seconds": float(interval_seconds), "once": bool(once)},
+                    )
                 rollup = rollup_fn(
                     db,
                     tenant_id=tenant_id,
@@ -1537,6 +1648,23 @@ def run_learning_sidecar(
             if once:
                 break
     status = "completed" if not errors else "completed_with_errors"
+    try:
+        with contextlib.closing(db_factory()) as db:
+            _finish_runtime_job(
+                db,
+                sidecar_job_id,
+                status="completed" if not errors else "failed",
+                metrics={
+                    "ticks": ticks,
+                    "errors": len(errors),
+                    "interval_seconds": float(interval_seconds),
+                    "once": bool(once),
+                    "last_tick": last_tick.to_dict() if last_tick is not None else None,
+                },
+                error={"errors": errors} if errors else None,
+            )
+    except Exception:
+        pass
     return LearningSidecarResult(
         status=status,
         ticks=ticks,

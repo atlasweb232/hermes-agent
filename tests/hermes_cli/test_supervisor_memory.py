@@ -1190,3 +1190,51 @@ def test_cli_candidates_list_hides_archived_by_default(tmp_path, monkeypatch, ca
     ids = {row["id"] for row in rows}
     assert "metacand_visible" in ids
     assert "metacand_archived" not in ids
+
+
+def test_learning_sidecar_records_jobs_and_metrics(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+
+    def factory() -> SessionDB:
+        return SessionDB(db_path=home / "state.db")
+
+    result = run_learning_sidecar(
+        factory,
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+        config={
+            "supervisor": {
+                "learning": {
+                    "enabled": True,
+                    "housekeeping": {"enabled": True, "interval_seconds": 1},
+                },
+                "monitoring": {"enabled": True, "recent_runs": 20},
+                "dreaming": {"enabled": False},
+            }
+        },
+        interval_seconds=1,
+        once=True,
+    )
+
+    assert result.status == "completed"
+    assert result.last_tick is not None
+    assert result.last_tick.bus["status"] == "ok"
+    assert result.last_tick.housekeeping["metrics"]["run_id"].startswith("hk_")
+    assert result.metrics["ticks"] == 1
+
+    from hermes_cli.learning_jobs import list_learning_jobs
+
+    db = factory()
+    try:
+        jobs = list_learning_jobs(db, tenant_id="atlas", repo_id="hermes-agent", limit=20)
+        job_types = {job.job_type for job in jobs}
+        assert {
+            "learning_sidecar",
+            "learning_rollup",
+            "learning_reconcile",
+            "housekeeping",
+        }.issubset(job_types)
+        assert all(job.status == "completed" for job in jobs)
+    finally:
+        db.close()

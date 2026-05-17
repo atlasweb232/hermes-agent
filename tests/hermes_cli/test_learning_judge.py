@@ -150,6 +150,13 @@ def test_learning_judge_approves_and_rejects_candidates(tmp_path, monkeypatch):
         rejected = db.get_meta_candidate("metacand_reject")
         assert rejected["status"] == "rejected"
         assert "learning judge rejected" in rejected["evidence_json"]["reason"]
+        from hermes_cli.learning_jobs import list_learning_jobs
+
+        jobs = list_learning_jobs(db, tenant_id="atlas", repo_id="hermes-agent", job_type="learning_judge")
+        assert len(jobs) == 1
+        assert jobs[0].status == "completed"
+        assert jobs[0].metrics_json["approved"] == 1
+        assert jobs[0].metrics_json["rejected"] == 1
     finally:
         db.close()
 

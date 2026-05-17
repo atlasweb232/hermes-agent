@@ -268,6 +268,21 @@ def run_learning_judge(
         config = load_config()
     judge_config = load_learning_judge_config(config)
     run_id = f"judge_{uuid.uuid4().hex[:16]}"
+    job_id = None
+    try:
+        from hermes_cli.learning_jobs import record_learning_job
+
+        job_id = record_learning_job(
+            db,
+            job_type="learning_judge",
+            status="running",
+            owner="judge",
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            metrics={"run_id": run_id, "provider": judge_config.provider, "model": judge_config.model},
+        ).id
+    except Exception:
+        job_id = None
     if not judge_config.enabled:
         result = LearningJudgeRunResult(
             run_id=run_id,
@@ -287,6 +302,13 @@ def run_learning_judge(
             metrics_json=result.to_dict(),
             notes="learning judge disabled",
         )
+        try:
+            from hermes_cli.learning_jobs import update_learning_job
+
+            if job_id:
+                update_learning_job(db, job_id, status="completed", metrics=result.to_dict())
+        except Exception:
+            pass
         return result
 
     caller = model_call or call_learning_judge_model
@@ -396,4 +418,17 @@ def run_learning_judge(
         metrics_json=result.to_dict(),
         notes="learning judge completed",
     )
+    try:
+        from hermes_cli.learning_jobs import update_learning_job
+
+        if job_id:
+            update_learning_job(
+                db,
+                job_id,
+                status="completed" if not errors else "failed",
+                metrics=result.to_dict(),
+                error={"errors": errors} if errors else None,
+            )
+    except Exception:
+        pass
     return result

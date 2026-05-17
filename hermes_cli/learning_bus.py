@@ -268,6 +268,25 @@ def consume_learning_events(
     now: Optional[float] = None,
 ) -> LearningBusConsumeResult:
     ensure_learning_bus_schema(db)
+    job_id = None
+    try:
+        from hermes_cli.learning_jobs import record_learning_job
+
+        topic_list = [str(topic) for topic in (topics or []) if str(topic or "").strip()]
+        job_id = record_learning_job(
+            db,
+            job_type="learning_bus_consumer",
+            status="running",
+            owner=consumer,
+            metrics={
+                "consumer": consumer,
+                "topics": topic_list,
+                "limit": max(1, int(limit)),
+                "lease_seconds": float(lease_seconds or 300.0),
+            },
+        ).id
+    except Exception:
+        job_id = None
     current = _now() if now is None else now
     params: List[Any] = [current]
     topic_clause = _eligible_topic_clause(topics, params)
@@ -317,7 +336,28 @@ def consume_learning_events(
         refreshed = get_learning_event(db, event.id)
         if refreshed is not None:
             leased.append(refreshed)
-    return LearningBusConsumeResult(consumer=consumer, leased=leased, dead_lettered=dead_lettered)
+    result = LearningBusConsumeResult(consumer=consumer, leased=leased, dead_lettered=dead_lettered)
+    try:
+        from hermes_cli.learning_jobs import update_learning_job
+
+        if job_id:
+            tenant_ids = sorted({event.tenant_id for event in leased if event.tenant_id})
+            repo_ids = sorted({event.repo_id for event in leased if event.repo_id})
+            update_learning_job(
+                db,
+                job_id,
+                status="completed",
+                metrics={
+                    "consumer": consumer,
+                    "leased": len(leased),
+                    "dead_lettered": len(dead_lettered),
+                    "tenant_ids": tenant_ids,
+                    "repo_ids": repo_ids,
+                },
+            )
+    except Exception:
+        pass
+    return result
 
 
 def mark_learning_event_consumed(db: SessionDB, event_id: str, *, now: Optional[float] = None) -> Optional[LearningBusEvent]:
