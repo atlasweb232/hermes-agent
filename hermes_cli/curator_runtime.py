@@ -82,6 +82,7 @@ class CuratorRunResult:
     candidates: list[CuratorPolicyCandidate] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
+    precuration: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -338,12 +339,36 @@ def run_curator_policy_pass(
     )
     candidates: list[CuratorPolicyCandidate] = []
     errors: list[str] = []
+    precuration_metrics: dict[str, Any] = {
+        "enabled": True,
+        "records_skipped": 0,
+        "global_lesson_hit": 0,
+        "global_lesson_near_hit": 0,
+        "global_lesson_miss": 0,
+        "decisions": [],
+    }
     caller = model_call or call_curator_model
 
     for record in records:
         score = float(record.get("score") or 0.0)
         if score < curator_config.min_score:
             continue
+        precuration = _run_record_precuration(
+            db,
+            record,
+            config=config,
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+        )
+        if precuration is not None:
+            decision = precuration.get("decision") or {}
+            metric = str(decision.get("metric") or "")
+            if metric:
+                precuration_metrics[metric] = int(precuration_metrics.get(metric, 0)) + 1
+            precuration_metrics["decisions"].append(precuration)
+            if decision.get("should_run_expensive_curator") is False:
+                precuration_metrics["records_skipped"] += 1
+                continue
         prompt = build_command_repair_prompt(record)
         try:
             output = caller(curator_config, prompt)
@@ -386,7 +411,58 @@ def run_curator_policy_pass(
         candidates=candidates,
         errors=errors,
         config=curator_config.to_dict(),
+        precuration=precuration_metrics,
     )
+
+
+def _run_record_precuration(
+    db: Any,
+    record: dict[str, Any],
+    *,
+    config: Optional[dict[str, Any]],
+    tenant_id: Optional[str],
+    repo_id: Optional[str],
+) -> Optional[dict[str, Any]]:
+    try:
+        from hermes_cli.global_memory import run_persisted_global_precuration
+    except Exception:
+        return None
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    failed_path = str(payload.get("failed_path") or "")
+    working_path = str(payload.get("working_path") or "")
+    event = {
+        "event_id": str(record.get("id") or ""),
+        "tenant_id": tenant_id or record.get("tenant_id"),
+        "repo_id": repo_id or record.get("repo_id"),
+        "task_type": "worker_routing",
+        "tool": failed_path.split()[0] if failed_path else "",
+        "worker_kind": failed_path,
+        "failure_signature": str(payload.get("failure_signature") or (f"path:{failed_path}" if failed_path else "")),
+        "success_signature": str(payload.get("success_signature") or (f"path:{working_path}" if working_path else "")),
+        "scope_signature": str(payload.get("scope_signature") or ""),
+        "evidence_signature": str(payload.get("evidence_signature") or record.get("evidence_sha256") or record.get("evidence_uri") or ""),
+        "normalized_text": " ".join(
+            part
+            for part in [
+                str(record.get("title") or ""),
+                str(record.get("body") or ""),
+                failed_path,
+                working_path,
+            ]
+            if part
+        ),
+    }
+    try:
+        result = run_persisted_global_precuration(
+            db,
+            event,
+            config=config,
+            limit=3,
+            record_feedback=True,
+        )
+        return result.to_dict()
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "record_id": record.get("id")}
 
 
 def _candidate_claim(record: dict[str, Any]) -> str:

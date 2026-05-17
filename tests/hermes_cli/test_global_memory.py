@@ -18,6 +18,7 @@ from hermes_cli.global_memory import (
     publish_global_proposal,
     record_global_lesson_reuse_metric,
     retrieve_global_lessons_for_event,
+    run_persisted_global_precuration,
     should_curate_locally,
     simple_simhash,
     text_hash,
@@ -666,5 +667,166 @@ def test_retrieve_global_lessons_rejects_wrong_tenant_secret_rejected_and_retire
         assert "rejected" not in rejected
         assert "retired" not in rejected
         assert result.audit.considered == 2
+    finally:
+        db.close()
+
+
+def test_persisted_global_precuration_records_hit_and_updates_reuse_stats(tmp_path):
+    db = _db(tmp_path)
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "global-hit",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Prefer direct Claude after worker-router failures.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+            },
+        )
+
+        result = run_persisted_global_precuration(
+            db,
+            {
+                "event_id": "evt-hit",
+                "tenant_id": "atlas",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+            },
+        )
+        stored = retrieve_global_lessons_for_event(
+            db,
+            {
+                "event_id": "evt-hit-2",
+                "tenant_id": "atlas",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+            },
+        ).lessons[0]
+
+        assert result.decision.action == "skip_global_exact_hit"
+        assert result.metrics["global_lesson_hit"] == 1
+        assert stored["reuse_stats"]["global_lesson_hit"] == 1
+    finally:
+        db.close()
+
+
+def test_curator_policy_pass_skips_model_on_persisted_exact_global_lesson(tmp_path):
+    from hermes_cli.curator_runtime import CuratorConfig, run_curator_policy_pass
+
+    db = _db(tmp_path)
+    try:
+        db.upsert_memory_record(
+            record_id="memrec_claude",
+            kind="tool_routing_lesson",
+            title="Claude Code direct invocation works after worker-router failures",
+            body="Use direct Claude Code invocation until worker-router is fixed.",
+            payload_json={
+                "failed_path": "worker-router claude",
+                "working_path": "claude --model sonnet -p",
+                "failure_signature": "path:worker-router claude",
+                "success_signature": "path:claude --model sonnet -p",
+            },
+            status="active",
+            score=0.9,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            evidence_uri="hermes:runtime-lesson:memrec_claude",
+        )
+        persist_global_lesson(
+            db,
+            {
+                "id": "global-claude-router",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "path:worker-router claude",
+                "success_signature": "path:claude --model sonnet -p",
+                "normalized_text": "Prefer direct Claude invocation after worker-router failures.",
+                "confidence": 0.93,
+                "cross_tenant_shareable": True,
+            },
+        )
+        calls = []
+
+        def model_call(_cfg: CuratorConfig, prompt: str) -> str:
+            calls.append(prompt)
+            return "{}"
+
+        result = run_curator_policy_pass(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            config={"supervisor": {"curator": {"enabled": True, "max_records": 5, "min_score": 0.5}}},
+            model_call=model_call,
+        )
+
+        assert result.status == "completed"
+        assert calls == []
+        assert result.candidates_created == 0
+        assert result.precuration["records_skipped"] == 1
+        assert result.precuration["global_lesson_hit"] == 1
+    finally:
+        db.close()
+
+
+def test_curator_policy_pass_calls_model_on_persisted_miss(tmp_path):
+    from hermes_cli.curator_runtime import CuratorConfig, run_curator_policy_pass
+
+    db = _db(tmp_path)
+    try:
+        db.upsert_memory_record(
+            record_id="memrec_codex",
+            kind="tool_routing_lesson",
+            title="Codex timed out",
+            body="Codex timed out while planning a migration.",
+            payload_json={
+                "failed_path": "codex",
+                "working_path": "codex --model gpt-5.5",
+                "failure_signature": "path:codex",
+            },
+            status="active",
+            score=0.9,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            evidence_uri="hermes:runtime-lesson:memrec_codex",
+        )
+        persist_global_lesson(
+            db,
+            {
+                "id": "wrong-tenant",
+                "approval_state": "approved",
+                "scope": "tenant",
+                "visibility": "global_candidate",
+                "sensitivity": "confidential",
+                "tenant_id": "other",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "path:codex",
+                "normalized_text": "Other tenant codex repair.",
+                "confidence": 0.93,
+            },
+        )
+        calls = []
+
+        def model_call(_cfg: CuratorConfig, prompt: str) -> str:
+            calls.append(prompt)
+            return "valid advisory curator output"
+
+        result = run_curator_policy_pass(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            config={"supervisor": {"curator": {"enabled": True, "max_records": 5, "min_score": 0.5}}},
+            model_call=model_call,
+        )
+
+        assert len(calls) == 1
+        assert result.precuration["records_skipped"] == 0
+        assert result.precuration["global_lesson_miss"] == 1
     finally:
         db.close()

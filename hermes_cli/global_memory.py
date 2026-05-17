@@ -331,6 +331,20 @@ class GlobalLessonRetrievalResult:
         return {"lessons": self.lessons, "audit": self.audit.to_dict()}
 
 
+@dataclass
+class PersistedPreCurationResult:
+    decision: GlobalPreCurationDecision
+    retrieval: GlobalLessonRetrievalResult
+    metrics: Dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "decision": self.decision.to_dict(),
+            "retrieval": self.retrieval.to_dict(),
+            "metrics": dict(self.metrics),
+        }
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -931,6 +945,33 @@ def retrieve_global_lessons_for_event(
     lessons = [lesson for _, _, _, lesson in ranked[: max(0, int(limit))]]
     audit.returned = len(lessons)
     return GlobalLessonRetrievalResult(lessons=lessons, audit=audit)
+
+
+def run_persisted_global_precuration(
+    db: SessionDB,
+    event: GlobalPreCurationEvent | Dict[str, Any],
+    *,
+    local_lessons: Optional[Sequence[Dict[str, Any]]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    limit: int = 5,
+    record_feedback: bool = True,
+) -> PersistedPreCurationResult:
+    retrieval = retrieve_global_lessons_for_event(db, event, config=config, limit=limit)
+    decision = should_curate_locally(
+        event,
+        retrieval.lessons,
+        local_lessons=local_lessons,
+        config=config,
+    )
+    metrics: Dict[str, int] = {}
+    record_global_lesson_reuse_metric(metrics, decision.metric)
+    if record_feedback and decision.global_claim_id and decision.matched_claim:
+        updated = dict(decision.matched_claim)
+        stats = dict(updated.get("reuse_stats") or {})
+        record_global_lesson_reuse_metric(stats, decision.metric)
+        updated["reuse_stats"] = stats
+        persist_global_lesson(db, updated)
+    return PersistedPreCurationResult(decision=decision, retrieval=retrieval, metrics=metrics)
 
 
 def should_curate_locally(
