@@ -1051,6 +1051,104 @@ The wiki should feed both retrieval indexes:
   `OBSERVED_ON machine/platform`, `AVOIDS_ERROR error_signature`,
   `RECOMMENDS_ACTION command/playbook`, and `SUPPORTED_BY event/candidate`.
 
+### Discussion Memory Wiki Storage
+
+Repo/task memory is not enough. Hermes also needs a discussion-level knowledge
+store for architecture conversations, research-paper synthesis, construction
+planning, domain strategy, and other non-repo work. This store should reside
+under Hermes home by default and be movable to a shared backend later.
+
+Default local layout:
+
+```text
+~/.hermes/
+  memory-wiki/
+    raw/
+      sessions/              # redacted raw session/event references, not retrieval truth
+    discussions/
+      <discussion_id>.json    # discussion summaries and extracted claims
+    claims/
+      <claim_id>.json         # approved evidence-backed wiki claims
+    indexes/
+      lexical.sqlite          # FTS/keyword index
+      vectors/                # local vector store or provider-managed ids
+      graph.sqlite            # claim/evidence/scope relationship graph
+    exports/
+      training/               # approved JSONL/Parquet export bundles
+    audit/
+      approvals.sqlite        # judge/operator decisions and scope changes
+```
+
+Recommended dedicated capacity:
+
+- Single developer VM/laptop: reserve `20-50 GB` for wiki, indexes, and audit.
+- Active multi-repo tenant: reserve `100-250 GB`.
+- Cross-device/global Hermes deployment: object storage bucket plus managed
+  vector/graph stores; local devices keep hot cache only.
+
+The storage root should be configurable:
+
+```yaml
+supervisor:
+  memory_wiki_storage:
+    root: ~/.hermes/memory-wiki
+    max_local_gb: 50
+    backend: local              # local | s3 | postgres | managed
+    vector_backend: sqlite      # disabled | sqlite | qdrant | pgvector
+    graph_backend: sqlite       # disabled | sqlite | neo4j | postgres
+    hot_cache_days: 30
+    raw_retention_days: 30
+    require_global_approval: true
+```
+
+The promotion flow for discussions is:
+
+```text
+conversation/session
+  -> discussion summarizer sidecar
+  -> claim extractor sidecar
+  -> citation/evidence validator
+  -> judge sidecar
+  -> operator approval for tenant/global scope
+  -> discussion wiki page + approved claims
+  -> lexical/vector/graph index update
+  -> retrieval packet for future Hermes instances
+```
+
+Raw chats should be retained only as bounded evidence/audit material. Retrieval
+should prefer approved discussion summaries and claims, not raw transcripts.
+Raw session retention can be short; claims and approvals are durable.
+
+### Discussion Memory Sidecars
+
+The discussion wiki should be maintained by sidecars, not the foreground chat
+loop:
+
+- `discussion_capture_sidecar`: records session summaries and candidate
+  discussion topics after each completed conversation or configured interval.
+- `claim_extractor_sidecar`: converts discussion summaries into scoped claims,
+  assumptions, decisions, open questions, citations, and evidence refs.
+- `citation_validator_sidecar`: verifies citations, file refs, URLs, paper refs,
+  and evidence hashes where available.
+- `wiki_compiler_sidecar`: deduplicates claims into durable pages and index
+  payloads.
+- `indexer_sidecar`: updates lexical, vector, and graph indexes incrementally.
+- `sync_sidecar`: publishes approved wiki objects to shared/global storage and
+  pulls approved global objects into local hot cache.
+
+Each sidecar should run out-of-band with bounded leases, timeouts, rate limits,
+and learning-job records. Failures must be observable but non-blocking for
+chat, task execution, worker delegation, and repo validation.
+
+Scope and sharing defaults:
+
+- Device/local memories stay local unless explicitly promoted.
+- Tenant memories are visible only to the tenant.
+- Domain memories can be shared across repos within a tenant.
+- Global memories require judge approval plus operator approval.
+- Personal preferences can be global to the user, but not to all tenants.
+- Private/sensitive memories are never exported or globally indexed.
+
 Dreaming is separate. It is an offline synthesis phase that reads wiki claims,
 unresolved candidates, repeated failures, job histories, policy audits, and
 worker outcomes. It emits proposal-only records such as new playbooks, tests,

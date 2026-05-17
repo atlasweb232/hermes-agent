@@ -179,6 +179,10 @@
 - [x] T070E [US5] Add judge/operator conversion path for dreaming proposals so approved proposals may become memory candidates, wiki updates, tests/playbooks, or policy candidates only after both gates pass
 - [x] T070B [US5] Add wiki, dreaming, training-data, native goal-loop integration, and risk-mitigation sections to `docs/curator-policy-framework-architecture.md`
 - [x] T070C [US5] Document migration intelligence corpus design, required repo/commit/evidence refs, dataset families, and drift-evaluation anchors in `docs/curator-policy-framework-architecture.md`
+- [ ] T070F [US5] Add configurable discussion memory wiki storage root, local capacity guardrails, raw retention settings, hot-cache TTL, and backend choices for local/S3/Postgres/vector/graph storage
+- [ ] T070G [US5] Add discussion capture, claim extraction, citation validation, wiki compilation, index update, and sync sidecar task definitions with bounded leases, timeouts, and non-blocking learning-job observability
+- [ ] T070H [US5] Add discussion-level wiki schemas for session summaries, extracted claims, citations/evidence refs, domain/global scope, approval provenance, sensitivity labels, and cross-device sync eligibility
+- [ ] T070I [US5] Add hybrid index update path for discussion wiki claims: lexical FTS, vector payloads, graph edges, and scoped retrieval packets for global Hermes consumption
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 
