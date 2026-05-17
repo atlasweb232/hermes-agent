@@ -11167,6 +11167,8 @@ Examples:
     runtime_task_init.add_argument("--success-criteria", action="append", default=[], help="Success criterion")
     runtime_task_init.add_argument("--constraint", action="append", default=[], help="Task constraint")
     runtime_task_init.add_argument("--memory-packet-id", default="", help="Existing memory packet id")
+    runtime_task_init.add_argument("--no-memory-packet", action="store_true", help="Do not create a supervisor memory packet")
+    runtime_task_init.add_argument("--memory-required", action="store_true", help="Mark supervisor memory as required for readiness")
     runtime_task_init.add_argument("--skip-speckit", action="store_true", help="Explicitly skip Spec Kit")
     runtime_task_init.add_argument("--skip-reason", default="", help="Reason Spec Kit was skipped")
     runtime_task_init.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -11224,20 +11226,32 @@ Examples:
 
         cmd = getattr(args, "runtime_command", None)
         if cmd == "task" and getattr(args, "runtime_task_command", None) == "init":
-            result = initialize_task(
-                request=getattr(args, "request"),
-                source=getattr(args, "source", "cli"),
-                tenant_id=getattr(args, "tenant_id", "") or None,
-                repo_id=getattr(args, "repo_id", "") or None,
-                cwd=getattr(args, "cwd", "") or None,
-                task_type=getattr(args, "task_type", "") or "",
-                complexity=getattr(args, "complexity", "") or "",
-                success_criteria=getattr(args, "success_criteria", []) or [],
-                constraints=getattr(args, "constraint", []) or [],
-                memory_packet_id=getattr(args, "memory_packet_id", "") or None,
-                skip_speckit=bool(getattr(args, "skip_speckit", False)),
-                skip_reason=getattr(args, "skip_reason", "") or None,
-            )
+            memory_db = None
+            if not getattr(args, "no_memory_packet", False) and not getattr(args, "memory_packet_id", ""):
+                from hermes_state import SessionDB
+
+                memory_db = SessionDB()
+            try:
+                result = initialize_task(
+                    request=getattr(args, "request"),
+                    source=getattr(args, "source", "cli"),
+                    tenant_id=getattr(args, "tenant_id", "") or None,
+                    repo_id=getattr(args, "repo_id", "") or None,
+                    cwd=getattr(args, "cwd", "") or None,
+                    task_type=getattr(args, "task_type", "") or "",
+                    complexity=getattr(args, "complexity", "") or "",
+                    success_criteria=getattr(args, "success_criteria", []) or [],
+                    constraints=getattr(args, "constraint", []) or [],
+                    memory_packet_id=getattr(args, "memory_packet_id", "") or None,
+                    skip_speckit=bool(getattr(args, "skip_speckit", False)),
+                    skip_reason=getattr(args, "skip_reason", "") or None,
+                    db=memory_db,
+                    auto_memory_packet=not getattr(args, "no_memory_packet", False),
+                    memory_required=bool(getattr(args, "memory_required", False)),
+                )
+            finally:
+                if memory_db is not None:
+                    memory_db.close()
             _emit(result.to_dict())
             return
         if cmd == "speckit" and getattr(args, "runtime_speckit_command", None) == "plan":

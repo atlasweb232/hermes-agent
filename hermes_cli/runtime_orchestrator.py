@@ -105,6 +105,7 @@ def clarification_questions(
 class TaskInitializationResult:
     task_packet: SupervisorTaskPacket
     validation: PacketValidationResult
+    memory_packet: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -114,6 +115,7 @@ class TaskInitializationResult:
             "needs_clarification": self.task_packet.status == "needs_clarification",
             "requires_speckit": self.task_packet.requires_speckit,
             "memory_packet_id": self.task_packet.memory_packet_id,
+            "memory_packet": self.memory_packet,
         }
 
 
@@ -132,6 +134,9 @@ def initialize_task(
     skip_speckit: bool = False,
     skip_reason: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
+    db: Any = None,
+    auto_memory_packet: bool = True,
+    memory_required: bool = False,
 ) -> TaskInitializationResult:
     inferred_type = infer_task_type(request, explicit=task_type)
     inferred_complexity = infer_complexity(request, explicit=complexity)
@@ -152,8 +157,29 @@ def initialize_task(
     status = "needs_clarification" if clarifications else "planned"
     if skip_speckit and not skip_reason:
         skip_reason = "explicit user opt-out"
+    task_packet_id = _new_id("taskpkt")
+    memory_packet: Optional[Dict[str, Any]] = None
+    if auto_memory_packet and db is not None and not memory_packet_id:
+        from hermes_cli.supervisor_memory import create_memory_packet
+
+        packet_result = create_memory_packet(
+            db,
+            query=request,
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            task_id=task_packet_id,
+            scopes=[
+                "runtime.task_initialization",
+                f"task_type:{inferred_type}",
+                f"complexity:{inferred_complexity}",
+            ],
+            required=memory_required,
+            config=config,
+        )
+        memory_packet_id = packet_result.packet_id
+        memory_packet = packet_result.to_dict()
     packet = SupervisorTaskPacket(
-        id=_new_id("taskpkt"),
+        id=task_packet_id,
         source=source,
         tenant_id=tenant_id,
         repo_id=repo_id,
@@ -169,7 +195,7 @@ def initialize_task(
         status=status,
         skip_reason=skip_reason if not requires_speckit else None,
     )
-    return TaskInitializationResult(task_packet=packet, validation=packet.validate())
+    return TaskInitializationResult(task_packet=packet, validation=packet.validate(), memory_packet=memory_packet)
 
 
 def create_planner_packet(
@@ -250,4 +276,3 @@ def discover_speckit_artifacts(feature_dir: Path, *, task_packet_id: str, branch
         tasks_path=str(tasks),
         artifact_status=status,
     )
-

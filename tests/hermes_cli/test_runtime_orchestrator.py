@@ -15,6 +15,11 @@ from hermes_cli.runtime_packets import (
     ValidationReport,
     WorkerDelegationPacket,
 )
+from hermes_state import SessionDB
+
+
+def _make_db(tmp_path: Path) -> SessionDB:
+    return SessionDB(db_path=tmp_path / "state.db")
 
 
 def test_dashboard_intake_requires_clarification_for_missing_repo_and_done_state():
@@ -74,6 +79,44 @@ def test_create_planner_packet_for_valid_speckit_task():
     assert planner.validate().valid is True
     assert planner.task_packet_id == result.task_packet.id
     assert "tasks.md" in planner.required_artifacts
+
+
+def test_initialize_task_creates_supervisor_memory_packet(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_record(
+            record_id="rec-runtime-1",
+            kind="routing_hint",
+            title="OAuth callback uses AWS endpoint",
+            body="OAuth callback work should preserve the AWS callback route.",
+            payload_json={"source": "runtime-test"},
+            status="active",
+            score=0.9,
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            evidence_uri="artifact://runtime-test/log.txt",
+        )
+
+        result = initialize_task(
+            request="OAuth callback uses AWS endpoint",
+            source="cli",
+            tenant_id="atlas",
+            repo_id="atlas-email-flutter",
+            success_criteria=["callback route remains valid"],
+            db=db,
+        )
+
+        assert result.validation.valid is True
+        assert result.task_packet.memory_packet_id is not None
+        assert result.memory_packet is not None
+        assert result.memory_packet["status"] == "ready"
+        packets = db.list_memory_packets(task_id=result.task_packet.id, limit=5)
+        assert packets
+        assert packets[0]["id"] == result.task_packet.memory_packet_id
+    finally:
+        db.close()
 
 
 def test_worker_delegation_validation_blocks_missing_required_fields():
@@ -155,6 +198,7 @@ def test_runtime_task_init_cli_json(capsys):
         "hermes-agent",
         "--success-criteria",
         "tests pass",
+        "--no-memory-packet",
         "--json",
     ]
 
@@ -165,6 +209,7 @@ def test_runtime_task_init_cli_json(capsys):
     assert data["status"] == "created"
     assert data["requires_speckit"] is True
     assert data["needs_clarification"] is False
+    assert data["memory_packet_id"] is None
 
 
 def test_runtime_validate_cli_json(tmp_path, capsys):
@@ -194,4 +239,3 @@ def test_runtime_validate_cli_json(tmp_path, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["status"] == "passed"
     assert data["validation"]["valid"] is True
-
