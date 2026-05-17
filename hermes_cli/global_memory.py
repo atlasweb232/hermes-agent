@@ -177,6 +177,46 @@ class GlobalIndexFanoutResult:
         return asdict(self)
 
 
+@dataclass
+class DiscussionMemoryRecord:
+    id: str
+    record_type: str
+    title: str
+    summary: str
+    scope: str
+    domain: str
+    sensitivity: str
+    source_session_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    evidence_refs: List[str] = field(default_factory=list)
+    citation_refs: List[str] = field(default_factory=list)
+    claims: List[str] = field(default_factory=list)
+    approval_state: str = "proposed"
+    producer_invocation_id: Optional[str] = None
+    judge_invocation_id: Optional[str] = None
+    operator_approved: bool = False
+    created_at: float = field(default_factory=_now)
+    updated_at: float = field(default_factory=_now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DiscussionSidecarDefinition:
+    name: str
+    mode: str
+    llm_role: Optional[str]
+    input_topic: str
+    output_topic: str
+    interval_seconds: int
+    timeout_seconds: int
+    lease_seconds: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -323,6 +363,210 @@ def get_global_memory_bus(db: SessionDB, config: Dict[str, Any]) -> GlobalMemory
     if backend in {"kafka", "redpanda"}:
         return KafkaGlobalMemoryBus(config)
     raise ValueError(f"unsupported global memory bus backend: {backend}")
+
+
+def discussion_storage_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    supervisor = (config or {}).get("supervisor") or {}
+    raw = supervisor.get("discussion_memory_wiki") or {}
+    storage = raw.get("storage") if isinstance(raw, dict) else {}
+    defaults = {
+        "root": "~/.hermes/memory-wiki",
+        "backend": "local",
+        "max_local_gb": 50,
+        "raw_retention_days": 30,
+        "hot_cache_days": 30,
+        "state_uri": "~/.hermes/memory-wiki/discussions/state.sqlite",
+        "lexical_index_uri": "~/.hermes/memory-wiki/discussions/lexical.sqlite",
+        "vector_backend": "disabled",
+        "graph_backend": "sqlite",
+    }
+    if isinstance(storage, dict):
+        defaults.update(storage)
+    return defaults
+
+
+def discussion_sidecar_definitions(config: Dict[str, Any]) -> List[DiscussionSidecarDefinition]:
+    supervisor = (config or {}).get("supervisor") or {}
+    raw = supervisor.get("discussion_memory_wiki") or {}
+    sidecars = raw.get("sidecars") if isinstance(raw, dict) else {}
+
+    specs = {
+        "discussion_capture": ("llm", "discussion_capture", "discussion.raw", "discussion.captured"),
+        "claim_extractor": ("llm", "claim_extractor", "discussion.captured", "discussion.claims"),
+        "citation_validator": ("deterministic_first", "citation_validator", "discussion.claims", "discussion.citations_validated"),
+        "wiki_compiler": ("llm", "wiki_compiler", "discussion.citations_validated", "discussion.compiled"),
+        "indexer": ("programmatic", None, "discussion.compiled", "discussion.indexed"),
+        "sync": ("programmatic", None, "discussion.indexed", "discussion.synced"),
+    }
+    result: List[DiscussionSidecarDefinition] = []
+    for name, (mode, role, input_topic, output_topic) in specs.items():
+        cfg = sidecars.get(name, {}) if isinstance(sidecars, dict) and isinstance(sidecars.get(name), dict) else {}
+        result.append(
+            DiscussionSidecarDefinition(
+                name=name,
+                mode=str(cfg.get("mode") or mode),
+                llm_role=role,
+                input_topic=input_topic,
+                output_topic=output_topic,
+                interval_seconds=int(cfg.get("interval_seconds") or 300),
+                timeout_seconds=int(cfg.get("timeout_seconds") or 120),
+                lease_seconds=int(cfg.get("lease_seconds") or 300),
+            )
+        )
+    return result
+
+
+def ensure_discussion_memory_schema(db: SessionDB) -> None:
+    def _do(conn):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hermes_discussion_memory_records (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                record_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                sensitivity TEXT NOT NULL,
+                source_session_id TEXT,
+                evidence_refs_json TEXT,
+                citation_refs_json TEXT,
+                claims_json TEXT,
+                approval_state TEXT NOT NULL,
+                producer_invocation_id TEXT,
+                judge_invocation_id TEXT,
+                operator_approved INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_discussion_memory_scope
+                ON hermes_discussion_memory_records(tenant_id, domain, scope, approval_state, updated_at DESC)
+            """
+        )
+
+    db._execute_write(_do)
+
+
+def _json_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return _json_list(parsed)
+        except Exception:
+            return []
+    return []
+
+
+def upsert_discussion_memory_record(db: SessionDB, record: DiscussionMemoryRecord) -> DiscussionMemoryRecord:
+    ensure_discussion_memory_schema(db)
+    record.updated_at = _now()
+
+    def _do(conn):
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO hermes_discussion_memory_records (
+                id, tenant_id, record_type, title, summary, scope, domain,
+                sensitivity, source_session_id, evidence_refs_json,
+                citation_refs_json, claims_json, approval_state,
+                producer_invocation_id, judge_invocation_id, operator_approved,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.tenant_id,
+                record.record_type,
+                record.title,
+                record.summary,
+                record.scope,
+                record.domain,
+                record.sensitivity,
+                record.source_session_id,
+                json.dumps(record.evidence_refs, sort_keys=True),
+                json.dumps(record.citation_refs, sort_keys=True),
+                json.dumps(record.claims, sort_keys=True),
+                record.approval_state,
+                record.producer_invocation_id,
+                record.judge_invocation_id,
+                1 if record.operator_approved else 0,
+                record.created_at,
+                record.updated_at,
+            ),
+        )
+
+    db._execute_write(_do)
+    return record
+
+
+def approval_invocation_allowed(record: Dict[str, Any]) -> ValidationResult:
+    producer = str(record.get("producer_invocation_id") or "")
+    judge = str(record.get("judge_invocation_id") or "")
+    errors = []
+    if not producer:
+        errors.append("producer_invocation_id is required")
+    if not judge:
+        errors.append("judge_invocation_id is required")
+    if producer and judge and producer == judge:
+        errors.append("judge invocation must differ from producer invocation")
+    if record.get("scope") == "global" and not record.get("operator_approved"):
+        errors.append("global discussion memory requires operator approval")
+    return ValidationResult(valid=not errors, errors=errors)
+
+
+def fanout_discussion_record_to_indexes(db: SessionDB, record: DiscussionMemoryRecord) -> GlobalIndexFanoutResult:
+    if record.approval_state not in {"approved", "canonical", "applied"}:
+        return GlobalIndexFanoutResult(status="skipped", claim_id=record.id, errors=["discussion record must be approved"])
+    if record.sensitivity == "secret":
+        return GlobalIndexFanoutResult(status="skipped", claim_id=record.id, errors=["secret discussion records are not indexed"])
+
+    from hermes_cli.memory_graph import upsert_graph_edge, upsert_graph_node
+    from hermes_cli.memory_index import upsert_memory_index_document
+
+    memory_id = f"discussion:{record.id}"
+    text = " ".join([record.title, record.summary, " ".join(record.claims)]).strip()
+    metadata = {
+        "tenant_id": record.tenant_id,
+        "domain": record.domain,
+        "scope": record.scope,
+        "sensitivity": record.sensitivity,
+        "status": "approved",
+        "tier": "discussion",
+        "source_session_id": record.source_session_id,
+        "evidence_refs": record.evidence_refs,
+        "citation_refs": record.citation_refs,
+    }
+    upsert_memory_index_document(db, memory_id=memory_id, text=text, metadata=metadata)
+    nodes = 1
+    edges = 0
+    upsert_graph_node(db, node_id=memory_id, kind="discussion_memory", label=record.title)
+    for kind, values, relation in [
+        ("domain", [record.domain], "APPLIES_TO_DOMAIN"),
+        ("scope", [record.scope], "HAS_SCOPE"),
+        ("tenant", [record.tenant_id] if record.tenant_id else [], "APPLIES_TO_TENANT"),
+        ("evidence", record.evidence_refs, "SUPPORTED_BY"),
+        ("citation", record.citation_refs, "CITES"),
+    ]:
+        for value in values:
+            node_id = f"{kind}:{value}"
+            upsert_graph_node(db, node_id=node_id, kind=kind, label=str(value))
+            upsert_graph_edge(db, source_id=memory_id, target_id=node_id, relation=relation)
+            nodes += 1
+            edges += 1
+    return GlobalIndexFanoutResult(
+        status="indexed",
+        claim_id=record.id,
+        lexical_indexed=True,
+        graph_nodes=nodes,
+        graph_edges=edges,
+        vector_payload={"id": memory_id, "text": text, "metadata": metadata},
+    )
 
 
 def publish_global_proposal(

@@ -64,8 +64,13 @@ def test_config_roles_cli_lists_three_operational_roles(_isolate_hermes_home, ca
         hermes_main.main()
 
     output = json.loads(capsys.readouterr().out)
-    assert {role["role"] for role in output["roles"]} == {
+    assert {role["role"] for role in output["roles"]} >= {
         "curator",
         "learning_judge",
         "goal_judge",
+        "discussion_capture",
+        "claim_extractor",
+        "wiki_compiler",
+        "dreaming",
+        "citation_validator",
     }

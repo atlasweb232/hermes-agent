@@ -1,13 +1,19 @@
 import pytest
 
 from hermes_cli.global_memory import (
+    DiscussionMemoryRecord,
+    approval_invocation_allowed,
     build_global_topic,
     build_idempotency_key,
     classify_dedupe,
+    discussion_sidecar_definitions,
+    discussion_storage_config,
     fanout_canonical_claim_to_indexes,
+    fanout_discussion_record_to_indexes,
     get_global_memory_bus,
     normalize_proposal,
     publish_global_proposal,
+    upsert_discussion_memory_record,
     validate_proposal,
 )
 from hermes_cli.learning_bus import list_learning_events
@@ -61,6 +67,34 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     assert wiki["require_global_approval"] is True
     assert bus["backend"] == "sqlite"
     assert bus["topic_prefix"] == "hermes.memory"
+
+
+def test_discussion_memory_config_and_sidecars_exist(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+
+    cfg = load_config()
+    storage = discussion_storage_config(cfg)
+    sidecars = {item.name: item for item in discussion_sidecar_definitions(cfg)}
+
+    assert storage["root"] == "~/.hermes/memory-wiki"
+    assert storage["max_local_gb"] == 50
+    assert storage["raw_retention_days"] == 30
+    assert sidecars["discussion_capture"].llm_role == "discussion_capture"
+    assert sidecars["claim_extractor"].llm_role == "claim_extractor"
+    assert sidecars["citation_validator"].mode == "deterministic_first"
+    assert sidecars["indexer"].llm_role is None
+    assert sidecars["sync"].mode == "programmatic"
+
+
+def test_model_roles_include_discussion_sidecars(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import role_names, get_model_role
+
+    names = set(role_names())
+    assert {"discussion_capture", "claim_extractor", "wiki_compiler", "dreaming", "citation_validator"} <= names
+    role = get_model_role(load_config(), "claim_extractor")
+    assert role["path"] == "supervisor.sidecar_models.claim_extractor"
+    assert role["config"]["provider"] == "codex"
 
 
 def test_normalize_proposal_adds_hashes_and_simhash():
@@ -280,3 +314,66 @@ def test_index_fanout_writes_lexical_graph_and_bus_event(tmp_path):
         assert events[0].payload_json["status"] == "indexed"
     finally:
         db.close()
+
+
+def test_discussion_memory_schema_round_trip_and_index_fanout(tmp_path):
+    db = _db(tmp_path)
+    try:
+        record = DiscussionMemoryRecord(
+            id="disc_1",
+            tenant_id="atlas",
+            record_type="architecture_discussion",
+            title="Global memory wiki storage",
+            summary="Global memory needs configurable storage and sidecar indexing.",
+            scope="global",
+            domain="architecture",
+            sensitivity="internal",
+            source_session_id="sess-1",
+            evidence_refs=["s3://bucket/evidence/disc_1.json"],
+            citation_refs=["url_hash:doc"],
+            claims=["Storage locations should be configurable.", "Indexing should be sidecar driven."],
+            approval_state="approved",
+            producer_invocation_id="producer-1",
+            judge_invocation_id="judge-1",
+            operator_approved=True,
+        )
+
+        upsert_discussion_memory_record(db, record)
+        result = fanout_discussion_record_to_indexes(db, record)
+        lexical = lexical_search(db, query="configurable storage sidecar indexing", statuses=["approved"])
+        graph = expand_graph(db, start_id="discussion:disc_1", limit=10)
+
+        assert result.status == "indexed"
+        assert result.lexical_indexed is True
+        assert lexical[0]["memory_id"] == "discussion:disc_1"
+        assert {edge["relation"] for edge in graph} >= {"APPLIES_TO_DOMAIN", "SUPPORTED_BY", "CITES"}
+    finally:
+        db.close()
+
+
+def test_approval_guard_rejects_same_invocation_and_global_without_operator():
+    result = approval_invocation_allowed(
+        {
+            "scope": "global",
+            "producer_invocation_id": "same",
+            "judge_invocation_id": "same",
+            "operator_approved": False,
+        }
+    )
+
+    assert result.valid is False
+    assert "judge invocation must differ from producer invocation" in result.errors
+    assert "global discussion memory requires operator approval" in result.errors
+
+
+def test_approval_guard_accepts_separate_invocations_with_operator():
+    result = approval_invocation_allowed(
+        {
+            "scope": "global",
+            "producer_invocation_id": "producer",
+            "judge_invocation_id": "judge",
+            "operator_approved": True,
+        }
+    )
+
+    assert result.valid is True

@@ -676,6 +676,33 @@ DEFAULT_CONFIG = {
             },
             "require_global_approval": True,
         },
+        "discussion_memory_wiki": {
+            "enabled": True,
+            "storage": {
+                "root": "~/.hermes/memory-wiki",
+                "backend": "local",
+                "max_local_gb": 50,
+                "raw_retention_days": 30,
+                "hot_cache_days": 30,
+                "state_uri": "~/.hermes/memory-wiki/discussions/state.sqlite",
+                "lexical_index_uri": "~/.hermes/memory-wiki/discussions/lexical.sqlite",
+                "vector_backend": "disabled",
+                "graph_backend": "sqlite",
+            },
+            "sidecars": {
+                "discussion_capture": {"enabled": True, "interval_seconds": 300, "timeout_seconds": 120, "lease_seconds": 300},
+                "claim_extractor": {"enabled": True, "interval_seconds": 900, "timeout_seconds": 300, "lease_seconds": 300},
+                "citation_validator": {"enabled": True, "mode": "deterministic_first", "interval_seconds": 900, "timeout_seconds": 120, "lease_seconds": 300},
+                "wiki_compiler": {"enabled": True, "interval_seconds": 1800, "timeout_seconds": 300, "lease_seconds": 300},
+                "indexer": {"enabled": True, "mode": "programmatic", "interval_seconds": 300, "timeout_seconds": 120, "lease_seconds": 300},
+                "sync": {"enabled": False, "mode": "programmatic", "interval_seconds": 3600, "timeout_seconds": 300, "lease_seconds": 300},
+            },
+            "approval": {
+                "require_separate_invocation": True,
+                "require_judge": True,
+                "require_operator_for_global": True,
+            },
+        },
         "global_memory_bus": {
             "enabled": False,
             "backend": "sqlite",

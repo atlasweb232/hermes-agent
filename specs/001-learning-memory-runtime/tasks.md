@@ -179,12 +179,12 @@
 - [x] T070E [US5] Add judge/operator conversion path for dreaming proposals so approved proposals may become memory candidates, wiki updates, tests/playbooks, or policy candidates only after both gates pass
 - [x] T070B [US5] Add wiki, dreaming, training-data, native goal-loop integration, and risk-mitigation sections to `docs/curator-policy-framework-architecture.md`
 - [x] T070C [US5] Document migration intelligence corpus design, required repo/commit/evidence refs, dataset families, and drift-evaluation anchors in `docs/curator-policy-framework-architecture.md`
-- [ ] T070F [US5] Add configurable discussion memory wiki storage root, local capacity guardrails, raw retention settings, hot-cache TTL, and backend choices for local/S3/Postgres/vector/graph storage
-- [ ] T070G [US5] Add discussion capture, claim extraction, citation validation, wiki compilation, index update, and sync sidecar task definitions with bounded leases, timeouts, and non-blocking learning-job observability
-- [ ] T070H [US5] Add discussion-level wiki schemas for session summaries, extracted claims, citations/evidence refs, domain/global scope, approval provenance, sensitivity labels, and cross-device sync eligibility
-- [ ] T070I [US5] Add hybrid index update path for discussion wiki claims: lexical FTS, vector payloads, graph edges, and scoped retrieval packets for global Hermes consumption
-- [ ] T070J [US5] Add separate configured model roles for LLM-backed discussion sidecars: discussion capture, claim extractor, wiki compiler, dreaming, curator, learning judge, and deterministic-first citation validator
-- [ ] T070K [US5] Add tests proving generated artifacts cannot be approved by the same sidecar invocation/session that created them, even when both roles use Codex
+- [x] T070F [US5] Add configurable discussion memory wiki storage root, local capacity guardrails, raw retention settings, hot-cache TTL, and backend choices for local/S3/Postgres/vector/graph storage
+- [x] T070G [US5] Add discussion capture, claim extraction, citation validation, wiki compilation, index update, and sync sidecar task definitions with bounded leases, timeouts, and non-blocking learning-job observability
+- [x] T070H [US5] Add discussion-level wiki schemas for session summaries, extracted claims, citations/evidence refs, domain/global scope, approval provenance, sensitivity labels, and cross-device sync eligibility
+- [x] T070I [US5] Add hybrid index update path for discussion wiki claims: lexical FTS, vector payloads, graph edges, and scoped retrieval packets for global Hermes consumption
+- [x] T070J [US5] Add separate configured model roles for LLM-backed discussion sidecars: discussion capture, claim extractor, wiki compiler, dreaming, curator, learning judge, and deterministic-first citation validator
+- [x] T070K [US5] Add tests proving generated artifacts cannot be approved by the same sidecar invocation/session that created them, even when both roles use Codex
 - [x] T070L [US5] Create `docs/global-memory-wiki-architecture.md` covering central global wiki storage, configurable object/state/index backends, Kafka-compatible bus strategy, metadata schema, dedupe/reconcile workflow, and global sidecars
 - [x] T070M [US5] Add global memory config defaults for object store, state store, lexical/vector/graph indexes, local cache, raw retention, and sync eligibility
 - [x] T070N [US5] Add global memory bus adapter interface with SQLite local backend and Kafka/Redpanda-compatible backend options

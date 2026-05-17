@@ -53,6 +53,31 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             "extra_body": {},
         },
     },
+    "discussion_capture": {
+        "path": ("supervisor", "sidecar_models", "discussion_capture"),
+        "description": "Summarizes conversations into discussion memory candidates.",
+        "defaults": {"enabled": True, "provider": "codex", "model": "codex", "base_url": "", "timeout_seconds": 120},
+    },
+    "claim_extractor": {
+        "path": ("supervisor", "sidecar_models", "claim_extractor"),
+        "description": "Extracts scoped claims, assumptions, decisions, and open questions from discussion summaries.",
+        "defaults": {"enabled": True, "provider": "codex", "model": "codex", "base_url": "", "timeout_seconds": 300},
+    },
+    "wiki_compiler": {
+        "path": ("supervisor", "sidecar_models", "wiki_compiler"),
+        "description": "Compiles approved discussion claims into durable wiki pages and index payloads.",
+        "defaults": {"enabled": True, "provider": "codex", "model": "codex", "base_url": "", "timeout_seconds": 300},
+    },
+    "dreaming": {
+        "path": ("supervisor", "sidecar_models", "dreaming"),
+        "description": "Offline proposal synthesis over approved wiki/memory evidence.",
+        "defaults": {"enabled": True, "provider": "codex", "model": "codex", "base_url": "", "timeout_seconds": 300},
+    },
+    "citation_validator": {
+        "path": ("supervisor", "sidecar_models", "citation_validator"),
+        "description": "Deterministic-first citation/evidence validator with optional LLM classification.",
+        "defaults": {"enabled": True, "mode": "deterministic_first", "provider": "codex", "model": "codex", "base_url": "", "timeout_seconds": 120},
+    },
 }
 
 

@@ -10773,7 +10773,19 @@ Examples:
     config_role = config_subparsers.add_parser("role", help="Configure a named curator/judge model role")
     config_role_sub = config_role.add_subparsers(dest="config_role_command")
     config_role_set = config_role_sub.add_parser("set", help="Set a named model role")
-    config_role_set.add_argument("role", choices=["curator", "learning_judge", "goal_judge"])
+    config_role_set.add_argument(
+        "role",
+        choices=[
+            "curator",
+            "learning_judge",
+            "goal_judge",
+            "discussion_capture",
+            "claim_extractor",
+            "wiki_compiler",
+            "dreaming",
+            "citation_validator",
+        ],
+    )
     config_role_set.add_argument("--provider", help="Provider, e.g. codex, custom, ollama")
     config_role_set.add_argument("--model", help="Model name, e.g. codex")
     config_role_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
