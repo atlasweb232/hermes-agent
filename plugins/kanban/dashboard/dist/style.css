@@ -9,6 +9,198 @@
   width: 100%;
 }
 
+/* ---- Runtime observability ------------------------------------------ */
+
+.hermes-kanban-observe-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hermes-kanban-observe {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-card) 95%, transparent),
+      color-mix(in srgb, var(--color-muted) 55%, transparent)
+    );
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.hermes-kanban-observe-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hermes-kanban-observe-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-foreground);
+}
+
+.hermes-kanban-observe-sub,
+.hermes-kanban-observe-muted,
+.hermes-kanban-observe-meta {
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+}
+
+.hermes-kanban-observe-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.hermes-kanban-observe-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  color: var(--color-muted-foreground);
+}
+
+.hermes-kanban-observe-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(280px, 1.35fr);
+  gap: 0.75rem;
+}
+
+.hermes-kanban-observe-list,
+.hermes-kanban-observe-detail {
+  border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  border-radius: var(--radius-sm, 0.25rem);
+  background: color-mix(in srgb, var(--color-card) 82%, transparent);
+  min-height: 220px;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.hermes-kanban-observe-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.hermes-kanban-observe-detail {
+  padding: 0.75rem;
+}
+
+.hermes-kanban-observe-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 65%, transparent);
+  color: var(--color-foreground);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.65rem;
+  text-align: left;
+}
+
+.hermes-kanban-observe-item:hover,
+.hermes-kanban-observe-item--active {
+  background: color-mix(in srgb, var(--color-ring) 10%, transparent);
+}
+
+.hermes-kanban-observe-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.hermes-kanban-observe-item-row strong {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.hermes-kanban-observe-pill {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted-foreground);
+  font-size: 0.62rem;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+}
+
+.hermes-kanban-observe-blocker {
+  color: var(--color-destructive, #d14a4a);
+  font-size: 0.7rem;
+}
+
+.hermes-kanban-observe-empty,
+.hermes-kanban-observe-error {
+  color: var(--color-muted-foreground);
+  font-size: 0.78rem;
+  padding: 1rem;
+}
+
+.hermes-kanban-observe-error {
+  border: 1px solid color-mix(in srgb, var(--color-destructive, #d14a4a) 45%, transparent);
+  border-radius: var(--radius-sm, 0.25rem);
+  color: var(--color-destructive, #d14a4a);
+  padding: 0.5rem 0.65rem;
+}
+
+.hermes-kanban-observe-detail-title {
+  color: var(--color-foreground);
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.hermes-kanban-observe-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.hermes-kanban-observe-refgroup,
+.hermes-kanban-observe-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hermes-kanban-observe-refhead {
+  color: var(--color-foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.hermes-kanban-observe-ref,
+.hermes-kanban-observe-answer {
+  border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  border-radius: var(--radius-sm, 0.25rem);
+  color: var(--color-muted-foreground);
+  font-size: 0.68rem;
+  max-height: 150px;
+  overflow: auto;
+  padding: 0.45rem;
+  white-space: pre-wrap;
+}
+
+.hermes-kanban-observe-ask {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+}
+
+@media (max-width: 860px) {
+  .hermes-kanban-observe-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Code/pre reset (theme-immune default) --------------------------- *
  *
  * Themes (shipped AND user-installable) routinely paint every <code> and

@@ -850,6 +850,10 @@ Implemented Phase 8 surfaces:
   LLM while preserving the same no-mutation contract.
 - Dashboard plugin endpoints under `/api/plugins/kanban/observability/...`
   expose the same list, detail, and Ask DTOs for a lean tenant/repo/task view.
+- The first frontend is embedded in the Kanban dashboard plugin as a collapsible
+  Runtime Observability panel. It provides tenant/repo/status/type filters,
+  line-item selection, lazy evidence-bundle detail groups, and read-only Ask
+  without introducing a separate dashboard app.
 
 The implementation deliberately treats dashboard tabs as DTO groups rather than
 frontend-heavy screens: Overview is the line item, Agents/Spec Kit/Memory/

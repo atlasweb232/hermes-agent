@@ -438,6 +438,7 @@
     const [configApplied, setConfigApplied] = useState(false);
 
     const [selectedTaskId, setSelectedTaskId] = useState(null);
+    const [showObservability, setShowObservability] = useState(false);
     const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [lastSelectedId, setLastSelectedId] = useState(null);
     const [failedIds, setFailedIds] = useState(() => new Set());
@@ -926,6 +927,17 @@
           },
           onRefresh: loadBoard,
         }),
+        h("div", { className: "hermes-kanban-observe-toggle-row" },
+          h(Button, {
+            size: "sm",
+            variant: showObservability ? "default" : "outline",
+            onClick: function () { setShowObservability(function (v) { return !v; }); },
+          }, showObservability ? "Hide Observability" : "Show Observability"),
+        ),
+        showObservability ? h(ObservabilityPanel, {
+          tenants: (boardData && boardData.tenants) || [],
+          defaultTenant: tenantFilter || "",
+        }) : null,
         selectedIds.size > 0 ? h(BulkActionBar, {
           count: selectedIds.size,
           assignees: (boardData && boardData.assignees) || [],
@@ -961,6 +973,229 @@
           assignees: (boardData && boardData.assignees) || [],
           eventTick: taskEventTick[selectedTaskId] || 0,
         }) : null,
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Runtime learning observability — lean line-item drilldown.
+  // -------------------------------------------------------------------------
+
+  function ObservabilityPanel(props) {
+    const [tenantId, setTenantId] = useState(props.defaultTenant || "");
+    const [repoId, setRepoId] = useState("");
+    const [status, setStatus] = useState("");
+    const [itemType, setItemType] = useState("");
+    const [items, setItems] = useState([]);
+    const [selectedId, setSelectedId] = useState(null);
+    const [detail, setDetail] = useState(null);
+    const [question, setQuestion] = useState("");
+    const [answer, setAnswer] = useState(null);
+    const [loadingItems, setLoadingItems] = useState(false);
+    const [loadingDetail, setLoadingDetail] = useState(false);
+    const [error, setError] = useState("");
+
+    const loadItems = useCallback(function () {
+      const qs = new URLSearchParams();
+      if (tenantId) qs.set("tenant_id", tenantId);
+      if (repoId) qs.set("repo_id", repoId);
+      if (status) qs.set("status", status);
+      if (itemType) qs.set("item_type", itemType);
+      qs.set("limit", "50");
+      setLoadingItems(true);
+      setError("");
+      return SDK.fetchJSON(`${API}/observability/items?${qs.toString()}`)
+        .then(function (rows) {
+          setItems(Array.isArray(rows) ? rows : []);
+          if (selectedId && !(rows || []).find(function (r) { return r.id === selectedId; })) {
+            setSelectedId(null);
+            setDetail(null);
+            setAnswer(null);
+          }
+        })
+        .catch(function (err) {
+          setError(String(err && err.message || err));
+        })
+        .finally(function () { setLoadingItems(false); });
+    }, [tenantId, repoId, status, itemType, selectedId]);
+
+    useEffect(function () { loadItems(); }, [loadItems]);
+
+    const loadDetail = useCallback(function (lineItemId) {
+      if (!lineItemId) return;
+      const qs = new URLSearchParams();
+      if (tenantId) qs.set("tenant_id", tenantId);
+      if (repoId) qs.set("repo_id", repoId);
+      setSelectedId(lineItemId);
+      setDetail(null);
+      setAnswer(null);
+      setLoadingDetail(true);
+      setError("");
+      SDK.fetchJSON(`${API}/observability/items/${encodeURIComponent(lineItemId)}?${qs.toString()}`)
+        .then(function (bundle) { setDetail(bundle); })
+        .catch(function (err) { setError(String(err && err.message || err)); })
+        .finally(function () { setLoadingDetail(false); });
+    }, [tenantId, repoId]);
+
+    const ask = useCallback(function () {
+      if (!selectedId || !question.trim()) return;
+      setAnswer(null);
+      setError("");
+      SDK.fetchJSON(`${API}/observability/items/${encodeURIComponent(selectedId)}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenant_id: tenantId || null,
+          repo_id: repoId || null,
+          question: question.trim(),
+          repo_query_allowed: false,
+        }),
+      })
+        .then(function (result) { setAnswer(result); })
+        .catch(function (err) { setError(String(err && err.message || err)); });
+    }, [selectedId, question, tenantId, repoId]);
+
+    return h("section", { className: "hermes-kanban-observe" },
+      h("div", { className: "hermes-kanban-observe-head" },
+        h("div", null,
+          h("div", { className: "hermes-kanban-observe-title" }, "Runtime Observability"),
+          h("div", { className: "hermes-kanban-observe-sub" },
+            "Tenant-scoped jobs, candidates, evidence bundles, and read-only Ask."),
+        ),
+        h(Button, { size: "sm", variant: "outline", onClick: loadItems },
+          loadingItems ? "Refreshing..." : "Refresh"),
+      ),
+      h("div", { className: "hermes-kanban-observe-filters" },
+        h("label", null,
+          h("span", null, "Tenant"),
+          h(Select, Object.assign({
+            value: tenantId || "__all__",
+          }, selectChangeHandler(function (v) { setTenantId(v === "__all__" ? "" : v); })),
+            h(SelectOption, { value: "__all__" }, "All tenants"),
+            (props.tenants || []).map(function (tenant) {
+              return h(SelectOption, { key: tenant, value: tenant }, tenant);
+            }),
+          ),
+        ),
+        h("label", null,
+          h("span", null, "Repo"),
+          h(Input, {
+            value: repoId,
+            placeholder: "repo id",
+            onChange: function (e) { setRepoId(e.target.value); },
+          }),
+        ),
+        h("label", null,
+          h("span", null, "Type"),
+          h(Select, Object.assign({
+            value: itemType || "__all__",
+          }, selectChangeHandler(function (v) { setItemType(v === "__all__" ? "" : v); })),
+            h(SelectOption, { value: "__all__" }, "Jobs + candidates"),
+            h(SelectOption, { value: "job" }, "Jobs"),
+            h(SelectOption, { value: "candidate" }, "Candidates"),
+          ),
+        ),
+        h("label", null,
+          h("span", null, "Status"),
+          h(Input, {
+            value: status,
+            placeholder: "running, completed, proposed...",
+            onChange: function (e) { setStatus(e.target.value); },
+          }),
+        ),
+      ),
+      error ? h("div", { className: "hermes-kanban-observe-error" }, error) : null,
+      h("div", { className: "hermes-kanban-observe-grid" },
+        h("div", { className: "hermes-kanban-observe-list" },
+          items.length === 0
+            ? h("div", { className: "hermes-kanban-observe-empty" },
+                loadingItems ? "Loading observability line items..." : "No line items match the current filters.")
+            : items.map(function (item) {
+                const active = item.id === selectedId;
+                return h("button", {
+                  key: item.id,
+                  type: "button",
+                  className: cn("hermes-kanban-observe-item", active && "hermes-kanban-observe-item--active"),
+                  onClick: function () { loadDetail(item.id); },
+                },
+                  h("div", { className: "hermes-kanban-observe-item-row" },
+                    h("strong", null, item.title || item.id),
+                    h("span", { className: "hermes-kanban-observe-pill" }, item.status || "unknown"),
+                  ),
+                  h("div", { className: "hermes-kanban-observe-meta" },
+                    `${item.item_type || "item"} · ${item.tenant_id || "global"} / ${item.repo_id || "global"}`
+                  ),
+                  item.blocker ? h("div", { className: "hermes-kanban-observe-blocker" }, item.blocker) : null,
+                );
+              }),
+        ),
+        h("div", { className: "hermes-kanban-observe-detail" },
+          loadingDetail ? h("div", { className: "hermes-kanban-observe-empty" }, "Loading detail...") :
+          detail ? h(ObservabilityDetail, {
+            detail: detail,
+            question: question,
+            setQuestion: setQuestion,
+            ask: ask,
+            answer: answer,
+          }) :
+          h("div", { className: "hermes-kanban-observe-empty" }, "Select a line item to inspect its evidence bundle."),
+        ),
+      ),
+    );
+  }
+
+  function ObservabilityDetail(props) {
+    const detail = props.detail || {};
+    const refs = function (label, rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      return h("div", { className: "hermes-kanban-observe-refgroup" },
+        h("div", { className: "hermes-kanban-observe-refhead" }, `${label} (${list.length})`),
+        list.length === 0
+          ? h("div", { className: "hermes-kanban-observe-muted" }, "None")
+          : list.slice(0, 8).map(function (row, idx) {
+              return h("pre", { key: idx, className: "hermes-kanban-observe-ref" },
+                JSON.stringify(row, null, 2));
+            }),
+      );
+    };
+    return h("div", null,
+      h("div", { className: "hermes-kanban-observe-detail-title" }, detail.task_description || detail.line_item_id),
+      h("div", { className: "hermes-kanban-observe-meta" },
+        `tenant=${detail.tenant_id || "global"} repo=${detail.repo_id || "global"} task=${detail.task_id || "unknown"}`),
+      h("div", { className: "hermes-kanban-observe-tabs" },
+        h("div", null,
+          h("div", { className: "hermes-kanban-observe-refhead" }, "Overview"),
+          h("pre", { className: "hermes-kanban-observe-ref" },
+            JSON.stringify({
+              bundle_id: detail.id,
+              line_item_id: detail.line_item_id,
+              raw_transcript_included: detail.raw_transcript_included,
+              secret_safe: detail.secret_safe,
+              supervisor_packet_ref: detail.supervisor_packet_ref,
+              initial_assignment: detail.initial_assignment,
+            }, null, 2)),
+        ),
+        refs("Agents", detail.agent_refs),
+        refs("Spec Kit", (detail.speckit_refs || []).map(function (x) { return { ref: x }; })),
+        refs("Memory", detail.memory_refs),
+        refs("Validation", detail.validation_refs),
+        refs("Events", detail.event_refs),
+      ),
+      h("div", { className: "hermes-kanban-observe-ask" },
+        h("div", { className: "hermes-kanban-observe-refhead" }, "Ask"),
+        h(Input, {
+          value: props.question,
+          placeholder: "Ask a read-only question about this line item",
+          onChange: function (e) { props.setQuestion(e.target.value); },
+          onKeyDown: function (e) { if (e.key === "Enter") props.ask(); },
+        }),
+        h(Button, { size: "sm", onClick: props.ask }, "Ask"),
+        props.answer ? h("pre", { className: "hermes-kanban-observe-answer" },
+          JSON.stringify({
+            answer: props.answer.answer,
+            citations: props.answer.citations,
+            mutation_allowed: props.answer.mutation_allowed,
+          }, null, 2)) : null,
       ),
     );
   }
