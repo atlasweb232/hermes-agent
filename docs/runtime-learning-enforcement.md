@@ -128,6 +128,39 @@ Results:
 - `hermes memory monitor --json` remained `healthy`.
 - Dreaming remained disabled by config and did not mutate runtime state.
 
+Boundary:
+
+- This smoke seeded the approved global lesson as an in-process Python object
+  and passed it directly to `should_curate_locally(...)`.
+- It did not write the lesson into the configured global memory backend.
+- It did not retrieve the lesson from `~/.hermes/memory-wiki/global/state.sqlite`
+  or another durable global index.
+- It did not prove live `hermes chat` prompt injection or supervisor avoidance
+  of the old command loop after restart.
+
+Required next validation:
+
+```text
+persist approved global command-repair lesson
+  -> restart Hermes
+  -> retrieve persisted lesson for a fresh event
+  -> run pre-curation
+  -> record global_lesson_hit
+  -> run live Hermes task
+  -> verify old failure loop is not repeated
+```
+
+Acceptance criteria:
+
+- The retrieved lesson source is durable storage, not a test dictionary.
+- Retrieval audit shows exact signature/hash or bounded near-match reason.
+- Wrong tenant, secret, rejected, and retired lessons are rejected before
+  similarity scoring.
+- Exact retrieved lesson skips expensive local curator work.
+- Near retrieved lesson triggers only lightweight confirmation.
+- Reuse feedback updates aggregate counters/confidence only.
+- No private local evidence is imported into global memory without approval.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:

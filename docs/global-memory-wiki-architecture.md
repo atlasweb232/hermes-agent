@@ -444,6 +444,115 @@ Global dreaming may suggest that many local lessons should be consolidated, but
 only the global reconcile/judge/operator chain can make a canonical global
 write.
 
+## Persisted Lesson Retrieval For Pre-Curation
+
+The deterministic pre-curation gate is not complete until it reads approved
+global lessons from durable storage. In-process dictionaries are acceptable for
+unit tests, but production behavior must prove this sequence:
+
+```text
+approved global lesson
+  -> persist_global_lesson(...)
+  -> configured global state/index backend
+  -> retrieve_global_lessons_for_event(...)
+  -> should_curate_locally(...)
+  -> skip / confirm / curate decision
+  -> aggregate reuse metric
+```
+
+The persisted lesson schema must include enough metadata to make retrieval
+targeted and safe:
+
+- `lesson_id`
+- `approval_state`
+- `tenant_id`
+- `repo_id`
+- `scope`
+- `sensitivity`
+- `visibility`
+- `claim_type`
+- `tool`
+- `task_type`
+- `worker_kind`
+- `failure_signature`
+- `success_signature`
+- `scope_signature`
+- `evidence_signature`
+- `normalized_text`
+- `text_hash`
+- `simhash`
+- `confidence`
+- `reuse_stats`
+- `approval_provenance`
+- `created_at`
+- `updated_at`
+- `retired_at`
+
+Retrieval must be cascade based:
+
+```text
+1. hard gates:
+   approval_state in approved/canonical/applied
+   sensitivity != secret
+   tenant/repo/scope visibility is allowed
+   not retired/stale
+
+2. exact lookup:
+   failure_signature
+   success_signature
+   scope_signature
+   evidence_signature
+   text_hash
+
+3. near lookup:
+   simhash hamming distance threshold
+   lexical overlap
+   confidence floor
+
+4. output:
+   bounded top-k lessons
+   rejected-candidate reasons
+   retrieval audit id
+```
+
+The pre-curation runtime must never treat global memory as stronger than local
+facts, tests, logs, git state, or explicit operator instruction. It may suppress
+expensive local recuration only when the retrieved persisted lesson passes the
+same gates that the in-process deterministic helper uses.
+
+## Failure-Lesson Learn Acceptance Test
+
+The Claude router failure is the canonical first test because the system already
+observed repeated bad commands followed by a direct working command.
+
+Acceptance sequence:
+
+```text
+1. Persist approved global command-repair lesson:
+   failed_path = worker-router claude
+   working_path = claude --model sonnet -p
+   failure_signature = cmd:worker-router:claude:parse-error
+
+2. Restart Hermes so no in-memory test object exists.
+
+3. Start a fresh task that asks Hermes to use Claude Code.
+
+4. Supervisor creates structured event metadata before retrying tools.
+
+5. Runtime retrieves the stored global lesson by signature/hash.
+
+6. Pre-curation returns skip_global_exact_hit or confirm_global_near_hit.
+
+7. Runtime records global_lesson_hit or global_lesson_near_hit.
+
+8. Supervisor avoids repeating the old worker-router failure loop, or escalates
+   through an explicit policy/audit path before trying it again.
+```
+
+This test is different from the first VM smoke. The first smoke proved the
+decision helper. This acceptance test proves durable storage, retrieval,
+runtime integration, and live task behavior.
+
 ## Access Control
 
 Global does not mean visible to everyone.
@@ -476,6 +585,10 @@ claim may be globally proposed only when evidence and approval support it.
     work.
 12. Add global lesson reuse counters and confidence feedback.
 13. Add separate local/global dreaming roles and sidecar leases.
+14. Add persisted global lesson storage schema and local SQLite backend.
+15. Add `retrieve_global_lessons_for_event(...)` and retrieval audits.
+16. Wire persisted retrieval into pre-curation before local curator/dreaming.
+17. Add live failure-lesson learn smoke after restart.
 
 ## Production Scale-Out And Evaluation
 

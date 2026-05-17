@@ -314,6 +314,9 @@
 - [x] T105A [P] [US8] Add global pre-curation dedupe tests proving an exact approved global lesson suppresses local expensive curation, a near match creates only lightweight confirmation, and a miss allows local curation
 - [x] T105B [P] [US8] Add global lesson reuse metric tests for `global_lesson_hit`, `global_lesson_near_hit`, `global_lesson_used`, `global_lesson_helped`, `global_lesson_ignored`, and `global_lesson_hurt`
 - [x] T105C [P] [US8] Add local-vs-global dreaming tests proving local dreaming cannot publish globally, global dreaming reads only approved/shareable canonical memory, and neither path mutates live runtime state
+- [ ] T105D [P] [US8] Add persisted global lesson storage/retrieval tests proving approved command-repair lessons are written to the configured global memory backend and read back through `retrieve_global_lessons_for_event(...)`, not injected as in-process test dictionaries
+- [ ] T105E [P] [US8] Add runtime pre-curation integration tests proving local curator/dreaming calls are skipped only when retrieved persisted lessons produce exact/near approved matches, and still run on storage miss, wrong tenant, secret, rejected, or stale lessons
+- [ ] T105F [P] [US8] Add live failure-learn smoke fixture proving a fresh Hermes task retrieves the stored Claude router failure lesson before repeating the old bad command loop
 
 ### Implementation for Production Runtime Surfaces
 
@@ -332,6 +335,11 @@
 - [x] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval
 - [x] T119 [US8] Split local dreaming and global dreaming role/config/lease definitions so local dreaming stays tenant/repo scoped and global dreaming consumes only approved redacted global memory
 - [x] T120 [US8] Update VM smoke to include a duplicate-failure scenario where a global approved command-repair lesson suppresses local recuration and records a global lesson hit
+- [ ] T121 [US8] Implement `persist_global_lesson(...)` and local SQLite-backed global memory state schema for approved canonical lessons with failure/success/scope/evidence signatures, confidence, reuse stats, approval provenance, tenant/scope/sensitivity gates, text hash, simhash, and stale/retired status
+- [ ] T122 [US8] Implement `retrieve_global_lessons_for_event(...)` with hard metadata filters first, exact signature/hash lookup second, near simhash/lexical fallback third, strict top-k caps, and audit output showing which backend rows were considered or rejected
+- [ ] T123 [US8] Wire retrieved persisted global lessons into the pre-curation path before local curator and local dreaming, recording `global_lesson_hit`, `global_lesson_near_hit`, or `global_lesson_miss` as aggregate feedback without copying private local evidence globally
+- [ ] T124 [US8] Add CLI/API surfaces for operator testing: `hermes memory global lesson add/list/get`, `hermes memory global retrieve --event-json`, and JSON output suitable for backend/dashboard invocation
+- [ ] T125 [US8] Update VM smoke to persist the Claude router repair lesson in the real global memory backend, restart Hermes, run a fresh retrieval/pre-curation check, and then run a live Hermes task to verify the stored lesson is found before the old failure loop repeats
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 
