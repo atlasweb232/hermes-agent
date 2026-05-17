@@ -159,16 +159,19 @@
 ### Tests for User Story 5
 
 - [ ] T063 [P] [US5] Add memory wiki compiler tests in `tests/hermes_cli/test_memory_wiki.py` covering scoped evidence-backed claims, deduplication, confidence, safety metadata, index payloads, and training payloads
-- [ ] T064 [P] [US5] Add dreaming proposal tests in `tests/hermes_cli/test_memory_dreaming.py` covering proposal generation from wiki claims, repeated failures, job history, policy audits, and worker outcomes
-- [ ] T065 [P] [US5] Add negative tests proving dreaming proposals are not injected, indexed as approved memory, applied to config, or enforced in `tests/hermes_cli/test_memory_dreaming.py`
+- [ ] T064 [P] [US5] Add dreaming proposal tests in `tests/hermes_cli/test_memory_dreaming.py` covering strict JSON schema parsing, proposal generation from wiki claims, repeated failures, job history, policy audits, and worker outcomes
+- [ ] T065 [P] [US5] Add negative tests proving dreaming proposals are not injected, indexed as approved memory, applied to config, queued as goals, or enforced in `tests/hermes_cli/test_memory_dreaming.py`
+- [ ] T065A [P] [US5] Add deterministic dreaming validator tests for missing evidence refs, secret leakage, destructive commands, unsupported scope broadening, duplicate proposals, cross-tenant sharing, and enforcement/config mutation requests
 
 ### Implementation for User Story 5
 
 - [ ] T066 [US5] Create `hermes_cli/memory_wiki.py` for evidence-backed wiki claims with tenant/repo/platform/tool scope, safety/shareability flags, index payloads, and curated training payloads
-- [ ] T067 [US5] Create `hermes_cli/memory_dreaming.py` for proposal-only synthesis; proposals may suggest playbooks, tests, routing, cleanup, architecture, or policy candidates but remain non-runtime until judged/operator-approved
-- [ ] T068 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`, publishing wiki events to the learning bus and recording wiki learning jobs
-- [ ] T069 [US5] Add `hermes memory dream run/status` CLI wiring in `hermes_cli/main.py`, publishing proposal events to the learning bus and recording dreaming learning jobs
-- [ ] T070 [US5] Add wiki, dreaming, training-data, and native goal-loop integration sections to `docs/curator-policy-framework-architecture.md`
+- [ ] T067 [US5] Create `hermes_cli/memory_dreaming.py` for proposal-only synthesis with evidence-only input packets, strict output schema, deterministic validators, stable proposal ids, duplicate detection, narrow default scope, risk labels, audit trail, and kill-switch config
+- [ ] T068 [US5] Add separate dreaming proposal storage/status helpers so proposals cannot be returned by approved-memory retrieval, wiki compilation, or the policy engine until converted through judge/operator gates
+- [ ] T069 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`, publishing wiki events to the learning bus and recording wiki learning jobs
+- [ ] T070 [US5] Add `hermes memory dream run/status` CLI wiring in `hermes_cli/main.py`, publishing proposal events to the learning bus and recording dreaming learning jobs
+- [ ] T070A [US5] Add config knobs for `supervisor.dreaming.enabled`, `allow_llm`, `allow_cross_tenant`, `allow_policy_proposals`, `max_proposals_per_run`, evidence window, and sidecar interval
+- [ ] T070B [US5] Add wiki, dreaming, training-data, native goal-loop integration, and risk-mitigation sections to `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 

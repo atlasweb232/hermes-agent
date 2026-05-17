@@ -878,3 +878,92 @@ proposal records only. A goal loop may keep working on an already-authorized
 task; dreaming may only propose future work or policy ideas. Dreaming output
 must not be queued as a goal, injected into worker context, or applied as
 policy unless it passes the normal judge/operator gates.
+
+## Dreaming Risk Mitigations
+
+Dreaming is useful because an LLM can synthesize patterns that deterministic
+rules may miss, but the LLM output is not trusted. The implementation must
+layer programmatic controls around the model.
+
+Dreaming input should be evidence-only:
+
+- wiki claim ids
+- candidate ids
+- learning event ids
+- job summaries
+- policy audit ids
+- redacted compact excerpts only when needed
+
+Dreaming output must use a strict schema. At minimum:
+
+```json
+{
+  "proposal_type": "playbook|test|routing|policy|cleanup|architecture",
+  "summary": "...",
+  "rationale": "...",
+  "evidence_refs": ["..."],
+  "scope": {},
+  "risk": "low|medium|high",
+  "requested_action": "...",
+  "runtime_effect": false
+}
+```
+
+Malformed output is rejected. Before persistence, deterministic validators
+must check:
+
+- every evidence ref exists
+- no raw secrets or secret-looking values are present
+- no destructive command is proposed without high-risk escalation
+- no unsupported tenant/repo/platform/tool scope broadening
+- no cross-tenant sharing unless explicitly allowed
+- no duplicate proposal already exists for the same type, scope, and summary
+- no config mutation or enforcement request bypasses policy proposal status
+- rationale and risk are present
+
+Dreaming proposals must be stored separately from approved memory, wiki claims,
+and policy candidates. Retrieval must not read proposal storage. The policy
+engine must not read proposal storage. Worker context injection must not read
+proposal storage. Proposal lifecycle is:
+
+```text
+proposed
+  -> judged
+  -> approved/rejected/archived
+```
+
+Only a later conversion step can produce approved memory, a wiki update, a
+validation recipe, a playbook, or a policy candidate. That conversion must go
+through the same judge/operator boundary as the rest of the learning system.
+
+Default scope should be narrow:
+
+```text
+tenant=current
+repo=current
+platform=current
+tool=current
+cross_tenant_shareable=false
+```
+
+Global or cross-tenant lessons require explicit approval. Confidence and
+freshness must decay when claims become stale or receive negative feedback.
+Every transition records who/what proposed it, evidence refs, judge decision,
+operator decision, timestamps, config version, and whether any runtime effect
+was allowed.
+
+Dreaming should also have kill switches:
+
+```yaml
+supervisor:
+  dreaming:
+    enabled: false
+    allow_llm: true
+    allow_cross_tenant: false
+    allow_policy_proposals: true
+    max_proposals_per_run: 10
+```
+
+Negative tests must prove proposals are not injected, indexed as approved
+memory, queued as goals, applied to config, used by the policy engine, or
+allowed to cross tenant boundaries by default.
