@@ -246,18 +246,20 @@ Docker relevance from a Claude routing lesson even though Docker was unrelated.
 
 ## Enforcement Boundary
 
-This framework does not automatically rewrite terminal commands yet. The next
-layer should be a generic command-repair policy engine:
+This framework does not automatically rewrite terminal commands yet. The first
+policy-engine layer is audit-only:
 
 ```text
 incoming terminal command
   -> normalize command
   -> match approved command_repair_policy candidates
-  -> rewrite/block with audit metadata
+  -> emit runtime_policy_audit metadata
+  -> execute original command unchanged
 ```
 
 That engine must not hardcode per-failure fixes. It should consume approved
-policy data with bounded selectors and templates.
+policy data with bounded selectors. Rewrite templates remain a future
+enforcement layer.
 
 ## Injection And Enforcement
 
@@ -265,16 +267,16 @@ The unresolved runtime issue is not memory capture or curation. It is injection
 and enforcement: Hermes can store a lesson and curate a policy candidate, but the
 terminal tool path must still consult approved policy before execution.
 
-The generic policy engine should run as a terminal pre-tool step:
+The generic policy engine runs as a terminal pre-tool step:
 
 ```text
 terminal(function_args.command)
   -> command normalizer
   -> approved policy lookup
   -> selector match
-  -> rewrite/block/noop decision
+  -> audit/noop decision
   -> terminal execution
-  -> runtime_policy_applied audit metadata
+  -> runtime_policy_audit metadata
 ```
 
 Policy lookup rules:
@@ -310,14 +312,16 @@ The policy data consumed by the engine should be structured:
 }
 ```
 
-Every applied policy must annotate the tool result:
+Every matched policy annotates the tool result:
 
 ```json
 {
-  "runtime_policy_applied": {
+  "runtime_policy_audit": {
+    "status": "matched",
+    "mode": "audit",
     "policy_id": "curpol_...",
     "source_record_id": "memrec_...",
-    "action": "rewrite",
+    "action": "would_rewrite",
     "from": "worker-router claude --model sonnet -p \"two plus two\"",
     "to": "claude -p \"two plus two\" --model sonnet",
     "policy_version": "2026.05.16"
@@ -339,15 +343,16 @@ Suggested config:
 ```yaml
 supervisor:
   policy_engine:
-    enabled: false
+    enabled: true
     mode: audit
-    max_rewrites_per_session: 1
+    max_matches: 3
     allowed_policy_types:
       - command_repair
 ```
 
 `mode=audit` should log what would have happened without changing the command.
-`mode=enforce` should require explicit approval of the policy-engine layer.
+The current implementation treats `mode=enforce` as audit until deterministic
+rewrite templating and explicit enforcement approval are added.
 
 ## Candidate Housekeeping
 
@@ -476,12 +481,12 @@ Implemented:
 - CLI archive/prune wrappers
 - sidecar-triggered bounded housekeeping
 - DB-backed controlled learning retrieval/injection for worker context
+- terminal policy engine audit mode for approved command-repair policies
 
 Not implemented yet:
 
 - backend HTTP API routes
 - dashboard/control-plane UI
-- generic terminal policy engine
 - command rewrite/block enforcement
 - policy-engine metrics
 - memory wiki promotion/storage

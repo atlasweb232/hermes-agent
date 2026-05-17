@@ -709,6 +709,12 @@ DEFAULT_CONFIG = {
             "max_records": 10,
             "min_score": 0.5,
         },
+        "policy_engine": {
+            "enabled": True,
+            "mode": "audit",
+            "allowed_policy_types": ["command_repair"],
+            "max_matches": 3,
+        },
     },
     
     "terminal": {

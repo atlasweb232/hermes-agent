@@ -1763,6 +1763,21 @@ def terminal_tool(
                     "status": "error",
                 }, ensure_ascii=False)
 
+        policy_metadata = None
+        try:
+            from hermes_cli.policy_engine import (
+                compact_policy_metadata,
+                evaluate_command_policy,
+            )
+
+            policy_decision = evaluate_command_policy(command)
+            policy_metadata = compact_policy_metadata(policy_decision)
+            # Enforcement/rewrite is intentionally not active yet. Audit mode
+            # only annotates tool results so operators can validate policies.
+            command = policy_decision.effective_command
+        except Exception:
+            policy_metadata = None
+
         # Start cleanup thread
         _start_cleanup_thread()
 
@@ -1957,6 +1972,8 @@ def terminal_tool(
                     result_data["approval"] = approval_note
                 if pty_disabled_reason:
                     result_data["pty_note"] = pty_disabled_reason
+                if policy_metadata:
+                    result_data["runtime_policy_audit"] = policy_metadata
 
                 # Populate routing metadata on the session so that
                 # watch-pattern and completion notifications can be
@@ -2130,6 +2147,8 @@ def terminal_tool(
                 result_dict["approval"] = approval_note
             if exit_note:
                 result_dict["exit_code_meaning"] = exit_note
+            if policy_metadata:
+                result_dict["runtime_policy_audit"] = policy_metadata
 
             return json.dumps(result_dict, ensure_ascii=False)
 
