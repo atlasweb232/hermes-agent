@@ -11306,6 +11306,73 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    candidates_archive = candidates_sub.add_parser(
+        "archive",
+        help="Archive a candidate without deleting evidence",
+    )
+    candidates_archive.add_argument("candidate_id", help="Meta-candidate id")
+    candidates_archive.add_argument(
+        "--reason",
+        default="archived by operator",
+        help="Archive reason",
+    )
+    candidates_archive.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
+    candidates_prune = candidates_sub.add_parser(
+        "prune",
+        help="Run bounded candidate housekeeping",
+        description="Archive stale/noisy meta-candidates. Defaults to dry-run unless --yes is supplied.",
+    )
+    candidates_prune.add_argument("--tenant-id", default="", help="Tenant scope")
+    candidates_prune.add_argument("--repo-id", default="", help="Repository scope")
+    candidates_prune.add_argument(
+        "--proposed-ttl-days",
+        type=float,
+        default=None,
+        help="Override proposed candidate TTL",
+    )
+    candidates_prune.add_argument(
+        "--rejected-ttl-days",
+        type=float,
+        default=None,
+        help="Override rejected candidate TTL",
+    )
+    candidates_prune.add_argument(
+        "--approved-ttl-days",
+        type=float,
+        default=None,
+        help="Override approved candidate TTL",
+    )
+    candidates_prune.add_argument(
+        "--max-per-kind",
+        type=int,
+        default=None,
+        help="Override proposed candidates kept per kind",
+    )
+    candidates_prune.add_argument(
+        "--max-run",
+        type=int,
+        default=None,
+        help="Override max candidates archived per run",
+    )
+    candidates_prune.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply archive changes. Without this flag the command is a dry-run.",
+    )
+    candidates_prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview archive changes without mutating state",
+    )
+    candidates_prune.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON output",
+    )
     _reset_parser = memory_sub.add_parser(
         "reset",
         help="Erase all built-in memory (MEMORY.md and USER.md)",
@@ -11384,11 +11451,13 @@ Examples:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
+                archive_meta_candidate,
                 create_memory_packet,
                 evaluate_memory_readiness,
                 monitor_learning,
                 reject_meta_candidate,
                 reconcile_learning_candidates,
+                run_candidate_housekeeping,
                 run_learning_sidecar,
                 rollup_learning_candidates,
             )
@@ -11595,8 +11664,59 @@ Examples:
                                 f"\n  candidate {result.candidate_id} rejected"
                                 f"  reason: {result.notes}\n"
                             )
+                    elif cand_cmd == "archive":
+                        candidate_id = getattr(args, "candidate_id")
+                        reason = getattr(args, "reason", "archived by operator")
+                        result = archive_meta_candidate(
+                            db,
+                            candidate_id=candidate_id,
+                            reason=reason,
+                        )
+                        payload = {
+                            "candidate_id": result.candidate_id,
+                            "status": result.status,
+                            "reason": result.notes,
+                        }
+                        if getattr(args, "json", False):
+                            print(json.dumps(payload, indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  candidate {candidate_id} archived  reason: {reason}\n")
+                    elif cand_cmd == "prune":
+                        hk_config = json.loads(json.dumps(config))
+                        learning = hk_config.setdefault("supervisor", {}).setdefault("learning", {})
+                        housekeeping = learning.setdefault("housekeeping", {})
+                        overrides = {
+                            "proposed_ttl_days": getattr(args, "proposed_ttl_days", None),
+                            "rejected_ttl_days": getattr(args, "rejected_ttl_days", None),
+                            "approved_ttl_days": getattr(args, "approved_ttl_days", None),
+                            "max_candidates_per_kind": getattr(args, "max_per_kind", None),
+                            "max_candidates_per_run": getattr(args, "max_run", None),
+                        }
+                        for key, value in overrides.items():
+                            if value is not None:
+                                housekeeping[key] = value
+                        dry_run = bool(
+                            getattr(args, "dry_run", False) or not getattr(args, "yes", False)
+                        )
+                        result = run_candidate_housekeeping(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            config=hk_config,
+                            dry_run=dry_run,
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            mode = "dry-run" if result.dry_run else "applied"
+                            print(
+                                f"\n  candidate housekeeping: {result.status} ({mode})"
+                                f"  scanned: {result.scanned}"
+                                f"  planned: {len(result.items)}"
+                                f"  archived: {result.archived}\n"
+                            )
                     else:
-                        print("  Use: hermes memory candidates list|approve|reject\n")
+                        print("  Use: hermes memory candidates list|approve|reject|archive|prune\n")
             finally:
                 db.close()
         else:

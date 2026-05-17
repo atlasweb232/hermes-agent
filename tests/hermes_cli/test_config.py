@@ -75,6 +75,9 @@ class TestLoadConfigDefaults:
             assert config["supervisor"]["learning"]["sidecar"]["enabled"] is False
             assert config["supervisor"]["learning"]["sidecar"]["interval_seconds"] == 300
             assert config["supervisor"]["learning"]["sidecar"]["run_on_start"] is True
+            assert config["supervisor"]["learning"]["housekeeping"]["enabled"] is True
+            assert config["supervisor"]["learning"]["housekeeping"]["interval_seconds"] == 3600
+            assert config["supervisor"]["learning"]["housekeeping"]["max_candidates_per_kind"] == 25
             assert config["supervisor"]["learning"]["context_max_entries_per_bucket"] == 3
             assert config["supervisor"]["learning"]["context_max_total_chars"] == 6000
 

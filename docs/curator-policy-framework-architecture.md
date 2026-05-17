@@ -91,6 +91,8 @@ POST /api/curator/policy-run
 GET  /api/curator/candidates
 POST /api/curator/candidates/:id/approve
 POST /api/curator/candidates/:id/reject
+POST /api/curator/candidates/:id/archive
+POST /api/curator/candidates/prune
 ```
 
 Expected response shape for `POST /api/curator/policy-run`:
@@ -121,6 +123,9 @@ Approval endpoints must preserve the candidate evidence payload. Approval may
 mark a candidate eligible for later policy-engine use, but it must not erase
 `validation`, `source_record_id`, `failed_path`, `working_path`, or
 `curator_output`.
+
+Archive and prune endpoints must also preserve evidence. They mark candidates
+`archived` and append action metadata; they do not delete rows.
 
 ## Evidence Flow
 
@@ -283,6 +288,77 @@ supervisor:
 `mode=audit` should log what would have happened without changing the command.
 `mode=enforce` should require explicit approval of the policy-engine layer.
 
+## Candidate Housekeeping
+
+Housekeeping is a control-plane/background operation, not a chat/tool hot-path
+operation. Its job is to keep `hermes_meta_candidates` useful by archiving stale
+or noisy candidates while preserving the evidence trail.
+
+Default policy:
+
+```yaml
+supervisor:
+  learning:
+    housekeeping:
+      enabled: true
+      interval_seconds: 3600
+      max_scan: 1000
+      max_candidates_per_run: 100
+      max_runtime_seconds: 10
+      proposed_ttl_days: 7
+      rejected_ttl_days: 30
+      approved_ttl_days: 0
+      max_candidates_per_kind: 25
+```
+
+Lifecycle states:
+
+```text
+proposed -> approved -> applied
+proposed -> rejected
+proposed/rejected/approved -> archived
+applied -> rolled_back
+```
+
+`approved_ttl_days=0` means approved candidates are durable by default.
+Operators must explicitly opt into approved-candidate cleanup.
+
+Manual CLI smoke tests:
+
+```bash
+hermes memory candidates prune --dry-run --json
+hermes memory candidates prune --yes --json
+hermes memory candidates archive <candidate_id> --reason "superseded"
+```
+
+The same service function should back future API endpoints:
+
+```http
+POST /api/curator/candidates/prune
+POST /api/curator/candidates/:id/archive
+```
+
+Housekeeping triggers:
+
+- manual CLI/API prune request
+- learning sidecar tick when `interval_seconds` has elapsed
+- future backend scheduler job running in a worker thread/process
+
+Housekeeping guardrails:
+
+- bounded scan count
+- bounded archive count per run
+- bounded runtime
+- archive, never delete
+- preserve existing `evidence_json`
+- append action history with `housekeeping_run_id`, previous status, reason, and timestamp
+- never block terminal execution, delegation, or chat response generation
+
+This answers the "old candidates should not be there" problem without losing
+auditability. Old or low-value candidates become invisible to normal active
+candidate review by using `status=archived`, but they remain available for
+forensics and later migration into memory wiki/cold storage.
+
 ## Current Implementation Status
 
 Implemented:
@@ -294,6 +370,9 @@ Implemented:
 - validation warnings/errors
 - validation-preserving approval path
 - stable upsert/dedupe per source lesson and policy version
+- candidate housekeeping service
+- CLI archive/prune wrappers
+- sidecar-triggered bounded housekeeping
 
 Not implemented yet:
 
@@ -302,6 +381,9 @@ Not implemented yet:
 - generic terminal policy engine
 - command rewrite/block enforcement
 - policy-engine metrics
+- memory wiki promotion/storage
+- dreaming/offline synthesis phase
+- hot/warm/cold memory tiering
 
 ## Why This Shape
 

@@ -122,10 +122,41 @@ class LearningPolicyResult:
 
 
 @dataclass
+class CandidateHousekeepingItem:
+    candidate_id: str
+    kind: str
+    status: str
+    action: str
+    reason: str
+    score: Optional[float] = None
+    created_at: Optional[float] = None
+    updated_at: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class CandidateHousekeepingResult:
+    status: str
+    scanned: int
+    archived: int
+    skipped: int
+    dry_run: bool
+    items: List[CandidateHousekeepingItem] = field(default_factory=list)
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    errors: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class LearningSidecarTickResult:
     rollup: Dict[str, Any]
     monitor: Dict[str, Any]
     policy: Dict[str, Any]
+    housekeeping: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -618,6 +649,195 @@ def _candidate_is_auto_promotable(candidate: Dict[str, Any]) -> bool:
     return bool(validation.get("eligible_for_approval")) and not validation.get("errors")
 
 
+def _candidate_housekeeping_policy(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if config is None:
+        config = load_config()
+    learning = (config.get("supervisor") or {}).get("learning") or {}
+    if not isinstance(learning, dict):
+        return {}
+    policy = learning.get("housekeeping")
+    return policy if isinstance(policy, dict) else {}
+
+
+def _archive_meta_candidate(
+    db: SessionDB,
+    candidate: Dict[str, Any],
+    *,
+    reason: str,
+    run_id: str,
+    now: Optional[float] = None,
+) -> bool:
+    archived_at = _now() if now is None else now
+    evidence = _candidate_evidence_with_action(
+        candidate,
+        action={
+            "archived_at": archived_at,
+            "housekeeping_run_id": run_id,
+            "previous_status": candidate.get("status"),
+            "reason": reason,
+        },
+    )
+    return db.update_meta_candidate_status(
+        str(candidate.get("id") or ""),
+        status="archived",
+        evidence_json=evidence,
+    )
+
+
+def archive_meta_candidate(
+    db: SessionDB,
+    *,
+    candidate_id: str,
+    reason: str = "archived by operator",
+) -> MetaCandidateActionResult:
+    candidate = db.get_meta_candidate(candidate_id)
+    if candidate is None:
+        raise ValueError(f"unknown meta candidate: {candidate_id}")
+    _archive_meta_candidate(
+        db,
+        candidate,
+        reason=reason,
+        run_id="manual",
+    )
+    return MetaCandidateActionResult(
+        candidate_id=candidate_id,
+        status="archived",
+        applied=False,
+        config_written=False,
+        notes=reason,
+        candidate=candidate,
+    )
+
+
+def run_candidate_housekeeping(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+    dry_run: bool = False,
+    now: Optional[float] = None,
+) -> CandidateHousekeepingResult:
+    """Archive stale/noisy meta-candidates without blocking runtime execution."""
+    policy = _candidate_housekeeping_policy(config)
+    if policy.get("enabled", True) is False:
+        return CandidateHousekeepingResult(
+            status="disabled",
+            scanned=0,
+            archived=0,
+            skipped=0,
+            dry_run=bool(dry_run),
+            metrics={"reason": "housekeeping disabled"},
+        )
+
+    now_ts = _now() if now is None else float(now)
+    run_id = f"hk_{uuid.uuid4().hex[:16]}"
+    max_scan = max(1, int(policy.get("max_scan", 1000) or 1000))
+    max_per_run = max(1, int(policy.get("max_candidates_per_run", 100) or 100))
+    max_runtime_seconds = max(0.1, float(policy.get("max_runtime_seconds", 10) or 10))
+    proposed_ttl_days = float(policy.get("proposed_ttl_days", 7) or 0)
+    rejected_ttl_days = float(policy.get("rejected_ttl_days", 30) or 0)
+    approved_ttl_days = float(policy.get("approved_ttl_days", 0) or 0)
+    max_candidates_per_kind = int(policy.get("max_candidates_per_kind", 25) or 0)
+
+    rows = db.list_meta_candidates(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        limit=max_scan,
+    )
+    start_ts = _now()
+    items: List[CandidateHousekeepingItem] = []
+    archived = 0
+    skipped = 0
+    errors: List[str] = []
+    planned_ids: set[str] = set()
+    by_kind_status: Dict[str, int] = {}
+
+    def age_days(row: Dict[str, Any]) -> float:
+        created = float(row.get("created_at") or row.get("updated_at") or now_ts)
+        return max(0.0, (now_ts - created) / 86400.0)
+
+    def plan_archive(row: Dict[str, Any], reason: str) -> None:
+        nonlocal archived, skipped
+        candidate_id = str(row.get("id") or "")
+        if not candidate_id or candidate_id in planned_ids:
+            return
+        if len(items) >= max_per_run:
+            skipped += 1
+            return
+        if _now() - start_ts > max_runtime_seconds:
+            skipped += 1
+            return
+        planned_ids.add(candidate_id)
+        item = CandidateHousekeepingItem(
+            candidate_id=candidate_id,
+            kind=str(row.get("kind") or ""),
+            status=str(row.get("status") or ""),
+            action="archive",
+            reason=reason,
+            score=row.get("score"),
+            created_at=row.get("created_at"),
+            updated_at=row.get("updated_at"),
+        )
+        items.append(item)
+        if dry_run:
+            return
+        try:
+            if _archive_meta_candidate(db, row, reason=reason, run_id=run_id, now=now_ts):
+                archived += 1
+            else:
+                skipped += 1
+        except Exception as exc:
+            errors.append(f"{candidate_id}: {exc}")
+
+    for row in rows:
+        status = str(row.get("status") or "")
+        kind_status_key = f"{row.get('kind') or 'unknown'}:{status or 'unknown'}"
+        by_kind_status[kind_status_key] = by_kind_status.get(kind_status_key, 0) + 1
+        if status == "proposed" and proposed_ttl_days > 0 and age_days(row) >= proposed_ttl_days:
+            plan_archive(row, f"proposed candidate older than {proposed_ttl_days:g} days")
+        elif status == "rejected" and rejected_ttl_days > 0 and age_days(row) >= rejected_ttl_days:
+            plan_archive(row, f"rejected candidate older than {rejected_ttl_days:g} days")
+        elif status == "approved" and approved_ttl_days > 0 and age_days(row) >= approved_ttl_days:
+            plan_archive(row, f"approved candidate older than {approved_ttl_days:g} days")
+
+    if max_candidates_per_kind > 0:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            if str(row.get("status") or "") != "proposed":
+                continue
+            kind = str(row.get("kind") or "unknown")
+            grouped.setdefault(kind, []).append(row)
+        for kind, kind_rows in grouped.items():
+            kind_rows.sort(key=lambda row: float(row.get("created_at") or 0), reverse=True)
+            for row in kind_rows[max_candidates_per_kind:]:
+                plan_archive(
+                    row,
+                    f"exceeds max proposed candidates per kind ({max_candidates_per_kind}) for {kind}",
+                )
+
+    status = "completed" if not errors else "completed_with_errors"
+    if dry_run:
+        archived = 0
+    return CandidateHousekeepingResult(
+        status=status,
+        scanned=len(rows),
+        archived=archived,
+        skipped=skipped,
+        dry_run=bool(dry_run),
+        items=items,
+        metrics={
+            "run_id": run_id,
+            "planned": len(items),
+            "max_scan": max_scan,
+            "max_candidates_per_run": max_per_run,
+            "max_candidates_per_kind": max_candidates_per_kind,
+            "by_kind_status": by_kind_status,
+        },
+        errors=errors,
+    )
+
+
 def run_learning_sidecar(
     db_factory: Optional[Callable[[], SessionDB]] = None,
     *,
@@ -632,6 +852,7 @@ def run_learning_sidecar(
     reconcile_fn: Callable[..., LearningPolicyResult] = reconcile_learning_candidates,
     sleep_fn: Callable[[float], None] = time.sleep,
     on_tick: Optional[Callable[[LearningSidecarTickResult], None]] = None,
+    housekeeping_fn: Callable[..., CandidateHousekeepingResult] = run_candidate_housekeeping,
 ) -> LearningSidecarResult:
     """Run the optional learning sidecar loop.
 
@@ -648,6 +869,11 @@ def run_learning_sidecar(
     ticks = 0
     errors: List[str] = []
     last_tick: Optional[LearningSidecarTickResult] = None
+    housekeeping_policy = _candidate_housekeeping_policy(config)
+    housekeeping_interval = float(
+        housekeeping_policy.get("interval_seconds", 3600) or 3600
+    )
+    last_housekeeping_at = 0.0
     while True:
         tick_errors: List[str] = []
         try:
@@ -670,11 +896,39 @@ def run_learning_sidecar(
                     repo_id=repo_id,
                     config=config,
                 )
+                housekeeping: Dict[str, Any] = {
+                    "status": "skipped",
+                    "reason": "interval_not_due",
+                }
+                if housekeeping_policy.get("enabled", True) is not False:
+                    current_ts = _now()
+                    if (
+                        once
+                        or last_housekeeping_at <= 0
+                        or current_ts - last_housekeeping_at >= housekeeping_interval
+                    ):
+                        try:
+                            housekeeping = housekeeping_fn(
+                                db,
+                                tenant_id=tenant_id,
+                                repo_id=repo_id,
+                                config=config,
+                                dry_run=False,
+                            ).to_dict()
+                            last_housekeeping_at = current_ts
+                        except Exception as exc:
+                            err = f"housekeeping: {exc}"
+                            tick_errors.append(err)
+                            errors.append(err)
+                            housekeeping = {"status": "error", "error": str(exc)}
+                else:
+                    housekeeping = {"status": "disabled"}
                 last_tick = LearningSidecarTickResult(
                     rollup=rollup.to_dict(),
                     monitor=monitor.to_dict(),
                     policy=policy.to_dict(),
-                    errors=[],
+                    housekeeping=housekeeping,
+                    errors=list(tick_errors),
                 )
         except Exception as exc:
             err = str(exc)
@@ -684,6 +938,7 @@ def run_learning_sidecar(
                 rollup={"status": "error"},
                 monitor={"status": "error"},
                 policy={"status": "error"},
+                housekeeping={"status": "error"},
                 errors=list(tick_errors),
             )
         ticks += 1
@@ -1009,13 +1264,14 @@ def reject_meta_candidate(
     candidate = db.get_meta_candidate(candidate_id)
     if candidate is None:
         raise ValueError(f"unknown meta candidate: {candidate_id}")
+    evidence = _candidate_evidence_with_action(
+        candidate,
+        action={"rejected_at": _now(), "reason": reason},
+    )
     db.update_meta_candidate_status(
         candidate_id,
         status="rejected",
-        evidence_json={
-            "rejected_at": _now(),
-            "reason": reason,
-        },
+        evidence_json=evidence,
     )
     return MetaCandidateActionResult(
         candidate_id=candidate_id,

@@ -608,6 +608,21 @@ DEFAULT_CONFIG = {
                 "degraded_statuses": ["degraded"],
                 "revert_statuses": ["applied"],
             },
+            # Candidate housekeeping is sidecar/background maintenance. It
+            # archives noisy/stale candidates rather than deleting evidence.
+            "housekeeping": {
+                "enabled": True,
+                "interval_seconds": 3600,
+                "max_scan": 1000,
+                "max_candidates_per_run": 100,
+                "max_runtime_seconds": 10,
+                "proposed_ttl_days": 7,
+                "rejected_ttl_days": 30,
+                # Approved/applied guidance is durable by default. Operators
+                # can override this for explicit cleanup windows.
+                "approved_ttl_days": 0,
+                "max_candidates_per_kind": 25,
+            },
             "sidecar": {
                 "enabled": False,
                 # Run the sidecar on a conservative cadence; operators can

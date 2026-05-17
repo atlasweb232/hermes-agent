@@ -14,6 +14,7 @@ from hermes_cli.supervisor_memory import (
     monitor_learning,
     reject_meta_candidate,
     reconcile_learning_candidates,
+    run_candidate_housekeeping,
     run_learning_sidecar,
     rollup_learning_candidates,
 )
@@ -22,6 +23,20 @@ from hermes_state import SessionDB
 
 def _make_db(tmp_path: Path) -> SessionDB:
     return SessionDB(db_path=tmp_path / "state.db")
+
+
+def _set_candidate_created_at(db: SessionDB, candidate_id: str, timestamp: float) -> None:
+    def _do(conn):
+        conn.execute(
+            """
+            UPDATE hermes_meta_candidates
+               SET created_at = ?, updated_at = ?
+             WHERE id = ?
+            """,
+            (timestamp, timestamp, candidate_id),
+        )
+
+    db._execute_write(_do)
 
 
 def test_evaluate_memory_readiness_marks_empty_and_persists(tmp_path, monkeypatch):
@@ -541,6 +556,157 @@ def test_reject_meta_candidate_marks_status(tmp_path, monkeypatch):
         assert result.status == "rejected"
         row = db.get_meta_candidate("metacand_reject")
         assert row["status"] == "rejected"
+        assert row["evidence_json"]["record_id"] == "rec-reject"
+        assert row["evidence_json"]["actions"]
+    finally:
+        db.close()
+
+
+def test_candidate_housekeeping_archives_stale_proposed_candidate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        now = 1_778_000_000.0
+        db.upsert_meta_candidate(
+            candidate_id="metacand_stale",
+            kind="playbook",
+            claim="old noisy lesson",
+            evidence_json={"record_id": "rec-stale"},
+            score=0.3,
+            status="proposed",
+        )
+        _set_candidate_created_at(db, "metacand_stale", now - 3 * 86400)
+
+        result = run_candidate_housekeeping(
+            db,
+            config={"supervisor": {"learning": {"housekeeping": {"proposed_ttl_days": 1}}}},
+            now=now,
+        )
+
+        assert result.status == "completed"
+        assert result.archived == 1
+        row = db.get_meta_candidate("metacand_stale")
+        assert row["status"] == "archived"
+        assert row["evidence_json"]["record_id"] == "rec-stale"
+        assert row["evidence_json"]["previous_status"] == "proposed"
+    finally:
+        db.close()
+
+
+def test_candidate_housekeeping_dry_run_does_not_mutate(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        now = 1_778_000_000.0
+        db.upsert_meta_candidate(
+            candidate_id="metacand_preview",
+            kind="recovery_hint",
+            claim="old recovery hint",
+            evidence_json={"record_id": "rec-preview"},
+            score=0.2,
+            status="proposed",
+        )
+        _set_candidate_created_at(db, "metacand_preview", now - 5 * 86400)
+
+        result = run_candidate_housekeeping(
+            db,
+            config={"supervisor": {"learning": {"housekeeping": {"proposed_ttl_days": 1}}}},
+            dry_run=True,
+            now=now,
+        )
+
+        assert result.dry_run is True
+        assert result.archived == 0
+        assert len(result.items) == 1
+        row = db.get_meta_candidate("metacand_preview")
+        assert row["status"] == "proposed"
+    finally:
+        db.close()
+
+
+def test_candidate_housekeeping_trims_excess_proposed_per_kind(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        now = 1_778_000_000.0
+        for idx in range(4):
+            candidate_id = f"metacand_trim_{idx}"
+            db.upsert_meta_candidate(
+                candidate_id=candidate_id,
+                kind="playbook",
+                claim=f"candidate {idx}",
+                evidence_json={"record_id": f"rec-{idx}"},
+                score=0.4,
+                status="proposed",
+            )
+            _set_candidate_created_at(db, candidate_id, now + idx)
+
+        result = run_candidate_housekeeping(
+            db,
+            config={
+                "supervisor": {
+                    "learning": {
+                        "housekeeping": {
+                            "proposed_ttl_days": 0,
+                            "max_candidates_per_kind": 2,
+                        }
+                    }
+                }
+            },
+            now=now,
+        )
+
+        assert result.archived == 2
+        assert db.get_meta_candidate("metacand_trim_3")["status"] == "proposed"
+        assert db.get_meta_candidate("metacand_trim_2")["status"] == "proposed"
+        assert db.get_meta_candidate("metacand_trim_1")["status"] == "archived"
+        assert db.get_meta_candidate("metacand_trim_0")["status"] == "archived"
+    finally:
+        db.close()
+
+
+def test_cli_candidates_prune_defaults_to_dry_run(tmp_path, monkeypatch, capsys):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = SessionDB()
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_cli_prune",
+            kind="playbook",
+            claim="cli prune preview",
+            evidence_json={"record_id": "rec-cli-prune"},
+            score=0.3,
+            status="proposed",
+        )
+        _set_candidate_created_at(db, "metacand_cli_prune", 1_700_000_000.0)
+    finally:
+        db.close()
+
+    argv = [
+        "hermes",
+        "memory",
+        "candidates",
+        "prune",
+        "--proposed-ttl-days",
+        "1",
+        "--json",
+    ]
+    from hermes_cli import main as hermes_main
+
+    with patch.object(sys, "argv", argv):
+        hermes_main.main()
+
+    data = json.loads(capsys.readouterr().out.strip())
+    assert data["dry_run"] is True
+    assert data["archived"] == 0
+    assert data["items"]
+
+    db = SessionDB()
+    try:
+        assert db.get_meta_candidate("metacand_cli_prune")["status"] == "proposed"
     finally:
         db.close()
 
