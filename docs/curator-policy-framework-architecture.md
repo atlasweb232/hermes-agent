@@ -578,6 +578,17 @@ These modules do not dispatch workers yet. They establish the runtime contracts
 that future orchestration, judge, bus, retrieval, wiki, and dreaming slices must
 use.
 
+The first orchestration CLI surface is packet/gate oriented:
+
+- `hermes runtime task init --request ... --json`
+- `hermes runtime speckit plan --task-id ... --request ... --repo-id ... --branch-name ... --json`
+- `hermes runtime delegate --task-id ... --worker ... --repo-id ... --branch-name ... --worktree-path ... --objective ... --owned-file ... --validation-command ... --memory-packet-id ... --json`
+- `hermes runtime validate --task-id ... --feature-dir ... --branch-name ... --json`
+
+These commands create or validate protocol artifacts. They do not yet spawn
+planners, workers, or reviewers. Automatic memory packet retrieval during task
+initialization remains a follow-up task.
+
 ## Hybrid Memory Retrieval
 
 Hermes should not use pure vector RAG for operational memory. Vector similarity

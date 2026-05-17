@@ -67,6 +67,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -11139,6 +11140,190 @@ Examples:
         _register_curator_cli(curator_parser)
     except Exception as _exc:
         logging.getLogger(__name__).debug("curator CLI wiring failed: %s", _exc)
+
+    # =========================================================================
+    # runtime command — supervisor orchestration packets and gates
+    # =========================================================================
+    runtime_parser = subparsers.add_parser(
+        "runtime",
+        help="Supervisor runtime orchestration",
+        description=(
+            "Create and validate supervisor task packets, Spec Kit planner "
+            "packets, worker delegation packets, and completion validation reports."
+        ),
+    )
+    runtime_sub = runtime_parser.add_subparsers(dest="runtime_command")
+
+    runtime_task = runtime_sub.add_parser("task", help="Supervisor task packet helpers")
+    runtime_task_sub = runtime_task.add_subparsers(dest="runtime_task_command")
+    runtime_task_init = runtime_task_sub.add_parser("init", help="Create a supervisor task packet")
+    runtime_task_init.add_argument("--request", required=True, help="User/dashboard request summary")
+    runtime_task_init.add_argument("--source", default="cli", help="Request source")
+    runtime_task_init.add_argument("--tenant-id", default="", help="Tenant id")
+    runtime_task_init.add_argument("--repo-id", default="", help="Repository id")
+    runtime_task_init.add_argument("--cwd", default="", help="Working directory")
+    runtime_task_init.add_argument("--task-type", default="", help="Override inferred task type")
+    runtime_task_init.add_argument("--complexity", default="", help="Override inferred complexity")
+    runtime_task_init.add_argument("--success-criteria", action="append", default=[], help="Success criterion")
+    runtime_task_init.add_argument("--constraint", action="append", default=[], help="Task constraint")
+    runtime_task_init.add_argument("--memory-packet-id", default="", help="Existing memory packet id")
+    runtime_task_init.add_argument("--skip-speckit", action="store_true", help="Explicitly skip Spec Kit")
+    runtime_task_init.add_argument("--skip-reason", default="", help="Reason Spec Kit was skipped")
+    runtime_task_init.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_speckit = runtime_sub.add_parser("speckit", help="Spec Kit planner packet helpers")
+    runtime_speckit_sub = runtime_speckit.add_subparsers(dest="runtime_speckit_command")
+    runtime_speckit_plan = runtime_speckit_sub.add_parser("plan", help="Create a planner packet")
+    runtime_speckit_plan.add_argument("--task-id", required=True, help="Supervisor task packet id")
+    runtime_speckit_plan.add_argument("--request", required=True, help="Task request summary")
+    runtime_speckit_plan.add_argument("--repo-id", required=True, help="Repository id")
+    runtime_speckit_plan.add_argument("--branch-name", required=True, help="Feature branch")
+    runtime_speckit_plan.add_argument("--worktree-path", default="", help="Optional worktree path")
+    runtime_speckit_plan.add_argument("--memory-packet-id", default="", help="Optional memory packet id")
+    runtime_speckit_plan.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_delegate = runtime_sub.add_parser("delegate", help="Validate a worker delegation packet")
+    runtime_delegate.add_argument("--task-id", required=True, help="Supervisor task packet id")
+    runtime_delegate.add_argument("--worker", required=True, help="Worker id")
+    runtime_delegate.add_argument("--worker-kind", default="worker", help="Worker kind")
+    runtime_delegate.add_argument("--repo-id", required=True, help="Repository id")
+    runtime_delegate.add_argument("--branch-name", required=True, help="Feature branch")
+    runtime_delegate.add_argument("--worktree-path", required=True, help="Worktree path")
+    runtime_delegate.add_argument("--objective", required=True, help="Delegated objective")
+    runtime_delegate.add_argument("--owned-file", action="append", default=[], help="Owned file or path")
+    runtime_delegate.add_argument("--constraint", action="append", default=[], help="Constraint")
+    runtime_delegate.add_argument("--validation-command", action="append", default=[], help="Validation command")
+    runtime_delegate.add_argument("--memory-packet-id", required=True, help="Memory packet id")
+    runtime_delegate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_validate = runtime_sub.add_parser("validate", help="Validate completion gates")
+    runtime_validate.add_argument("--task-id", required=True, help="Supervisor task packet id")
+    runtime_validate.add_argument("--feature-dir", required=True, help="Spec Kit feature directory")
+    runtime_validate.add_argument("--branch-name", required=True, help="Feature branch")
+    runtime_validate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    def cmd_runtime(args):
+        from hermes_cli.runtime_orchestrator import (
+            create_planner_packet,
+            discover_speckit_artifacts,
+            initialize_task,
+            validate_completion,
+            validate_worker_delegation,
+        )
+        from hermes_cli.runtime_packets import (
+            SessionSummary,
+            ValidationReport,
+            WorkerDelegationPacket,
+        )
+
+        def _emit(payload):
+            if getattr(args, "json", False):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+        cmd = getattr(args, "runtime_command", None)
+        if cmd == "task" and getattr(args, "runtime_task_command", None) == "init":
+            result = initialize_task(
+                request=getattr(args, "request"),
+                source=getattr(args, "source", "cli"),
+                tenant_id=getattr(args, "tenant_id", "") or None,
+                repo_id=getattr(args, "repo_id", "") or None,
+                cwd=getattr(args, "cwd", "") or None,
+                task_type=getattr(args, "task_type", "") or "",
+                complexity=getattr(args, "complexity", "") or "",
+                success_criteria=getattr(args, "success_criteria", []) or [],
+                constraints=getattr(args, "constraint", []) or [],
+                memory_packet_id=getattr(args, "memory_packet_id", "") or None,
+                skip_speckit=bool(getattr(args, "skip_speckit", False)),
+                skip_reason=getattr(args, "skip_reason", "") or None,
+            )
+            _emit(result.to_dict())
+            return
+        if cmd == "speckit" and getattr(args, "runtime_speckit_command", None) == "plan":
+            init = initialize_task(
+                request=getattr(args, "request"),
+                source="cli",
+                repo_id=getattr(args, "repo_id"),
+                memory_packet_id=getattr(args, "memory_packet_id", "") or None,
+                success_criteria=["Spec Kit artifacts created"],
+            )
+            init.task_packet.id = getattr(args, "task_id")
+            packet = create_planner_packet(
+                init.task_packet,
+                branch_name=getattr(args, "branch_name"),
+                worktree_path=getattr(args, "worktree_path", "") or None,
+                memory_packet_id=getattr(args, "memory_packet_id", "") or None,
+            )
+            _emit({"status": "created", "planner_packet": packet.to_dict(), "validation": packet.validate().to_dict()})
+            return
+        if cmd == "delegate":
+            packet = WorkerDelegationPacket(
+                id=f"delegate_{uuid.uuid4().hex[:16]}",
+                task_packet_id=getattr(args, "task_id"),
+                worker_id=getattr(args, "worker"),
+                worker_kind=getattr(args, "worker_kind", "worker"),
+                repo_id=getattr(args, "repo_id"),
+                branch_name=getattr(args, "branch_name"),
+                worktree_path=getattr(args, "worktree_path"),
+                objective=getattr(args, "objective"),
+                owned_files=getattr(args, "owned_file", []) or [],
+                constraints=getattr(args, "constraint", []) or [],
+                validation_commands=getattr(args, "validation_command", []) or [],
+                memory_packet_id=getattr(args, "memory_packet_id"),
+                return_schema={
+                    "summary": "string",
+                    "changed_files": "list[string]",
+                    "commands_run": "list[object]",
+                    "validation_status": "passed|failed|blocked|not_run",
+                    "blockers": "list[string]",
+                },
+            )
+            validation = validate_worker_delegation(packet)
+            _emit({"status": "valid" if validation.valid else "invalid", "delegation_packet": packet.to_dict(), "validation": validation.to_dict()})
+            return
+        if cmd == "validate":
+            artifact_set = discover_speckit_artifacts(
+                Path(getattr(args, "feature_dir")),
+                task_packet_id=getattr(args, "task_id"),
+                branch_name=getattr(args, "branch_name"),
+            )
+            report = ValidationReport(
+                id=f"val_{uuid.uuid4().hex[:16]}",
+                task_packet_id=getattr(args, "task_id"),
+                artifact_set_id=artifact_set.id,
+                worker_result_ids=["manual"],
+                git_diff_summary="not inspected by runtime validate smoke",
+                test_results={"status": "not_run"},
+                requirement_coverage={"mode": "smoke"},
+                status="passed" if artifact_set.artifact_status == "validated" else "blocked",
+            )
+            summary = SessionSummary(
+                id=f"summary_{uuid.uuid4().hex[:16]}",
+                task_packet_id=getattr(args, "task_id"),
+                master_instructions="runtime validate smoke",
+                decisions=["checked Spec Kit artifact presence"],
+                delegations=["manual"],
+                validation_report_id=report.id,
+                memory_outcome="not evaluated",
+                commit_refs=[getattr(args, "branch_name")],
+            )
+            validation = validate_completion(
+                artifact_set=artifact_set,
+                validation_report=report,
+                session_summary=summary,
+            )
+            _emit({
+                "status": "passed" if validation.valid else "blocked",
+                "artifact_set": artifact_set.to_dict(),
+                "validation_report": report.to_dict(),
+                "session_summary": summary.to_dict(),
+                "validation": validation.to_dict(),
+            })
+            return
+        print("  Use: hermes runtime task|speckit|delegate|validate\n")
+
+    runtime_parser.set_defaults(func=cmd_runtime)
 
     # =========================================================================
     # memory command

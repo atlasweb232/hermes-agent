@@ -23,7 +23,7 @@ def _missing_required(data: Dict[str, Any], fields: Iterable[str]) -> List[str]:
     missing: List[str] = []
     for field_name in fields:
         value = data.get(field_name)
-        if value is None or value == "" or value == []:
+        if value is None or value == "" or value == [] or value == {}:
             missing.append(field_name)
     return missing
 
@@ -282,4 +282,3 @@ class WorktreeAssignment(RuntimePacket):
 
     def __post_init__(self) -> None:
         self.owned_files = _clean_list(self.owned_files)
-
