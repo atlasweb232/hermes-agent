@@ -494,6 +494,29 @@ Not implemented yet:
 - hot/warm/cold memory tiering
 - terminal policy enforcement from approved clean candidates
 
+## Spec Kit Roadmap
+
+The remaining runtime learning work is now captured as a Spec Kit feature:
+
+- `specs/001-learning-memory-runtime/spec.md`
+- `specs/001-learning-memory-runtime/plan.md`
+- `specs/001-learning-memory-runtime/tasks.md`
+
+The implementation sequence is:
+
+1. Learning judge with strict schema and fail-closed approval.
+2. SQLite-backed runtime event bus for asynchronous learning signals.
+3. Tiered hot/warm/cold retrieval and advisory injection.
+4. Memory wiki compiler for durable evidence-backed claims.
+5. Dreaming phase for proposal-only offline synthesis.
+6. Learning job observability through CLI/API/dashboard surfaces.
+7. Future enforcement only after judge and operator approval.
+
+The Spec Kit constitution for this work is `.specify/memory/constitution.md`.
+It makes the separation boundary explicit: raw events, curator candidates,
+judge decisions, approved memory, wiki knowledge, dreaming proposals, and
+enforcement policies remain separate layers with explicit promotion paths.
+
 ## Why This Shape
 
 One-off failure fixes do not scale. Hermes needs reusable machinery:

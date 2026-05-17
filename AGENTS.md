@@ -1100,3 +1100,8 @@ not the specific names.
 
 Reviewers should reject new change-detector tests; authors should convert
 them into invariants before re-requesting review.
+
+<!-- SPECKIT START -->
+For runtime learning memory framework work, read the current Spec Kit plan:
+`specs/001-learning-memory-runtime/plan.md`.
+<!-- SPECKIT END -->
