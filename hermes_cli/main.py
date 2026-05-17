@@ -11489,6 +11489,37 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    wiki_parser = memory_sub.add_parser(
+        "wiki",
+        help="Compile approved memory into wiki claims and training records",
+        description="Manage evidence-backed memory wiki claims and curated training corpus candidates.",
+    )
+    wiki_sub = wiki_parser.add_subparsers(dest="memory_wiki_command")
+    wiki_compile = wiki_sub.add_parser("compile", help="Compile approved/applied candidates into wiki claims")
+    wiki_compile.add_argument("--tenant-id", default="", help="Tenant scope")
+    wiki_compile.add_argument("--repo-id", default="", help="Repository scope")
+    wiki_compile.add_argument("--limit", type=int, default=50, help="Maximum approved/applied candidates per status")
+    wiki_compile.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    wiki_status = wiki_sub.add_parser("status", help="List memory wiki claims")
+    wiki_status.add_argument("--tenant-id", default="", help="Tenant scope")
+    wiki_status.add_argument("--repo-id", default="", help="Repository scope")
+    wiki_status.add_argument("--status", default="", help="Claim status filter")
+    wiki_status.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    wiki_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    wiki_export = wiki_sub.add_parser("export-training", help="Create curated training corpus candidates from wiki claims")
+    wiki_export.add_argument("--tenant-id", default="", help="Tenant scope")
+    wiki_export.add_argument("--repo-id", default="", help="Repository scope")
+    wiki_export.add_argument("--family", default="", help="Dataset family filter")
+    wiki_export.add_argument("--limit", type=int, default=50, help="Maximum wiki claims scanned")
+    wiki_export.add_argument("--approve", action="store_true", help="Mark generated records approved for export")
+    wiki_export.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    wiki_records = wiki_sub.add_parser("training-records", help="List training corpus records")
+    wiki_records.add_argument("--tenant-id", default="", help="Tenant scope")
+    wiki_records.add_argument("--repo-id", default="", help="Repository scope")
+    wiki_records.add_argument("--family", default="", help="Dataset family filter")
+    wiki_records.add_argument("--export-status", default="", help="Export status filter")
+    wiki_records.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    wiki_records.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     bus_parser = memory_sub.add_parser(
         "bus",
         help="Publish and consume durable learning events",
@@ -11704,7 +11735,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "bus", "candidates"}:
+        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "bus", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -11875,6 +11906,77 @@ Examples:
                             f"  rejected: {result.rejected}"
                             f"  needs human: {result.needs_human}\n"
                         )
+                elif sub == "wiki":
+                    from hermes_cli.memory_wiki import (
+                        compile_memory_wiki,
+                        export_training_corpus,
+                        list_memory_wiki_claims,
+                        list_training_corpus_records,
+                    )
+
+                    wiki_cmd = getattr(args, "memory_wiki_command", None) or "status"
+                    if wiki_cmd == "compile":
+                        result = compile_memory_wiki(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  memory wiki compile: {result.status}"
+                                f"  scanned: {result.scanned}"
+                                f"  created: {result.claims_created}"
+                                f"  updated: {result.claims_updated}\n"
+                            )
+                    elif wiki_cmd == "export-training":
+                        result = export_training_corpus(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            dataset_family=getattr(args, "family", "") or None,
+                            approve=getattr(args, "approve", False),
+                            limit=getattr(args, "limit", 50),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  training corpus export: {result.status}"
+                                f"  scanned: {result.scanned}"
+                                f"  created: {result.records_created}"
+                                f"  updated: {result.records_updated}"
+                                f"  rejected: {len(result.rejected)}\n"
+                            )
+                    elif wiki_cmd == "training-records":
+                        rows = list_training_corpus_records(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            dataset_family=getattr(args, "family", "") or None,
+                            export_status=getattr(args, "export_status", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        data = [row.to_dict() for row in rows]
+                        if getattr(args, "json", False):
+                            print(json.dumps(data, indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  training corpus records: {len(rows)}\n")
+                    else:
+                        rows = list_memory_wiki_claims(
+                            db,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            status=getattr(args, "status", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        data = [row.to_dict() for row in rows]
+                        if getattr(args, "json", False):
+                            print(json.dumps(data, indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  memory wiki claims: {len(rows)}\n")
                 elif sub == "bus":
                     from hermes_cli.learning_bus import (
                         consume_learning_events,

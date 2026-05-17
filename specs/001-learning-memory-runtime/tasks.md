@@ -158,24 +158,24 @@
 
 ### Tests for User Story 5
 
-- [ ] T063 [P] [US5] Add memory wiki compiler tests in `tests/hermes_cli/test_memory_wiki.py` covering scoped evidence-backed claims, deduplication, confidence, safety metadata, index payloads, and training payloads
-- [ ] T063A [P] [US5] Add migration training-corpus tests in `tests/hermes_cli/test_memory_wiki.py` covering legacy repo refs, target repo refs, before/after commit refs, diff summaries, validation evidence, failure/repair labels, and drift-evaluation anchors
+- [x] T063 [P] [US5] Add memory wiki compiler tests in `tests/hermes_cli/test_memory_wiki.py` covering scoped evidence-backed claims, deduplication, confidence, safety metadata, index payloads, and training payloads
+- [x] T063A [P] [US5] Add migration training-corpus tests in `tests/hermes_cli/test_memory_wiki.py` covering legacy repo refs, target repo refs, before/after commit refs, diff summaries, validation evidence, failure/repair labels, and drift-evaluation anchors
 - [ ] T064 [P] [US5] Add dreaming proposal tests in `tests/hermes_cli/test_memory_dreaming.py` covering strict JSON schema parsing, proposal generation from wiki claims, repeated failures, job history, policy audits, and worker outcomes
 - [ ] T065 [P] [US5] Add negative tests proving dreaming proposals are not injected, indexed as approved memory, applied to config, queued as goals, or enforced in `tests/hermes_cli/test_memory_dreaming.py`
 - [ ] T065A [P] [US5] Add deterministic dreaming validator tests for missing evidence refs, secret leakage, destructive commands, unsupported scope broadening, duplicate proposals, cross-tenant sharing, and enforcement/config mutation requests
 
 ### Implementation for User Story 5
 
-- [ ] T066 [US5] Create `hermes_cli/memory_wiki.py` for evidence-backed wiki claims with tenant/repo/platform/tool scope, safety/shareability flags, index payloads, curated training payloads, and migration intelligence records
-- [ ] T066A [US5] Add training corpus export builders for dataset families: `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, and `policy_playbook`
-- [ ] T066B [US5] Add redaction/export eligibility validators so training records are derived from curated wiki/approved-memory records, never raw transcripts or raw logs, and preserve cross-tenant shareability boundaries
+- [x] T066 [US5] Create `hermes_cli/memory_wiki.py` for evidence-backed wiki claims with tenant/repo/platform/tool scope, safety/shareability flags, index payloads, curated training payloads, and migration intelligence records
+- [x] T066A [US5] Add training corpus export builders for dataset families: `repo_migration_plan`, `migration_failure_repair`, `before_after_diff`, `validation_recipe`, `architecture_pattern`, and `policy_playbook`
+- [x] T066B [US5] Add redaction/export eligibility validators so training records are derived from curated wiki/approved-memory records, never raw transcripts or raw logs, and preserve cross-tenant shareability boundaries
 - [ ] T067 [US5] Create `hermes_cli/memory_dreaming.py` for proposal-only synthesis with evidence-only input packets, strict output schema, deterministic validators, stable proposal ids, duplicate detection, narrow default scope, risk labels, audit trail, and kill-switch config
 - [ ] T068 [US5] Add separate dreaming proposal storage/status helpers so proposals cannot be returned by approved-memory retrieval, wiki compilation, or the policy engine until converted through judge/operator gates
-- [ ] T069 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`, publishing wiki events to the learning bus and recording wiki learning jobs
+- [x] T069 [US5] Add `hermes memory wiki compile/status` CLI wiring in `hermes_cli/main.py`, publishing wiki events to the learning bus and recording wiki learning jobs
 - [ ] T070 [US5] Add `hermes memory dream run/status` CLI wiring in `hermes_cli/main.py`, publishing proposal events to the learning bus and recording dreaming learning jobs
 - [ ] T070A [US5] Add config knobs for `supervisor.dreaming.enabled`, `allow_llm`, `allow_cross_tenant`, `allow_policy_proposals`, `max_proposals_per_run`, evidence window, and sidecar interval
-- [ ] T070B [US5] Add wiki, dreaming, training-data, native goal-loop integration, and risk-mitigation sections to `docs/curator-policy-framework-architecture.md`
-- [ ] T070C [US5] Document migration intelligence corpus design, required repo/commit/evidence refs, dataset families, and drift-evaluation anchors in `docs/curator-policy-framework-architecture.md`
+- [x] T070B [US5] Add wiki, dreaming, training-data, native goal-loop integration, and risk-mitigation sections to `docs/curator-policy-framework-architecture.md`
+- [x] T070C [US5] Document migration intelligence corpus design, required repo/commit/evidence refs, dataset families, and drift-evaluation anchors in `docs/curator-policy-framework-architecture.md`
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 
