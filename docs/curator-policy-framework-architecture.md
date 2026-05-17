@@ -59,6 +59,9 @@ unless a dedicated worker adapter is added.
 
 ## CLI Surface
 
+The architecture target is API-first. CLI commands are thin local wrappers for
+operator smoke tests and should call the same service functions as the backend.
+
 ```bash
 hermes curator config
 hermes curator model --provider ollama --model gemma2:2b --base-url http://127.0.0.1:11434
@@ -73,6 +76,51 @@ hermes config set supervisor.curator.provider ollama
 hermes config set supervisor.curator.model gemma2:2b
 hermes config set supervisor.curator.base_url http://127.0.0.1:11434
 ```
+
+## API Surface
+
+The backend should expose the curator/control-plane operations directly so the
+dashboard, gateway, Telegram supervisor, and automation do not shell out to the
+CLI.
+
+```http
+GET  /api/curator/config
+POST /api/curator/config
+POST /api/curator/test
+POST /api/curator/policy-run
+GET  /api/curator/candidates
+POST /api/curator/candidates/:id/approve
+POST /api/curator/candidates/:id/reject
+```
+
+Expected response shape for `POST /api/curator/policy-run`:
+
+```json
+{
+  "status": "completed",
+  "records_scanned": 1,
+  "candidates_created": 1,
+  "candidates": [
+    {
+      "candidate_id": "curpol_...",
+      "kind": "command_repair_policy",
+      "status": "proposed",
+      "validation": {
+        "status": "valid",
+        "eligible_for_approval": true,
+        "approved_for_enforcement": false,
+        "warnings": [],
+        "errors": []
+      }
+    }
+  ]
+}
+```
+
+Approval endpoints must preserve the candidate evidence payload. Approval may
+mark a candidate eligible for later policy-engine use, but it must not erase
+`validation`, `source_record_id`, `failed_path`, `working_path`, or
+`curator_output`.
 
 ## Evidence Flow
 
@@ -132,8 +180,8 @@ Docker relevance from a Claude routing lesson even though Docker was unrelated.
 
 ## Enforcement Boundary
 
-This framework does not automatically rewrite terminal commands. The next layer
-should be a generic command-repair policy engine:
+This framework does not automatically rewrite terminal commands yet. The next
+layer should be a generic command-repair policy engine:
 
 ```text
 incoming terminal command
@@ -144,6 +192,116 @@ incoming terminal command
 
 That engine must not hardcode per-failure fixes. It should consume approved
 policy data with bounded selectors and templates.
+
+## Injection And Enforcement
+
+The unresolved runtime issue is not memory capture or curation. It is injection
+and enforcement: Hermes can store a lesson and curate a policy candidate, but the
+terminal tool path must still consult approved policy before execution.
+
+The generic policy engine should run as a terminal pre-tool step:
+
+```text
+terminal(function_args.command)
+  -> command normalizer
+  -> approved policy lookup
+  -> selector match
+  -> rewrite/block/noop decision
+  -> terminal execution
+  -> runtime_policy_applied audit metadata
+```
+
+Policy lookup rules:
+
+- only `command_repair_policy` candidates with `status=approved` or `status=applied`
+- validation payload must exist
+- `validation.eligible_for_approval=true`
+- `validation.approved_for_enforcement` is not sufficient by itself; a dedicated
+  policy-engine approval flag or allowlist should be introduced before automatic
+  rewrites are enabled
+- proposed candidates are never enforced
+- raw curator prose is never parsed as an executable rule
+
+The policy data consumed by the engine should be structured:
+
+```json
+{
+  "policy_type": "command_repair",
+  "policy_version": "2026.05.16",
+  "source_record_id": "memrec_...",
+  "match": {
+    "binary": "worker-router",
+    "subcommand": "claude"
+  },
+  "rewrite": {
+    "binary": "claude",
+    "args": ["-p", "{{prompt}}", "--model", "sonnet"]
+  },
+  "limits": {
+    "max_rewrites_per_session": 1,
+    "requires_same_intent": true
+  }
+}
+```
+
+Every applied policy must annotate the tool result:
+
+```json
+{
+  "runtime_policy_applied": {
+    "policy_id": "curpol_...",
+    "source_record_id": "memrec_...",
+    "action": "rewrite",
+    "from": "worker-router claude --model sonnet -p \"two plus two\"",
+    "to": "claude -p \"two plus two\" --model sonnet",
+    "policy_version": "2026.05.16"
+  }
+}
+```
+
+Guardrails:
+
+- never rewrite commands containing secret-like values
+- never rewrite destructive commands
+- never rewrite across unrelated binaries unless the policy explicitly allows it
+- cap rewrites per session
+- emit metrics for matched, rewritten, blocked, and skipped policies
+- allow disabling enforcement with config
+
+Suggested config:
+
+```yaml
+supervisor:
+  policy_engine:
+    enabled: false
+    mode: audit
+    max_rewrites_per_session: 1
+    allowed_policy_types:
+      - command_repair
+```
+
+`mode=audit` should log what would have happened without changing the command.
+`mode=enforce` should require explicit approval of the policy-engine layer.
+
+## Current Implementation Status
+
+Implemented:
+
+- configurable curator model role
+- Ollama curator adapter
+- Codex curator adapter
+- advisory command-repair candidate generation
+- validation warnings/errors
+- validation-preserving approval path
+- stable upsert/dedupe per source lesson and policy version
+
+Not implemented yet:
+
+- backend HTTP API routes
+- dashboard/control-plane UI
+- generic terminal policy engine
+- command rewrite/block enforcement
+- policy-engine metrics
 
 ## Why This Shape
 
