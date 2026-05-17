@@ -11640,6 +11640,38 @@ Examples:
         action="store_true",
         help="Print machine-readable JSON output",
     )
+    global_parser = memory_sub.add_parser(
+        "global",
+        help="Manage persisted global lessons and task hydration",
+        description="Operator/backend surfaces for approved global lessons, retrieval, and hot-cache hydration.",
+    )
+    global_sub = global_parser.add_subparsers(dest="memory_global_command")
+    global_lesson = global_sub.add_parser("lesson", help="Add, list, or get global lessons")
+    global_lesson_sub = global_lesson.add_subparsers(dest="memory_global_lesson_command")
+    global_lesson_add = global_lesson_sub.add_parser("add", help="Persist one approved global lesson from JSON")
+    global_lesson_add.add_argument("--lesson-json", required=True, help="JSON object containing lesson metadata")
+    global_lesson_add.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_lesson_list = global_lesson_sub.add_parser("list", help="List persisted global lessons")
+    global_lesson_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    global_lesson_list.add_argument("--repo-id", default="", help="Repository scope")
+    global_lesson_list.add_argument("--status", default="", help="Approval state filter")
+    global_lesson_list.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    global_lesson_list.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_lesson_get = global_lesson_sub.add_parser("get", help="Get one persisted global lesson")
+    global_lesson_get.add_argument("lesson_id", help="Global lesson id")
+    global_lesson_get.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_retrieve = global_sub.add_parser("retrieve", help="Retrieve approved global lessons for an event")
+    global_retrieve.add_argument("--event-json", required=True, help="JSON object containing event metadata")
+    global_retrieve.add_argument("--limit", type=int, default=5, help="Maximum global lessons")
+    global_retrieve.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_hydrate = global_sub.add_parser("hydrate", help="Hydrate task memory from hot cache and global lessons")
+    global_hydrate.add_argument("--event-json", required=True, help="JSON object containing event metadata")
+    global_hydrate.add_argument("--local-claims-json", default="[]", help="JSON array of local claims to merge")
+    global_hydrate.add_argument("--hot-limit", type=int, default=3, help="Maximum hot-cache entries")
+    global_hydrate.add_argument("--global-limit", type=int, default=3, help="Maximum global lessons on miss")
+    global_hydrate.add_argument("--token-budget", type=int, default=800, help="Estimated token budget")
+    global_hydrate.add_argument("--ttl-seconds", type=int, default=3600, help="Hot-cache TTL")
+    global_hydrate.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     learn_parser = memory_sub.add_parser(
         "learn",
         help="Run the background learning rollup",
@@ -12043,7 +12075,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "jobs", "observe", "candidates"}:
+        elif sub in {"readiness", "packet", "global", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "jobs", "observe", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -12119,6 +12151,96 @@ Examples:
                             f"  claims: {len(result.claims)}"
                             f"  evidence: {len(result.evidence)}\n"
                         )
+                elif sub == "global":
+                    from hermes_cli.global_memory import (
+                        get_global_lesson,
+                        hydrate_task_memory_from_global,
+                        list_global_lessons,
+                        persist_global_lesson,
+                        retrieve_global_lessons_for_event,
+                    )
+
+                    def _json_object(raw: str, label: str) -> dict:
+                        try:
+                            parsed = json.loads(raw or "{}")
+                        except json.JSONDecodeError as exc:
+                            raise SystemExit(f"Invalid {label}: {exc}") from exc
+                        if not isinstance(parsed, dict):
+                            raise SystemExit(f"{label} must be a JSON object")
+                        return parsed
+
+                    def _json_array(raw: str, label: str) -> list:
+                        try:
+                            parsed = json.loads(raw or "[]")
+                        except json.JSONDecodeError as exc:
+                            raise SystemExit(f"Invalid {label}: {exc}") from exc
+                        if not isinstance(parsed, list):
+                            raise SystemExit(f"{label} must be a JSON array")
+                        return [dict(item) for item in parsed if isinstance(item, dict)]
+
+                    global_cmd = getattr(args, "memory_global_command", None)
+                    if global_cmd == "lesson":
+                        lesson_cmd = getattr(args, "memory_global_lesson_command", None) or "list"
+                        if lesson_cmd == "add":
+                            lesson = persist_global_lesson(db, _json_object(getattr(args, "lesson_json", "{}"), "--lesson-json"))
+                            payload = lesson.to_dict()
+                            if getattr(args, "json", False):
+                                print(json.dumps(payload, indent=2, ensure_ascii=False))
+                            else:
+                                print(f"\n  global lesson saved: {lesson.id}\n")
+                        elif lesson_cmd == "get":
+                            row = get_global_lesson(db, getattr(args, "lesson_id"))
+                            if row is None:
+                                raise SystemExit(f"Unknown global lesson: {getattr(args, 'lesson_id')}")
+                            if getattr(args, "json", False):
+                                print(json.dumps(row, indent=2, ensure_ascii=False))
+                            else:
+                                print(f"\n  global lesson: {row['id']}  status={row['approval_state']}\n")
+                        else:
+                            rows = list_global_lessons(
+                                db,
+                                tenant_id=getattr(args, "tenant_id", "") or None,
+                                repo_id=getattr(args, "repo_id", "") or None,
+                                approval_state=getattr(args, "status", "") or None,
+                                limit=getattr(args, "limit", 50),
+                            )
+                            if getattr(args, "json", False):
+                                print(json.dumps(rows, indent=2, ensure_ascii=False))
+                            else:
+                                print(f"\n  global lessons: {len(rows)}\n")
+                    elif global_cmd == "retrieve":
+                        result = retrieve_global_lessons_for_event(
+                            db,
+                            _json_object(getattr(args, "event_json", "{}"), "--event-json"),
+                            config=config,
+                            limit=getattr(args, "limit", 5),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(f"\n  global lessons retrieved: {len(result.lessons)}\n")
+                    elif global_cmd == "hydrate":
+                        result = hydrate_task_memory_from_global(
+                            db,
+                            _json_object(getattr(args, "event_json", "{}"), "--event-json"),
+                            local_claims=_json_array(getattr(args, "local_claims_json", "[]"), "--local-claims-json"),
+                            config=config,
+                            hot_limit=getattr(args, "hot_limit", 3),
+                            global_limit=getattr(args, "global_limit", 3),
+                            token_budget=getattr(args, "token_budget", 800),
+                            ttl_seconds=getattr(args, "ttl_seconds", 3600),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  hydrated memory packet: {result.packet_id}"
+                                f"  status={result.status}"
+                                f"  items={len(result.advisory_items)}"
+                                f"  tokens≈{result.estimated_tokens}\n"
+                            )
+                    else:
+                        print("  Use: hermes memory global lesson|retrieve|hydrate\n")
                 elif sub == "learn":
                     result = rollup_learning_candidates(
                         db,

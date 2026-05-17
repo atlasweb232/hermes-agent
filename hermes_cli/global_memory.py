@@ -1096,6 +1096,53 @@ def retrieve_global_hot_cache_for_event(
     return selected
 
 
+def list_global_lessons(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    approval_state: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    ensure_global_lesson_schema(db)
+
+    def _fetch(conn):
+        clauses = []
+        params: List[Any] = []
+        if tenant_id:
+            clauses.append("tenant_id = ?")
+            params.append(tenant_id)
+        if repo_id:
+            clauses.append("repo_id = ?")
+            params.append(repo_id)
+        if approval_state:
+            clauses.append("approval_state = ?")
+            params.append(approval_state)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = conn.execute(
+            f"""
+            SELECT * FROM hermes_global_lessons
+            {where}
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (*params, int(limit)),
+        ).fetchall()
+        return [_global_lesson_from_row(row) for row in rows]
+
+    return db._execute_write(_fetch)
+
+
+def get_global_lesson(db: SessionDB, lesson_id: str) -> Optional[Dict[str, Any]]:
+    ensure_global_lesson_schema(db)
+
+    def _fetch(conn):
+        row = conn.execute("SELECT * FROM hermes_global_lessons WHERE id = ?", (lesson_id,)).fetchone()
+        return _global_lesson_from_row(row) if row else None
+
+    return db._execute_write(_fetch)
+
+
 def _global_lesson_from_row(row: Any) -> Dict[str, Any]:
     data = dict(row)
     return GlobalLessonRecord(
