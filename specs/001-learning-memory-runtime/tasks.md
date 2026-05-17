@@ -190,7 +190,7 @@
 - [x] T070N [US5] Add global memory bus adapter interface with SQLite local backend and Kafka/Redpanda-compatible backend options
 - [x] T070O [US5] Add global proposal metadata validators and idempotency keys for randomly arriving chunks from many Hermes instances
 - [x] T070P [US5] Add global dedupe/reconcile sidecar tests for exact duplicate, near duplicate, same evidence, same topic, conflict, and supersedes classes
-- [ ] T070Q [US5] Add global index fanout tasks for lexical, vector, and graph stores after canonical approval
+- [x] T070Q [US5] Add global index fanout tasks for lexical, vector, and graph stores after canonical approval
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 

@@ -163,6 +163,20 @@ class DedupeDecision:
         return asdict(self)
 
 
+@dataclass
+class GlobalIndexFanoutResult:
+    status: str
+    claim_id: str
+    lexical_indexed: bool = False
+    graph_nodes: int = 0
+    graph_edges: int = 0
+    vector_payload: Dict[str, Any] = field(default_factory=dict)
+    errors: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class GlobalMemoryBus(Protocol):
     def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
         ...
@@ -331,6 +345,136 @@ def publish_global_proposal(
         "idempotency_key": key,
         "publish": result,
     }
+
+
+def canonical_claim_to_index_payload(canonical_claim: Dict[str, Any]) -> Dict[str, Any]:
+    claim = normalize_proposal(canonical_claim).to_dict()
+    text = " ".join(
+        part
+        for part in [
+            str(claim.get("title") or ""),
+            str(claim.get("normalized_text") or ""),
+            " ".join(claim.get("entities") or []),
+            " ".join(claim.get("graph_keys") or []),
+        ]
+        if part
+    ).strip()
+    metadata = {
+        "global_claim_id": claim["id"],
+        "tenant_id": claim.get("tenant_id"),
+        "domain": claim.get("domain"),
+        "scope": claim.get("scope"),
+        "visibility": claim.get("visibility"),
+        "sensitivity": claim.get("sensitivity"),
+        "claim_type": claim.get("claim_type"),
+        "language": claim.get("language"),
+        "status": "approved",
+        "tier": "global",
+        "source_instance_id": claim.get("source_instance_id"),
+        "source_session_id": claim.get("source_session_id"),
+        "text_hash": claim.get("text_hash"),
+        "simhash": claim.get("simhash"),
+        "evidence_refs": claim.get("evidence_refs") or [],
+        "citation_refs": claim.get("citation_refs") or [],
+        "entities": claim.get("entities") or [],
+        "graph_keys": claim.get("graph_keys") or [],
+        "confidence": claim.get("confidence"),
+    }
+    return {
+        "memory_id": f"global:{claim['id']}",
+        "text": text,
+        "metadata": metadata,
+        "vector_payload": {
+            "id": f"global:{claim['id']}",
+            "text": text,
+            "metadata": metadata,
+        },
+    }
+
+
+def fanout_canonical_claim_to_indexes(
+    db: SessionDB,
+    *,
+    canonical_claim: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> GlobalIndexFanoutResult:
+    """Fan out an approved canonical claim into local lexical/graph indexes.
+
+    External vector/graph backends are intentionally represented as payload
+    boundaries here; adapters can consume the returned vector payload later.
+    """
+    claim = normalize_proposal(canonical_claim).to_dict()
+    if canonical_claim.get("approval_state") not in {"approved", "canonical", "applied"}:
+        return GlobalIndexFanoutResult(
+            status="skipped",
+            claim_id=claim["id"],
+            errors=["canonical claim must be approved before index fanout"],
+        )
+    if claim.get("sensitivity") == "secret":
+        return GlobalIndexFanoutResult(
+            status="skipped",
+            claim_id=claim["id"],
+            errors=["secret claims are not globally indexed"],
+        )
+
+    from hermes_cli.memory_graph import upsert_graph_edge, upsert_graph_node
+    from hermes_cli.memory_index import upsert_memory_index_document
+
+    payload = canonical_claim_to_index_payload({**claim, "approval_state": canonical_claim.get("approval_state")})
+    upsert_memory_index_document(
+        db,
+        memory_id=payload["memory_id"],
+        text=payload["text"],
+        metadata=payload["metadata"],
+    )
+
+    graph_nodes = 0
+    graph_edges = 0
+    claim_node = payload["memory_id"]
+    upsert_graph_node(db, node_id=claim_node, kind="global_claim", label=claim.get("title") or claim["id"])
+    graph_nodes += 1
+
+    def _edge_node(kind: str, value: str, relation: str) -> None:
+        nonlocal graph_nodes, graph_edges
+        if not value:
+            return
+        node_id = f"{kind}:{value}"
+        upsert_graph_node(db, node_id=node_id, kind=kind, label=value)
+        upsert_graph_edge(db, source_id=claim_node, target_id=node_id, relation=relation, weight=1.0)
+        graph_nodes += 1
+        graph_edges += 1
+
+    _edge_node("domain", str(claim.get("domain") or ""), "APPLIES_TO_DOMAIN")
+    _edge_node("scope", str(claim.get("scope") or ""), "HAS_SCOPE")
+    _edge_node("tenant", str(claim.get("tenant_id") or ""), "APPLIES_TO_TENANT")
+    for entity in claim.get("entities") or []:
+        _edge_node("entity", str(entity), "MENTIONS_ENTITY")
+    for graph_key in claim.get("graph_keys") or []:
+        _edge_node("graph_key", str(graph_key), "HAS_GRAPH_KEY")
+    for evidence_ref in claim.get("evidence_refs") or []:
+        _edge_node("evidence", str(evidence_ref), "SUPPORTED_BY")
+    for citation_ref in claim.get("citation_refs") or []:
+        _edge_node("citation", str(citation_ref), "CITES")
+
+    try:
+        bus = get_global_memory_bus(db, config or {})
+        bus.publish(
+            "index_completed",
+            {"claim_id": claim["id"], "memory_id": payload["memory_id"], "status": "indexed"},
+            event_key=stable_hash(["index_completed", claim["id"]]),
+        )
+    except Exception:
+        # Index fanout should remain useful even when bus publishing is disabled.
+        pass
+
+    return GlobalIndexFanoutResult(
+        status="indexed",
+        claim_id=claim["id"],
+        lexical_indexed=True,
+        graph_nodes=graph_nodes,
+        graph_edges=graph_edges,
+        vector_payload=payload["vector_payload"],
+    )
 
 
 def classify_dedupe(proposal: Dict[str, Any], candidates: Iterable[Dict[str, Any]]) -> DedupeDecision:

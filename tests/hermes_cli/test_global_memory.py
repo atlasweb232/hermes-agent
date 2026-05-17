@@ -4,12 +4,15 @@ from hermes_cli.global_memory import (
     build_global_topic,
     build_idempotency_key,
     classify_dedupe,
+    fanout_canonical_claim_to_indexes,
     get_global_memory_bus,
     normalize_proposal,
     publish_global_proposal,
     validate_proposal,
 )
 from hermes_cli.learning_bus import list_learning_events
+from hermes_cli.memory_graph import expand_graph
+from hermes_cli.memory_index import lexical_search
 from hermes_state import SessionDB
 
 
@@ -220,3 +223,60 @@ def test_dedupe_supersedes_lower_confidence_same_topic():
     decision = classify_dedupe(proposal, [existing])
 
     assert decision.dedupe_class == "supersedes"
+
+
+def test_index_fanout_requires_approved_canonical_claim(tmp_path):
+    db = _db(tmp_path)
+    try:
+        result = fanout_canonical_claim_to_indexes(db, canonical_claim=_proposal(approval_state="proposed"))
+
+        assert result.status == "skipped"
+        assert "approved" in result.errors[0]
+    finally:
+        db.close()
+
+
+def test_index_fanout_skips_secret_claims(tmp_path):
+    db = _db(tmp_path)
+    try:
+        result = fanout_canonical_claim_to_indexes(
+            db,
+            canonical_claim=_proposal(approval_state="approved", sensitivity="secret", visibility="private"),
+        )
+
+        assert result.status == "skipped"
+        assert "secret" in result.errors[0]
+    finally:
+        db.close()
+
+
+def test_index_fanout_writes_lexical_graph_and_bus_event(tmp_path):
+    db = _db(tmp_path)
+    try:
+        config = {"supervisor": {"global_memory_bus": {"backend": "sqlite", "topic_prefix": "hermes.memory"}}}
+        claim = _proposal(
+            id="claim_global_1",
+            approval_state="approved",
+            normalized_text="Global memory wiki should fan out approved claims to lexical vector graph indexes.",
+            entities=["Hermes", "indexer", "memory"],
+            graph_keys=["domain:memory-architecture", "index:graph"],
+            evidence_refs=["s3://bucket/evidence/indexing.json"],
+            citation_refs=["url_hash:indexing"],
+        )
+
+        result = fanout_canonical_claim_to_indexes(db, canonical_claim=claim, config=config)
+        lexical = lexical_search(db, query="approved claims graph indexes", statuses=["approved"])
+        graph = expand_graph(db, start_id="global:claim_global_1", limit=20)
+        events = list_learning_events(db, topic="hermes.memory.index.completed")
+
+        assert result.status == "indexed"
+        assert result.lexical_indexed is True
+        assert result.graph_nodes >= 6
+        assert result.graph_edges >= 5
+        assert result.vector_payload["id"] == "global:claim_global_1"
+        assert lexical[0]["memory_id"] == "global:claim_global_1"
+        assert {edge["relation"] for edge in graph} >= {"APPLIES_TO_DOMAIN", "SUPPORTED_BY", "CITES"}
+        assert len(events) == 1
+        assert events[0].payload_json["status"] == "indexed"
+    finally:
+        db.close()
