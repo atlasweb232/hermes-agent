@@ -185,6 +185,12 @@
 - [ ] T070I [US5] Add hybrid index update path for discussion wiki claims: lexical FTS, vector payloads, graph edges, and scoped retrieval packets for global Hermes consumption
 - [ ] T070J [US5] Add separate configured model roles for LLM-backed discussion sidecars: discussion capture, claim extractor, wiki compiler, dreaming, curator, learning judge, and deterministic-first citation validator
 - [ ] T070K [US5] Add tests proving generated artifacts cannot be approved by the same sidecar invocation/session that created them, even when both roles use Codex
+- [x] T070L [US5] Create `docs/global-memory-wiki-architecture.md` covering central global wiki storage, configurable object/state/index backends, Kafka-compatible bus strategy, metadata schema, dedupe/reconcile workflow, and global sidecars
+- [ ] T070M [US5] Add global memory config defaults for object store, state store, lexical/vector/graph indexes, local cache, raw retention, and sync eligibility
+- [ ] T070N [US5] Add global memory bus adapter interface with SQLite local backend and Kafka/Redpanda-compatible backend options
+- [ ] T070O [US5] Add global proposal metadata validators and idempotency keys for randomly arriving chunks from many Hermes instances
+- [ ] T070P [US5] Add global dedupe/reconcile sidecar tests for exact duplicate, near duplicate, same evidence, same topic, conflict, and supersedes classes
+- [ ] T070Q [US5] Add global index fanout tasks for lexical, vector, and graph stores after canonical approval
 
 **Checkpoint**: Durable knowledge and proposals exist, but speculative output cannot control live execution.
 
