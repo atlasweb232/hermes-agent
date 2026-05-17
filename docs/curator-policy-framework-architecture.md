@@ -1140,6 +1140,59 @@ Each sidecar should run out-of-band with bounded leases, timeouts, rate limits,
 and learning-job records. Failures must be observable but non-blocking for
 chat, task execution, worker delegation, and repo validation.
 
+LLM-backed sidecars should have separate configured model roles even when they
+all use `provider=codex` and `model=codex` initially. "Separate" means separate
+role config, prompt contract, invocation/session id, job id, and audit trail;
+not necessarily a different vendor model on day one.
+
+Recommended model-role split:
+
+```yaml
+supervisor:
+  sidecar_models:
+    discussion_capture:
+      provider: codex
+      model: codex
+    claim_extractor:
+      provider: codex
+      model: codex
+    wiki_compiler:
+      provider: codex
+      model: codex
+    dreaming:
+      provider: codex
+      model: codex
+    curator:
+      provider: codex
+      model: codex
+    learning_judge:
+      provider: codex
+      model: codex
+    citation_validator:
+      mode: deterministic_first
+      provider: codex
+      model: codex
+    indexer:
+      mode: programmatic
+      embedding_provider: openai
+      embedding_model: text-embedding-3-large
+    sync:
+      mode: programmatic
+```
+
+Role boundaries:
+
+- `discussion_capture`, `claim_extractor`, `wiki_compiler`, `dreaming`, and
+  `curator` may generate summaries, claims, proposals, or candidates.
+- `learning_judge` evaluates generated artifacts and must run as a separate
+  invocation from the artifact generator.
+- `citation_validator` should verify deterministically first; an LLM may help
+  classify citation quality but must not invent citations.
+- `indexer` and `sync` should be programmatic; embeddings are allowed, but no
+  chat LLM should rewrite approved claims during indexing or sync.
+- The same model family can be reused, but the same invocation cannot both
+  generate and approve a memory/wiki/policy/training artifact.
+
 Scope and sharing defaults:
 
 - Device/local memories stay local unless explicitly promoted.
