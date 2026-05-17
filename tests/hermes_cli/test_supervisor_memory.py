@@ -711,6 +711,45 @@ def test_retrieve_learning_context_returns_quality_gated_matches(tmp_path, monke
         db.close()
 
 
+def test_retrieve_learning_context_does_not_substring_match_unrelated_tokens(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="curpol_claude",
+            kind="command_repair_policy",
+            claim="Prefer direct Claude Code invocation after worker-router failures",
+            evidence_json={
+                "policy_type": "command_repair",
+                "failed_path": "worker-router claude",
+                "working_path": "claude --model sonnet -p",
+                "source_record_id": "memrec_claude",
+            },
+            score=0.9,
+            status="approved",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_oauth",
+            kind="routing_hint",
+            claim="Use Hermes on AWS callback routes",
+            evidence_json={
+                "match": "oauth callback",
+                "assignee": "jules",
+                "workspace_kind": "worktree",
+            },
+            score=0.8,
+            status="approved",
+        )
+
+        result = retrieve_learning_context(db, query="oauth callback route")
+
+        ids = [candidate["id"] for candidate in result["candidates"]]
+        assert ids == ["metacand_oauth"]
+    finally:
+        db.close()
+
+
 def test_learning_sidecar_runs_one_tick(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

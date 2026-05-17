@@ -898,8 +898,8 @@ def _candidate_matches_query(candidate: Dict[str, Any], query: str) -> bool:
     tokens = _query_tokens(query)
     if not tokens:
         return False
-    haystack = _candidate_match_text(candidate)
-    return any(token in haystack for token in tokens)
+    candidate_tokens = set(_query_tokens(_candidate_match_text(candidate)))
+    return any(token in candidate_tokens for token in tokens)
 
 
 def retrieve_learning_context(
