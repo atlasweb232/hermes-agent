@@ -112,7 +112,23 @@ def parse_terminal_failure(result: Any) -> bool:
     )
 
 
-def classify_terminal_status(result: Any, *, failed: bool, duration_seconds: float = 0.0) -> str:
+def _progress_only_worker_router_output(output: str) -> bool:
+    lines = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    if not lines:
+        return True
+    progress_pattern = re.compile(
+        r"^\d{4}-\d{2}-\d{2}T\S+\s+worker=\S+\s+phase=\S+"
+    )
+    return all(progress_pattern.match(line) for line in lines)
+
+
+def classify_terminal_status(
+    result: Any,
+    *,
+    failed: bool,
+    duration_seconds: float = 0.0,
+    command: str = "",
+) -> str:
     data: dict[str, Any] = {}
     if isinstance(result, dict):
         data = result
@@ -133,6 +149,8 @@ def classify_terminal_status(result: Any, *, failed: bool, duration_seconds: flo
         return "timed_out"
     if failed or (isinstance(exit_code, int) and exit_code != 0) or error:
         return "failed"
+    if _worker_command_family(command) == "worker-router" and _progress_only_worker_router_output(output):
+        return "empty_output"
     if isinstance(exit_code, int) and exit_code == 0 and not output.strip():
         return "empty_output"
     if float(duration_seconds or 0.0) >= 60.0 and not output.strip():

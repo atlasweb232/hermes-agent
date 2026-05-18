@@ -151,6 +151,42 @@ def test_worker_foreground_timeout_cap_can_be_disabled(monkeypatch):
     assert terminal_tool._worker_foreground_timeout_cap('worker-router claude "two plus two"') is None
 
 
+def test_worker_foreground_timeout_cap_overrides_explicit_large_timeout(monkeypatch):
+    class FakeEnv:
+        env = {}
+
+        def execute(self, command, **kwargs):
+            return {"output": str(kwargs["timeout"]), "returncode": 0}
+
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config",
+        lambda: {
+            "supervisor": {
+                "worker_runtime": {
+                    "enabled": True,
+                    "foreground_timeout_seconds": 17,
+                    "command_families": ["worker-router"],
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(terminal_tool, "_get_env_config", lambda: {"env_type": "local", "cwd": ".", "timeout": 180})
+    monkeypatch.setattr(terminal_tool, "_resolve_container_task_id", lambda task_id: "default")
+    monkeypatch.setattr(terminal_tool, "_start_cleanup_thread", lambda: None)
+    monkeypatch.setattr(terminal_tool, "_check_all_guards", lambda command, env_type: {"approved": True})
+    monkeypatch.setattr(terminal_tool, "_validate_workdir", lambda workdir: None)
+    monkeypatch.setattr(terminal_tool, "_foreground_background_guidance", lambda command: "")
+    monkeypatch.setattr(terminal_tool, "_create_environment", lambda **kwargs: FakeEnv())
+    terminal_tool._active_environments.clear()
+
+    result = terminal_tool.json.loads(
+        terminal_tool.terminal_tool('worker-router claude "two plus two"', timeout=600)
+    )
+
+    assert result["output"] == "17"
+    assert result["worker_timeout_cap_seconds"] == 17
+
+
 def test_passwordless_sudo_probe_rechecks_local_terminal(monkeypatch):
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
     calls = []

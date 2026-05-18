@@ -22,6 +22,18 @@ def test_classify_terminal_status_detects_timeout_and_empty_output():
     assert classify_terminal_status(json.dumps({"exit_code": 124, "error": "timed out"}), failed=True) == "timed_out"
     assert classify_terminal_status(json.dumps({"exit_code": 0, "output": ""}), failed=False) == "empty_output"
     assert classify_terminal_status(json.dumps({"exit_code": 0, "output": "4"}), failed=False) == "success"
+    progress_only = (
+        "2026-05-18T14:05:44Z worker=claude phase=starting cwd=/home/rakib\n"
+        "2026-05-18T14:05:50Z worker=claude phase=completed exit_code=0"
+    )
+    assert (
+        classify_terminal_status(
+            json.dumps({"exit_code": 0, "output": progress_only}),
+            failed=False,
+            command='worker-router claude "two plus two"',
+        )
+        == "empty_output"
+    )
 
 
 def test_redacts_common_secret_shapes():

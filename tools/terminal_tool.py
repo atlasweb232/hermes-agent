@@ -1779,7 +1779,7 @@ def terminal_tool(
         default_timeout = config["timeout"]
         effective_timeout = timeout or default_timeout
         worker_timeout_cap = None
-        if not background and timeout is None:
+        if not background:
             worker_timeout_cap = _worker_foreground_timeout_cap(command)
             if worker_timeout_cap is not None:
                 effective_timeout = min(int(effective_timeout), int(worker_timeout_cap))

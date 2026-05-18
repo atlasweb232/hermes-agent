@@ -3895,6 +3895,7 @@ class AIAgent:
                         function_result,
                         failed=bool(failed),
                         duration_seconds=float(duration_seconds or 0.0),
+                        command=command,
                     ),
                 )
             )
