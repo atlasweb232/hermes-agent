@@ -266,6 +266,66 @@ Remaining validation:
 - Audit the SQLite bus queue: sidecar reported queued events, so consumer drain
   behavior still needs `T128`.
 
+## VM Phase 11A Live Failure-Learn Smoke
+
+Live validation completed after deploying branch `132-learning-memory-runtime`
+at `2907255f1`.
+
+Sequence:
+
+1. Restarted the learning sidecar on the VM.
+2. Persisted approved global lesson `global-claude-router-repair` into the
+   configured SQLite global memory backend.
+3. Retrieved the lesson through `hermes memory global retrieve --event-json`.
+4. Hydrated task memory through `hermes memory global hydrate --event-json`.
+5. Ran a fresh one-shot Hermes task asking Claude Code for `two plus two`.
+
+Observed result:
+
+- Durable retrieval returned one exact match.
+- Hydration materialized one hot-cache entry and one compact advisory item.
+- The fresh task returned `4`.
+- Session evidence showed the supervisor used direct Claude Code invocation:
+  `claude -p "What is two plus two? Reply with only the answer." --model sonnet --max-turns 1`.
+- The fresh task did not call `worker-router claude`, avoiding the previously
+  observed bad command loop.
+
+Caveat:
+
+- The live prompt explicitly said to use learning memory. The next stricter
+  acceptance test should prove the same behavior from automatic task-start
+  memory hydration without that hint.
+
+## Phase 11A Cost/Value JSON Observability
+
+Implemented deterministic JSON reporting through:
+
+```bash
+hermes memory global value --event-json ... --tool-events-json ... --json
+```
+
+The report includes:
+
+- `memory_hits`
+- `global_lesson_hits`
+- `global_lesson_near_hits`
+- `global_lesson_misses`
+- `hot_cache_hits`
+- `skipped_curator_count`
+- `skipped_dreaming_count`
+- `estimated_packet_tokens`
+- `repeated_error_count`
+- `tool_error_count`
+- `worker_model`
+- `worker_provider`
+- `outcome`
+- `memory_effect`
+- `validation_complete`
+
+This path is programmatic. It calls persisted retrieval, pre-curation, and
+hydration, but it does not call curator, judge, dreaming, or any other
+LLM-backed sidecar on exact approved lesson hits.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:

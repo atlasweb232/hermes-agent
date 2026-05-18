@@ -1717,3 +1717,34 @@ role over approved, redacted, shareable global memory only. Neither local nor
 global dreaming can alter live execution; both produce proposals that require
 judge/operator conversion before they become approved memory, wiki updates,
 training records, eval fixtures, or policy candidates.
+
+### Minimal Cost/Value Observability
+
+Phase 11A adds a deliberately small JSON surface before any richer dashboard or
+Kafka/object-store scale-out work:
+
+```bash
+hermes memory global value --event-json ... --tool-events-json ... --json
+```
+
+This command is a deterministic probe. It performs persisted global lesson
+retrieval, pre-curation, and task-memory hydration, then reports whether memory
+actually reduced work:
+
+- memory hit, near-hit, miss, and hot-cache counts
+- compact packet token estimate
+- skipped curator and skipped dreaming counts
+- repeated command/error signature count
+- failed tool-call count
+- worker provider/model
+- task outcome and validation completeness
+- memory effect: `helped`, `ignored_or_hurt`, `unused`, or `unknown`
+
+The probe is intentionally programmatic. Exact approved lesson hits do not call
+curator, judge, dreaming, or a strong model. Strong reasoning is reserved for
+promotion, enforcement, low-confidence contradictions, or explicit operator
+review.
+
+The same module also provides baseline-vs-memory-assisted comparison fixtures
+for low-end model evaluation. Those comparisons are evidence for future
+policies; they are not policy changes by themselves.

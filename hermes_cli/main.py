@@ -11795,6 +11795,19 @@ Examples:
     global_hydrate.add_argument("--token-budget", type=int, default=800, help="Estimated token budget")
     global_hydrate.add_argument("--ttl-seconds", type=int, default=3600, help="Hot-cache TTL")
     global_hydrate.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_value = global_sub.add_parser(
+        "value",
+        help="Report deterministic memory cost/value metrics for an event",
+    )
+    global_value.add_argument("--event-json", required=True, help="JSON object containing event metadata")
+    global_value.add_argument("--tool-events-json", default="[]", help="JSON array of tool outcome events")
+    global_value.add_argument("--worker-model", default="", help="Worker model used for the task")
+    global_value.add_argument("--worker-provider", default="", help="Worker provider used for the task")
+    global_value.add_argument("--outcome", default="unknown", help="Task outcome: success, failed, blocked, timeout, unknown")
+    global_value.add_argument("--validation-complete", action="store_true", help="Validation evidence was complete")
+    global_value.add_argument("--escalation-count", type=int, default=0, help="Number of escalations")
+    global_value.add_argument("--token-budget", type=int, default=800, help="Estimated token budget")
+    global_value.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     learn_parser = memory_sub.add_parser(
         "learn",
         help="Run the background learning rollup",
@@ -12362,8 +12375,33 @@ Examples:
                                 f"  items={len(result.advisory_items)}"
                                 f"  tokens≈{result.estimated_tokens}\n"
                             )
+                    elif global_cmd == "value":
+                        from hermes_cli.learning_value import run_learning_value_probe
+
+                        result = run_learning_value_probe(
+                            db,
+                            _json_object(getattr(args, "event_json", "{}"), "--event-json"),
+                            config=config,
+                            worker_model=getattr(args, "worker_model", "") or "",
+                            worker_provider=getattr(args, "worker_provider", "") or "",
+                            tool_events=_json_array(getattr(args, "tool_events_json", "[]"), "--tool-events-json"),
+                            outcome=getattr(args, "outcome", "unknown") or "unknown",
+                            validation_complete=bool(getattr(args, "validation_complete", False)),
+                            escalation_count=getattr(args, "escalation_count", 0),
+                            token_budget=getattr(args, "token_budget", 800),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            report = result.get("report", {})
+                            print(
+                                f"\n  learning value: {report.get('memory_effect')}"
+                                f"  hits={report.get('memory_hits')}"
+                                f"  tokens≈{report.get('estimated_packet_tokens')}"
+                                f"  skipped_curator={report.get('skipped_curator_count')}\n"
+                            )
                     else:
-                        print("  Use: hermes memory global lesson|retrieve|hydrate\n")
+                        print("  Use: hermes memory global lesson|retrieve|hydrate|value\n")
                 elif sub == "learn":
                     result = rollup_learning_candidates(
                         db,
