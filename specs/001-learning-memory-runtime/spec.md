@@ -132,6 +132,39 @@ As the Hermes operator, I want long-running delegated work to converge through d
 4. **Given** validation fails after the retry budget, **When** recovery runs, **Then** the task escalates to a stronger planner/reviewer or alternate worker and preserves the failed validation evidence.
 5. **Given** `/goal` is active, **When** the supervisor control plane runs, **Then** `/goal` may enqueue continuation prompts but cannot override task leases, validation gates, Spec Kit state, or reallocation policy.
 
+---
+
+### User Story 8 - Production Runtime Surfaces And Low-End Model Validation (Priority: P8)
+
+As the Hermes operator, I want persisted global lessons, compact task memory, cost metrics, and low-end model evals, so cheaper workers can improve without bloating runtime infrastructure or giving sidecars enforcement authority.
+
+**Why this priority**: The memory architecture only has operational value if it measurably reduces repeated mistakes, token waste, and unnecessary strong-model calls.
+
+**Independent Test**: Run controlled tasks before and after persisted lesson retrieval and compact packet injection; verify fewer repeated errors, bounded token use, and no unauthorized policy/config mutation.
+
+**Acceptance Scenarios**:
+
+1. **Given** an approved global lesson exactly matches a new failure signature, **When** pre-curation runs, **Then** local expensive curation is skipped and a compact advisory packet is produced.
+2. **Given** a low-cost worker receives a task packet, **When** relevant memory exists, **Then** only top-k scoped advisory lessons are injected.
+3. **Given** the task completes, **When** feedback is recorded, **Then** lesson usefulness and cost/value metrics are updated without copying private local evidence globally.
+
+---
+
+### User Story 9 - Goal-Based Multi-Agent Allocation (Priority: P9)
+
+As the Hermes operator, I want `/goal`-backed workloads to allocate across available workers with health checks, latency budgets, fallback, and resumable state, so one unhealthy worker route cannot trap or degrade the whole task.
+
+**Why this priority**: Upstream `/goal` is useful for continuation, but it does not choose workers, enforce per-turn latency budgets, suppress repeated failed routes, or recover from quota/network/auth failures.
+
+**Independent Test**: Start a `/goal`-backed task with one failing primary worker and healthy fallback workers; verify the allocator records failed attempts, updates worker health, falls back within budget, or pauses with retry-after when no safe worker remains.
+
+**Acceptance Scenarios**:
+
+1. **Given** a primary worker times out, **When** budget remains, **Then** the allocator records the failed attempt, updates worker health, and tries the next ranked fallback.
+2. **Given** a worker reports quota, auth, or network degradation, **When** no safe fallback remains, **Then** the allocator pauses the allocation with retry-after instead of foreground sleeping.
+3. **Given** `/goal resume` runs after a restart, **When** allocation state exists, **Then** the allocator resumes from `allocation:<session_id>:<task_id>` and skips workers still in cooldown.
+4. **Given** the supervisor uses fallback evidence, **When** it answers the operator, **Then** it discloses degraded worker evidence and does not claim the failed worker completed successfully.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -150,6 +183,9 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - Worker produces no git/test/progress delta across the configured window.
 - `/goal` continues a session after the supervisor has already reclaimed or blocked the task.
 - Reassignment sees partial uncommitted work in the worker worktree.
+- `/goal resume` finds an active allocation whose primary worker is still in cooldown.
+- All configured workers are unhealthy, unauthenticated, over quota, or over latency budget.
+- A worker wrapper returns empty output or progress-only logs after a long run.
 
 ## Requirements
 
@@ -214,6 +250,11 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **FR-057**: System MUST produce a recovery packet before reassignment that includes objective, original packet refs, worker history, partial diff/log summary, failed commands, validation failures, memory used, and next recommended action.
 - **FR-058**: System MUST keep `/goal` as an optional continuation controller only; `/goal` MUST NOT override task leases, validation gates, worker ownership, Spec Kit preservation, or supervisor reallocation policy.
 - **FR-059**: System MUST prevent task completion after reclaim/reassignment unless final validation evidence, git/spec preservation, and session summary are present.
+- **FR-060**: System MUST add goal-based multi-agent allocation as a separate control-plane phase that reuses upstream `/goal` state instead of creating another autonomous loop.
+- **FR-061**: System MUST persist `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth` state beside goal state using `allocation:<session_id>:<task_id>` and `worker_health:<worker_id>` keys.
+- **FR-062**: System MUST enforce total latency budget, per-worker timeout, retry budget, repeated-route suppression, and cooldown/retry-after decisions before each worker attempt.
+- **FR-063**: System MUST pause or schedule recovery rather than foreground sleep-loop when quota, network, auth, timeout, or repeated empty-output failures exhaust the allocation budget.
+- **FR-064**: System MUST expose allocator status through CLI/API-compatible JSON including active allocation, goal linkage, attempts, worker health, cooldowns, consumed latency budget, fallback reason, and next recovery action.
 
 ### Key Entities
 
@@ -249,6 +290,9 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **Worker Heartbeat**: Lightweight progress signal emitted by a worker or wrapper with timestamp, current action, progress markers, command/error signature, and optional git/test delta.
 - **Recovery Packet**: Reassignment-ready summary of original task, partial work, worker history, failed validation, blockers, and next recommended action.
 - **Supervisor Override Action**: Audited action that interrupts, pauses, blocks, reclaims, reassigns, escalates, or abandons task work.
+- **Worker Allocation Plan**: Durable control-plane record describing candidate workers, ranked fallback order, memory packet, validation requirement, total latency budget, per-worker timeout, retry limits, cooldown policy, and goal/session linkage.
+- **Worker Attempt Result**: Structured attempt outcome containing worker, route, status, duration, output excerpts, artifact refs, error signature, validation status, fallback eligibility, and recovery hint.
+- **Worker Health Record**: Durable per-worker status containing success/failure timestamps, timeout/empty/quota/network counters, cooldown timestamps, last error signature, and confidence.
 
 ## Success Criteria
 
@@ -272,6 +316,8 @@ As the Hermes operator, I want long-running delegated work to converge through d
 - **SC-016**: Stale worker leases are reclaimed deterministically in tests without losing Spec Kit/git/task history.
 - **SC-017**: Repeated error/no-progress loops trigger recovery or reassignment before exhausting the task indefinitely.
 - **SC-018**: `/goal` continuation cannot mark reclaimed, blocked, or validation-failed work as complete.
+- **SC-019**: Goal-based allocation tests prove quota exhaustion, auth failure, network degradation, timeout, empty worker output, and repeated-route failures either choose a ranked fallback or pause with retry-after before the foreground turn exceeds budget.
+- **SC-020**: `/goal resume` can recover persisted allocation state and worker health without repeating an unhealthy route before its cooldown expires.
 
 ## Assumptions
 

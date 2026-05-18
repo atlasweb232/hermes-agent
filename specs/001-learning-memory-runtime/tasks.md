@@ -360,14 +360,6 @@
 - [x] T131A1 [US8] Add supervisor runtime failure final-response gate and worker foreground timeout cap so failed/timed-out/empty worker calls are disclosed as degraded fallback instead of silently reported as successful worker completion
 - [ ] T131B [US8] Extend the same generic runtime failure capture contract to delegated agents/workers so worker hallucinations, false completions, and route substitutions are captured before curator/judge sidecars run
 - [ ] T131C [US8] Add specialized curator/judge handling for `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
-- [x] T131D [US8] Document upstream `/goal` integration model: goal state is stored in `SessionDB.state_meta` as `goal:<session_id>`, continuation prompts remain user-role messages, and multi-agent allocation must extend this lifecycle rather than create a second loop
-- [ ] T131E [US8] Add `WorkerAllocationPlan` and `WorkerAttemptResult` schemas with worker ranking, total latency budget, per-worker timeout, retry budget, cooldown/sleep policy, memory packet id, validation requirement, and fallback eligibility
-- [ ] T131F [US8] Implement worker health registry in `SessionDB.state_meta` keyed by `worker_health:<worker_id>` with success/failure timestamps, timeout/empty/quota/network counters, cooldown_until, and last_error_signature
-- [ ] T131G [US8] Persist allocation state beside goal state as `allocation:<session_id>:<task_id>` so `/goal resume` can recover active worker attempts, cooldowns, and remaining latency budget
-- [ ] T131H [US8] Implement allocator decision logic: consult runtime memory and worker health, choose primary worker, enforce latency/retry budgets, skip unhealthy workers, try ranked fallbacks, and pause/schedule recovery instead of foreground sleeping on network degradation
-- [ ] T131I [US8] Wire allocator into supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy, while final response still discloses degraded worker evidence
-- [ ] T131J [US8] Add allocator CLI/API observability: list active allocations, worker health, last attempts, cooldowns, latency budget consumed, fallback reason, and goal/session linkage
-- [ ] T131K [US8] Add tests for quota exhaustion, auth failure, network degradation, timeout, empty worker output, ranked fallback success, repeated-route suppression, cooldown pause, and `/goal resume` recovery
 
 ### Deferred Phase 11B Global Indexing And Sync Sidecars
 
@@ -377,6 +369,39 @@
 - [ ] T135 [US8] Add optional vector/graph indexing tests for global lessons only after hash/signature/SQLite hot-cache retrieval shows measured low-end-worker improvement
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
+
+## Phase 12: Goal-Based Multi-Agent Allocation (Priority: P9)
+
+**Goal**: Use upstream `/goal` as the continuation/pause/resume loop for long-running workloads, while adding a deterministic allocator that manages worker health, latency budgets, ranked fallback, recovery pauses, and evidence disclosure inside each bounded goal/task turn.
+
+**Independent Test**: Start a `/goal`-backed task with Claude Code as primary and Codex/DeepSeek as fallbacks. Simulate quota exhaustion, auth failure, network degradation, timeout, empty worker output, and repeated-route failure. Verify the allocator records attempts, updates worker health, respects latency budget, chooses fallback or pauses with retry-after, and lets `/goal resume` recover state without retrying unhealthy routes.
+
+**Boundary**: This phase must not create a second autonomous loop. `/goal` owns continuation; the allocator owns worker selection and attempt recovery. Foreground chat must never sleep indefinitely for network or quota recovery.
+
+### Spec And Architecture Artifacts
+
+- [x] T136 [US9] Document upstream `/goal` integration model: goal state is stored in `SessionDB.state_meta` as `goal:<session_id>`, continuation prompts remain user-role messages, and multi-agent allocation must extend this lifecycle rather than create a second loop
+- [x] T137 [US9] Add `contracts/goal-allocation.md` defining allocation state keys, `WorkerAllocationPlan`, `WorkerAttemptResult`, `WorkerHealth`, lifecycle, invariants, observability, and tests
+- [x] T138 [US9] Link the goal-allocation phase from `plan.md`, `spec.md`, and `docs/multi-agent-allocation-architecture.md`
+
+### Tests For Goal-Based Allocation
+
+- [ ] T139 [P] [US9] Add schema tests for `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth`, including invalid status, missing budget, missing validation requirement, and unsafe fallback eligibility
+- [ ] T140 [P] [US9] Add allocator decision tests for ranked fallback, repeated-route suppression, worker cooldown, all-workers-unhealthy pause, and no foreground sleep on network degradation
+- [ ] T141 [P] [US9] Add `/goal resume` tests proving allocation state is recovered from `allocation:<session_id>:<task_id>` and unhealthy workers are skipped until cooldown expires
+- [ ] T142 [P] [US9] Add observability tests for active allocations, worker health, attempt history, consumed latency budget, fallback reason, retry-after, and goal/session linkage
+
+### Implementation For Goal-Based Allocation
+
+- [ ] T143 [US9] Implement `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth` schemas with JSON serialization suitable for `SessionDB.state_meta`
+- [ ] T144 [US9] Implement allocation state helpers for `allocation:<session_id>:<task_id>` and worker health helpers for `worker_health:<worker_id>`
+- [ ] T145 [US9] Implement allocator decision logic that consults runtime memory and worker health, selects primary worker, enforces latency/retry budgets, skips unhealthy workers, tries ranked fallbacks, and pauses/schedules recovery instead of foreground sleeping on degradation
+- [ ] T146 [US9] Wire allocator into the supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy while final responses still disclose degraded worker evidence
+- [ ] T147 [US9] Add allocator CLI/API observability: `hermes runtime allocations list/get --json` and `hermes runtime workers health --json`
+- [ ] T148 [US9] Extend generic runtime failure capture to delegated agents/workers so worker hallucinations, false completions, empty outputs, timeouts, and route substitutions are captured before curator/judge sidecars run
+- [ ] T149 [US9] Add specialized curator/judge handling for allocator and `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
+
+**Checkpoint**: `/goal` can continue serious work without trapping Hermes in one failed worker route; allocation attempts are bounded, observable, resumable, and separated from memory/policy enforcement.
 
 ## Dependencies & Execution Order
 
@@ -389,6 +414,7 @@
 - User Story 6 can begin after job records are available and should expand as each sidecar path lands.
 - User Story 7 depends on runtime packet schemas, learning jobs, event bus, and observability surfaces so stale/looping work can be audited and recovered.
 - User Story 8 depends on Phase 10 validation and must finish persisted lesson storage/retrieval plus cost-budget instrumentation before production backend scale-out.
+- User Story 9 depends on the Phase 11 runtime-degradation gate and persisted memory retrieval, then adds deterministic allocation around upstream `/goal` continuation.
 
 ## Parallel Opportunities
 
@@ -397,6 +423,7 @@
 - CLI contracts and docs can be updated in parallel with implementation after data-model fields stabilize.
 - Dashboard/backend observability can start once `learning_jobs.py` exposes stable JSON.
 - Low-end model eval fixtures and persisted lesson retrieval can be developed first. Realtime voice adapters, global bus adapters, production memory wiki backends, and training export tests are intentionally deferred until the core loop has measured value.
+- Goal-allocation schema, decision, resume, and observability tests can be developed in parallel after the contract lands.
 
 ## Implementation Strategy
 
@@ -419,6 +446,7 @@
 8. Supervisor convergence control plane.
 9. Future enforcement mode only after audit evidence, judge approval, and operator approval.
 10. Production runtime surfaces and low-end model validation after Phase 10 smoke tests.
+11. Goal-based multi-agent allocation after runtime degradation evidence is reliable.
 
 ### Phase 11A Immediate Order
 
@@ -436,3 +464,12 @@
 3. Add production bus/object/vector/graph adapters only when a multi-instance deployment requires them.
 4. Add training corpus export only after approved memory provenance is stable.
 5. Add realtime voice after runtime learning correctness is proven.
+
+### Phase 12 Order
+
+1. Add allocation schemas and state persistence.
+2. Add worker health registry and status updates from attempt results.
+3. Add allocator decision policy with budgets, cooldowns, and ranked fallback.
+4. Wire allocator into supervisor delegation while preserving degraded-response gates.
+5. Add CLI/API observability for allocations and worker health.
+6. Run controlled upstream-vs-branch smoke tests to prove reduced looping and clearer degradation disclosure.

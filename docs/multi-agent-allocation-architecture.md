@@ -7,6 +7,11 @@ worker route, network outage, quota exhaustion, or retry loop. The platform
 should reuse the upstream `/goal` lifecycle for persistence and continuation,
 then add deterministic multi-agent allocation inside each goal/task turn.
 
+Spec Kit implementation artifacts live in:
+
+- `specs/001-learning-memory-runtime/contracts/goal-allocation.md`
+- `specs/001-learning-memory-runtime/tasks.md` Phase 12
+
 ## Existing Goal Mechanism
 
 The current goal loop is implemented in `hermes_cli/goals.py`.
@@ -230,11 +235,14 @@ Therefore the correct path is integration:
 
 ## Open Implementation Items
 
-- Add `WorkerAllocationPlan` and `WorkerAttemptResult` dataclasses.
-- Persist allocation state in `SessionDB.state_meta`.
-- Add worker health registry helpers.
-- Add allocator decision function with latency/retry/cooldown policy.
-- Wire allocator into supervisor delegation path before direct fallback.
-- Add CLI/API read surfaces for allocation status and health.
-- Add tests for quota exhaustion, network degradation, empty output, timeout,
-  fallback to next worker, and goal pause on exhausted budget.
+Track implementation in Spec Kit Phase 12:
+
+- add `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth`
+  schemas
+- persist allocation state in `SessionDB.state_meta`
+- add worker health registry helpers
+- add allocator decision function with latency/retry/cooldown policy
+- wire allocator into supervisor delegation path before direct fallback
+- add CLI/API read surfaces for allocation status and health
+- add tests for quota exhaustion, auth failure, network degradation, empty
+  output, timeout, fallback to next worker, and goal pause on exhausted budget

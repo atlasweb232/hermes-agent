@@ -52,6 +52,7 @@ specs/001-learning-memory-runtime/
 ├── contracts/
 │   ├── cli.md
 │   ├── event-bus.md
+│   ├── goal-allocation.md
 │   └── learning-state.md
 └── tasks.md
 ```
@@ -62,6 +63,7 @@ specs/001-learning-memory-runtime/
 hermes_cli/
 ├── config.py
 ├── main.py
+├── goal_allocator.py
 ├── runtime_orchestrator.py
 ├── runtime_packets.py
 ├── runtime_templates.py
@@ -108,6 +110,12 @@ See [research.md](./research.md).
 ## Phase 1: Design And Contracts
 
 See [data-model.md](./data-model.md), [quickstart.md](./quickstart.md), and [contracts/](./contracts/).
+
+## Phase 12: Goal-Based Multi-Agent Allocation
+
+See [contracts/goal-allocation.md](./contracts/goal-allocation.md) and [../../docs/multi-agent-allocation-architecture.md](../../docs/multi-agent-allocation-architecture.md).
+
+This phase integrates upstream `/goal` continuation with deterministic worker allocation. `/goal` remains the continuation and pause/resume controller; the allocator owns worker ranking, latency budgets, attempt recording, worker health, fallback, and recovery decisions inside each bounded goal/task turn.
 
 ## Complexity Tracking
 
