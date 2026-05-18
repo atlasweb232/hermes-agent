@@ -3839,6 +3839,20 @@ class AIAgent:
             logger.debug("completion gate final-response guard failed", exc_info=True)
             return final_response
 
+    def _apply_runtime_failure_gate_to_final_response(self, final_response: str) -> str:
+        try:
+            from hermes_cli.runtime_lesson_capture import apply_runtime_failure_gate_to_final_response
+
+            observer = getattr(self, "_runtime_lesson_observer", None)
+            if observer is None:
+                return final_response
+            gate = observer.runtime_failure_gate()
+            self._last_runtime_failure_gate = gate
+            return apply_runtime_failure_gate_to_final_response(final_response, gate)
+        except Exception:
+            logger.debug("runtime failure final-response guard failed", exc_info=True)
+            return final_response
+
     def _observe_runtime_lesson(
         self,
         function_name: str,
@@ -3858,6 +3872,7 @@ class AIAgent:
                 RuntimeLessonObserver,
                 ToolOutcome,
                 append_lesson_capture_note,
+                classify_terminal_status,
                 persist_runtime_lesson,
                 redact_sensitive_text,
             )
@@ -3876,6 +3891,11 @@ class AIAgent:
                     session_id=getattr(self, "session_id", None),
                     cwd=str(function_args.get("workdir") or os.getenv("TERMINAL_CWD") or os.getcwd()),
                     duration_seconds=float(duration_seconds or 0.0),
+                    status=classify_terminal_status(
+                        function_result,
+                        failed=bool(failed),
+                        duration_seconds=float(duration_seconds or 0.0),
+                    ),
                 )
             )
             if lesson is None:

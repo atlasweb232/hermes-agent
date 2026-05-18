@@ -22,6 +22,17 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s]+"),
 ]
 
+WORKER_COMMAND_FAMILIES = {
+    "worker-router",
+    "claude",
+    "codex",
+    "deepseek",
+    "cursor",
+    "gemini",
+    "qwen",
+    "minimax",
+}
+
 
 @dataclass
 class ToolOutcome:
@@ -32,6 +43,7 @@ class ToolOutcome:
     session_id: Optional[str] = None
     cwd: Optional[str] = None
     duration_seconds: float = 0.0
+    status: str = ""
 
 
 @dataclass
@@ -43,6 +55,21 @@ class RuntimeLesson:
     body: str
     score: float
     evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RuntimeFailureGate:
+    status: str
+    reason: str = ""
+    last_failed_family: str = ""
+    last_failed_command: str = ""
+    last_failed_status: str = ""
+    last_successful_worker_family: str = ""
+    failure_count: int = 0
+    requires_disclosure: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +110,34 @@ def parse_terminal_failure(result: Any) -> bool:
             "usage:",
         )
     )
+
+
+def classify_terminal_status(result: Any, *, failed: bool, duration_seconds: float = 0.0) -> str:
+    data: dict[str, Any] = {}
+    if isinstance(result, dict):
+        data = result
+    else:
+        try:
+            parsed = json.loads(str(result or ""))
+            if isinstance(parsed, dict):
+                data = parsed
+        except Exception:
+            data = {}
+
+    text = str(result or "")
+    lowered = text.lower()
+    exit_code = data.get("exit_code", data.get("returncode"))
+    error = str(data.get("error") or "")
+    output = str(data.get("output", data.get("stdout", "")) or "")
+    if exit_code == 124 or "timed out" in lowered or "timeout" in error.lower():
+        return "timed_out"
+    if failed or (isinstance(exit_code, int) and exit_code != 0) or error:
+        return "failed"
+    if isinstance(exit_code, int) and exit_code == 0 and not output.strip():
+        return "empty_output"
+    if float(duration_seconds or 0.0) >= 60.0 and not output.strip():
+        return "empty_output"
+    return "success"
 
 
 def _command_tokens(command: str) -> list[str]:
@@ -141,6 +196,19 @@ def _command_family(command: str) -> str:
     return executable
 
 
+def _worker_command_family(command: str) -> str:
+    tokens = _command_tokens(command)
+    if not tokens:
+        return ""
+    if tokens[0] in WORKER_COMMAND_FAMILIES:
+        return tokens[0]
+    if tokens[0] == "hermes" and len(tokens) > 1 and tokens[1] in WORKER_COMMAND_FAMILIES:
+        return tokens[1]
+    if len(tokens) > 1 and tokens[0] in {"sudo", "env", "timeout", "time"} and tokens[1] in WORKER_COMMAND_FAMILIES:
+        return tokens[1]
+    return ""
+
+
 class RuntimeLessonObserver:
     """Session-local detector for failure-to-success operational lessons."""
 
@@ -159,9 +227,51 @@ class RuntimeLessonObserver:
         self._events: list[ToolOutcome] = []
         self._emitted: set[str] = set()
 
+    def runtime_failure_gate(self) -> RuntimeFailureGate:
+        worker_events = [event for event in self._events if _worker_command_family(event.command)]
+        if not worker_events:
+            return RuntimeFailureGate(status="passed")
+
+        failed_events = [
+            event
+            for event in worker_events
+            if event.failed or event.status in {"failed", "timed_out", "empty_output"}
+        ]
+        if not failed_events:
+            return RuntimeFailureGate(status="passed")
+
+        last_failure = failed_events[-1]
+        last_failure_index = self._events.index(last_failure)
+        last_success = next(
+            (
+                event
+                for event in reversed(worker_events)
+                if not event.failed and event.status == "success"
+            ),
+            None,
+        )
+        if last_success and self._events.index(last_success) > last_failure_index:
+            return RuntimeFailureGate(
+                status="passed",
+                last_successful_worker_family=_worker_command_family(last_success.command),
+            )
+
+        family = _worker_command_family(last_failure.command) or _command_family(last_failure.command)
+        return RuntimeFailureGate(
+            status="degraded",
+            reason="latest worker/agent command did not produce validated successful output",
+            last_failed_family=family,
+            last_failed_command=redact_sensitive_text(last_failure.command, max_chars=300),
+            last_failed_status=last_failure.status or ("failed" if last_failure.failed else "unknown"),
+            failure_count=len(failed_events),
+            requires_disclosure=True,
+        )
+
     def observe(self, outcome: ToolOutcome) -> Optional[RuntimeLesson]:
         if outcome.tool_name != "terminal" or not outcome.command:
             return None
+        if not outcome.status:
+            outcome.status = "failed" if outcome.failed else "success"
         self._events.append(outcome)
         if len(self._events) > self.max_events:
             self._events = self._events[-self.max_events :]
@@ -361,6 +471,31 @@ def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
         "kind": lesson.kind,
         "claim": lesson.claim,
     }
+
+
+def apply_runtime_failure_gate_to_final_response(
+    final_response: str,
+    gate: RuntimeFailureGate | dict[str, Any] | None,
+) -> str:
+    if not final_response or gate is None:
+        return final_response
+    if isinstance(gate, dict):
+        gate = RuntimeFailureGate(**{k: v for k, v in gate.items() if k in RuntimeFailureGate.__dataclass_fields__})
+    if gate.status != "degraded" or not gate.requires_disclosure:
+        return final_response
+
+    response = final_response.strip()
+    if "Worker delegation degraded:" in response:
+        return final_response
+    lines = [
+        "Worker delegation degraded: the latest worker/agent command did not produce validated successful output.",
+        f"- last_failed_family: {gate.last_failed_family or 'unknown'}",
+        f"- last_failed_status: {gate.last_failed_status or 'unknown'}",
+    ]
+    if gate.last_failed_command:
+        lines.append(f"- last_failed_command: `{gate.last_failed_command}`")
+    lines.append("The answer below is supervisor fallback unless separately validated.")
+    return "\n".join(lines) + "\n\n" + response
 
 
 def append_lesson_capture_note(result: Any, capture: dict[str, Any]) -> Any:

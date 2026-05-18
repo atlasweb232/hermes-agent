@@ -329,6 +329,25 @@ Current acceptance coverage:
 
 VM live smoke for the no-hint path remains pending.
 
+## Runtime Worker Degradation Gate
+
+Implemented after the Claude Code smoke test showed a broader issue: the final
+answer was correct, but the worker route timed out/failed and the supervisor
+still described the worker run as successful.
+
+The fix is generic, not Claude-specific:
+
+- terminal outcomes are classified as `success`, `failed`, `timed_out`, or
+  `empty_output`
+- worker-like command families are tracked across the turn
+- if the latest worker command is degraded and no later worker command succeeds,
+  the final response must disclose that the answer is supervisor fallback
+- foreground worker commands get a configurable default timeout cap so degraded
+  workers do not pin the whole environment
+
+This is disclosure enforcement only. Policy-driven command blocking/rewrite and
+automatic worker reallocation remain future work behind judge/operator approval.
+
 ## Phase 11A Cost/Value JSON Observability
 
 Implemented deterministic JSON reporting through:

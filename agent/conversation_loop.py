@@ -3900,6 +3900,9 @@ def run_conversation(
     if final_response and not interrupted:
         final_response = agent._apply_completion_gate_to_final_response(final_response)
 
+    if final_response and not interrupted:
+        final_response = agent._apply_runtime_failure_gate_to_final_response(final_response)
+
     # Plugin hook: transform_llm_output
     # Fired once per turn after the tool-calling loop completes.
     # Plugins can transform the LLM's output text before it's returned.

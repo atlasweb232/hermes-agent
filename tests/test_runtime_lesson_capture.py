@@ -4,6 +4,8 @@ from hermes_cli.runtime_lesson_capture import (
     RuntimeLessonObserver,
     ToolOutcome,
     append_lesson_capture_note,
+    apply_runtime_failure_gate_to_final_response,
+    classify_terminal_status,
     parse_terminal_failure,
     persist_runtime_lesson,
     redact_sensitive_text,
@@ -14,6 +16,12 @@ from hermes_state import SessionDB
 def test_parse_terminal_failure_from_json_exit_code():
     assert parse_terminal_failure(json.dumps({"exit_code": 2, "stderr": "bad"})) is True
     assert parse_terminal_failure(json.dumps({"exit_code": 0, "stdout": "ok"})) is False
+
+
+def test_classify_terminal_status_detects_timeout_and_empty_output():
+    assert classify_terminal_status(json.dumps({"exit_code": 124, "error": "timed out"}), failed=True) == "timed_out"
+    assert classify_terminal_status(json.dumps({"exit_code": 0, "output": ""}), failed=False) == "empty_output"
+    assert classify_terminal_status(json.dumps({"exit_code": 0, "output": "4"}), failed=False) == "success"
 
 
 def test_redacts_common_secret_shapes():
@@ -124,6 +132,52 @@ def test_observer_captures_generic_evidence_mismatch_after_failed_route():
     assert lesson.evidence["failed_command_family"] == "worker-router"
     assert lesson.evidence["substitute_command_family"] == "echo"
     assert lesson.evidence["operator_approval_required"] is True
+
+
+def test_runtime_failure_gate_requires_disclosure_after_failed_worker():
+    observer = RuntimeLessonObserver(long_failure_seconds=30)
+    observer.observe(
+        ToolOutcome(
+            tool_name="terminal",
+            command='worker-router claude "what is two plus two"',
+            failed=True,
+            result_excerpt="timed out",
+            duration_seconds=120.0,
+            status="timed_out",
+        )
+    )
+
+    gate = observer.runtime_failure_gate()
+    response = apply_runtime_failure_gate_to_final_response("Answer: 4", gate)
+
+    assert gate.status == "degraded"
+    assert gate.last_failed_family == "worker-router"
+    assert "Worker delegation degraded" in response
+    assert "supervisor fallback" in response
+    assert "Answer: 4" in response
+
+
+def test_runtime_failure_gate_clears_after_later_successful_worker():
+    observer = RuntimeLessonObserver(long_failure_seconds=30)
+    observer.observe(
+        ToolOutcome(
+            tool_name="terminal",
+            command='worker-router claude "what is two plus two"',
+            failed=True,
+            status="timed_out",
+        )
+    )
+    observer.observe(
+        ToolOutcome(
+            tool_name="terminal",
+            command='codex exec "what is two plus two"',
+            failed=False,
+            result_excerpt="4",
+            status="success",
+        )
+    )
+
+    assert observer.runtime_failure_gate().status == "passed"
 
 
 def test_observer_counts_hermes_worker_router_wrapper_failures():
@@ -276,3 +330,25 @@ def test_agent_observer_hook_persists_generic_supervisor_failure(tmp_path):
     assert parsed["runtime_lesson_capture"]["status"] == "captured"
     records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
     assert records[0]["payload_json"]["failure_type"] == "supervisor_tool_loop_failure"
+
+
+def test_agent_runtime_failure_gate_discloses_worker_degradation(tmp_path):
+    from run_agent import AIAgent
+
+    db = SessionDB(tmp_path / "state.db")
+    agent = object.__new__(AIAgent)
+    agent._session_db = db
+    agent.session_id = "session-runtime-gate-test"
+    agent._observe_runtime_lesson(
+        "terminal",
+        {"command": 'worker-router claude "what is two plus two"', "workdir": str(tmp_path)},
+        json.dumps({"exit_code": 124, "error": "timed out"}),
+        True,
+        120.0,
+    )
+
+    response = agent._apply_runtime_failure_gate_to_final_response("The answer is 4.")
+
+    assert "Worker delegation degraded" in response
+    assert "worker-router" in response
+    assert "The answer is 4." in response

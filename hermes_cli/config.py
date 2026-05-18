@@ -953,6 +953,24 @@ DEFAULT_CONFIG = {
             "build_commands": [],
             "max_output_chars": 8000,
         },
+        "worker_runtime": {
+            "enabled": True,
+            # Foreground agent/worker calls are bounded by default so a
+            # degraded external worker does not pin the whole supervisor
+            # session. Real long-running worker jobs should be backgrounded or
+            # request an explicit timeout.
+            "foreground_timeout_seconds": 30,
+            "command_families": [
+                "worker-router",
+                "claude",
+                "codex",
+                "deepseek",
+                "cursor",
+                "gemini",
+                "qwen",
+                "minimax",
+            ],
+        },
         # Offline curator role. This is independent from the primary chat
         # model and worker models. Curator output is advisory unless a
         # deterministic validator and approval step promote it.

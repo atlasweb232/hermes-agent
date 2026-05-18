@@ -39,6 +39,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import time
 import threading
 import atexit
@@ -1094,6 +1095,44 @@ def _get_env_config() -> Dict[str, Any]:
     }
 
 
+def _command_family_for_timeout(command: str) -> str:
+    try:
+        tokens = shlex.split(str(command or ""))
+    except ValueError:
+        tokens = str(command or "").split()
+    if not tokens:
+        return ""
+    executable = tokens[0]
+    if executable in {"sudo", "env", "timeout", "time"} and len(tokens) > 1:
+        executable = tokens[1]
+    if executable == "hermes" and len(tokens) > 1:
+        executable = tokens[1]
+    return executable
+
+
+def _worker_foreground_timeout_cap(command: str) -> Optional[int]:
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config()
+        worker_cfg = ((cfg.get("supervisor") or {}).get("worker_runtime") or {})
+    except Exception:
+        worker_cfg = {}
+    if worker_cfg.get("enabled", True) is False:
+        return None
+    family = _command_family_for_timeout(command)
+    families = set(str(item) for item in (worker_cfg.get("command_families") or []))
+    if not families:
+        families = {"worker-router", "claude", "codex", "deepseek", "cursor", "gemini", "qwen", "minimax"}
+    if family not in families:
+        return None
+    try:
+        cap = int(worker_cfg.get("foreground_timeout_seconds") or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    return cap if cap > 0 else None
+
+
 def _get_modal_backend_state(modal_mode: object | None) -> Dict[str, Any]:
     """Resolve direct vs managed Modal backend selection."""
     return resolve_modal_backend_state(
@@ -1739,6 +1778,11 @@ def terminal_tool(
         cwd = overrides.get("cwd") or config["cwd"]
         default_timeout = config["timeout"]
         effective_timeout = timeout or default_timeout
+        worker_timeout_cap = None
+        if not background and timeout is None:
+            worker_timeout_cap = _worker_foreground_timeout_cap(command)
+            if worker_timeout_cap is not None:
+                effective_timeout = min(int(effective_timeout), int(worker_timeout_cap))
 
         # Reject foreground commands where the model explicitly requests
         # a timeout above FOREGROUND_MAX_TIMEOUT — nudge it toward background.
@@ -2078,11 +2122,14 @@ def terminal_tool(
                 except Exception as e:
                     error_str = str(e).lower()
                     if "timeout" in error_str:
-                        return json.dumps({
+                        timeout_payload = {
                             "output": "",
                             "exit_code": 124,
                             "error": f"Command timed out after {effective_timeout} seconds"
-                        }, ensure_ascii=False)
+                        }
+                        if worker_timeout_cap is not None:
+                            timeout_payload["worker_timeout_cap_seconds"] = worker_timeout_cap
+                        return json.dumps(timeout_payload, ensure_ascii=False)
                     
                     # Retry on transient errors
                     if retry_count < max_retries:
@@ -2163,6 +2210,8 @@ def terminal_tool(
                 "exit_code": returncode,
                 "error": None,
             }
+            if worker_timeout_cap is not None:
+                result_dict["worker_timeout_cap_seconds"] = worker_timeout_cap
             if approval_note:
                 result_dict["approval"] = approval_note
             if exit_note:

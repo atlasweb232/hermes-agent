@@ -202,6 +202,38 @@ Curator and judge sidecars may later summarize the event, but capture is
 mandatory and deterministic. Agent-side capture should reuse the same event
 shape later; this slice applies it first to the supervisor runtime.
 
+## Runtime Failure Final-Response Gate
+
+Runtime capture is now also used before the final response is returned. If the
+latest worker/agent command family failed, timed out, or returned empty output
+and no later worker command produced validated output, Hermes prepends a
+deterministic disclosure:
+
+```text
+Worker delegation degraded: the latest worker/agent command did not produce
+validated successful output.
+...
+The answer below is supervisor fallback unless separately validated.
+```
+
+This gate is provider-neutral. It applies to worker-like command families such
+as `worker-router`, `claude`, `codex`, `deepseek`, `cursor`, `gemini`, `qwen`,
+and `minimax`. It does not block ordinary chat; it prevents the supervisor from
+silently presenting fallback reasoning as a successful worker result.
+
+Foreground worker commands also receive a configurable default timeout cap via:
+
+```yaml
+supervisor:
+  worker_runtime:
+    enabled: true
+    foreground_timeout_seconds: 30
+```
+
+Long-running worker jobs should run in the background or request an explicit
+timeout with task metadata. The default cap exists to prevent a degraded worker
+route from pinning the supervisor environment.
+
 ## Limitations
 
 - Repo inference is best-effort. Hermes detects absolute git repo paths in the
@@ -215,6 +247,8 @@ shape later; this slice applies it first to the supervisor runtime.
 - Runtime lesson capture currently stores generic supervisor failures as memory
   records only. Promotion into policy, global lessons, or enforcement still
   requires curator/judge/operator gates.
+- The final-response runtime gate is advisory/disclosure enforcement. It does
+  not yet rewrite commands or choose a replacement worker automatically.
 
 ## Why This Prevents The Observed Failure
 

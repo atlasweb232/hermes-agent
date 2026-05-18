@@ -123,6 +123,34 @@ def test_passwordless_sudo_skips_interactive_prompt_and_rewrite(monkeypatch):
     assert sudo_stdin is None
 
 
+def test_worker_foreground_timeout_cap_matches_configured_worker(monkeypatch):
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config",
+        lambda: {
+            "supervisor": {
+                "worker_runtime": {
+                    "enabled": True,
+                    "foreground_timeout_seconds": 17,
+                    "command_families": ["worker-router", "claude", "codex"],
+                }
+            }
+        },
+    )
+
+    assert terminal_tool._worker_foreground_timeout_cap('worker-router claude "two plus two"') == 17
+    assert terminal_tool._worker_foreground_timeout_cap('claude -p "two plus two"') == 17
+    assert terminal_tool._worker_foreground_timeout_cap("echo 4") is None
+
+
+def test_worker_foreground_timeout_cap_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(
+        "hermes_cli.config.load_config",
+        lambda: {"supervisor": {"worker_runtime": {"enabled": False}}},
+    )
+
+    assert terminal_tool._worker_foreground_timeout_cap('worker-router claude "two plus two"') is None
+
+
 def test_passwordless_sudo_probe_rechecks_local_terminal(monkeypatch):
     monkeypatch.delenv("TERMINAL_ENV", raising=False)
     calls = []
