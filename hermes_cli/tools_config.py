@@ -55,6 +55,7 @@ CONFIGURABLE_TOOLSETS = [
     ("web",             "🔍 Web Search & Scraping",    "web_search, web_extract"),
     ("browser",         "🌐 Browser Automation",       "navigate, click, type, scroll"),
     ("tinyfish",        "🐟 TinyFish Browser/Agent",   "fetch, search, browser agent (requires TINYFISH_API_KEY)"),
+    ("atlas",           "🧰 Atlas Repo Dependencies",  "machine deps: git, eza/exa, rg, fd, jq, gh"),
     ("terminal",        "💻 Terminal & Processes",      "terminal, process"),
     ("file",            "📁 File Operations",           "read, write, patch, search"),
     ("code_execution",  "⚡ Code Execution",            "execute_code"),
@@ -527,6 +528,20 @@ TOOL_CATEGORIES = {
                     # optional pin for reproducibility across macOS updates.
                 ],
                 "post_setup": "cua_driver",
+            },
+        ],
+    },
+    "tinyfish": {
+        "name": "TinyFish Browser/Agent",
+        "icon": "🐟",
+        "providers": [
+            {
+                "name": "TinyFish API",
+                "badge": "external API key",
+                "tag": "Browser Fetch, Search, and Agent APIs via TINYFISH_API_KEY",
+                "env_vars": [
+                    {"key": "TINYFISH_API_KEY", "label": "TinyFish API Key", "secret": True},
+                ],
             },
         ],
     },

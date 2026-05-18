@@ -168,6 +168,33 @@ class TestDoctorToolAvailabilityOverrides:
         assert doctor._doctor_tool_availability_detail("kanban") == "(runtime-gated; loaded only for dispatcher-spawned workers)"
 
 
+def test_atlas_dependency_status_reports_exa_or_eza(monkeypatch):
+    seen = []
+
+    def fake_which(cmd):
+        seen.append(cmd)
+        return "/usr/bin/eza" if cmd == "eza" else None
+
+    monkeypatch.setattr(doctor, "_safe_which", fake_which)
+    statuses = doctor._atlas_dependency_statuses()
+
+    by_name = {item["name"]: item for item in statuses}
+    assert by_name["eza/exa"]["available"] is True
+    assert by_name["eza/exa"]["command"] == "eza"
+    assert {"git", "rg", "fd", "jq", "gh", "eza", "exa"}.issubset(set(seen))
+
+
+def test_tinyfish_config_status_uses_env_only(monkeypatch):
+    monkeypatch.delenv("TINYFISH_API_KEY", raising=False)
+    assert doctor._tinyfish_config_status()["configured"] is False
+
+    monkeypatch.setenv("TINYFISH_API_KEY", "env-key")
+    status = doctor._tinyfish_config_status()
+
+    assert status["configured"] is True
+    assert "env" in status["source"]
+
+
 class TestHonchoDoctorConfigDetection:
     def test_reports_configured_when_enabled_with_api_key(self, monkeypatch):
         fake_config = SimpleNamespace(enabled=True, api_key="***")

@@ -142,6 +142,15 @@ TOOLSETS = {
         "includes": []
     },
 
+    "tinyfish": {
+        "description": "TinyFish Browser Fetch, Search, and browser Agent API tools (requires TINYFISH_API_KEY)",
+        "tools": [
+            "tinyfish_fetch", "tinyfish_search", "tinyfish_agent_run",
+            "tinyfish_agent_queue", "tinyfish_run_status"
+        ],
+        "includes": []
+    },
+
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
@@ -173,12 +182,14 @@ TOOLSETS = {
         "includes": []
     },
 
-    "tinyfish": {
-        "description": "TinyFish Browser Fetch, Search, and browser Agent API tools (requires TINYFISH_API_KEY)",
-        "tools": [
-            "tinyfish_fetch", "tinyfish_search", "tinyfish_agent_run",
-            "tinyfish_agent_queue", "tinyfish_run_status"
-        ],
+    "atlas": {
+        "description": (
+            "Atlas/private repo work dependency checklist. This is not an "
+            "LLM tool bundle; it documents machine executables Hermes repo "
+            "work expects on PATH. Doctor reports installation status."
+        ),
+        "tools": [],
+        "machine_dependencies": ["git", "eza/exa", "rg", "fd", "jq", "gh"],
         "includes": []
     },
     

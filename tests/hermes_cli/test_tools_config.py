@@ -83,6 +83,15 @@ def test_configurable_toolsets_include_voice():
     assert "voice" in TOOL_CATEGORIES
 
 
+def test_configurable_toolsets_include_tinyfish():
+    assert any(ts_key == "tinyfish" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
+    assert "tinyfish" in TOOL_CATEGORIES
+
+
+def test_configurable_toolsets_include_atlas_repo_dependencies():
+    assert any(ts_key == "atlas" for ts_key, _, _ in CONFIGURABLE_TOOLSETS)
+
+
 def test_voice_category_exposes_requested_providers():
     providers = TOOL_CATEGORIES["voice"]["providers"]
     names = {provider["name"] for provider in providers}

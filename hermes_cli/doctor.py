@@ -4,12 +4,13 @@ Doctor command for hermes CLI.
 Diagnoses issues with Hermes Agent setup.
 """
 
-import os
-import sys
-import subprocess
-import shutil
 import importlib.util
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
+from typing import Iterable
 
 from hermes_cli.config import get_project_root, get_hermes_home, get_env_path
 from hermes_cli.env_loader import load_hermes_dotenv
@@ -78,6 +79,50 @@ def _safe_which(cmd: str) -> str | None:
         return shutil.which(cmd)
     except Exception:
         return None
+
+
+def _atlas_dependency_statuses() -> list[dict[str, object]]:
+    """Return install status for Atlas/private repo-work machine deps."""
+    specs: list[tuple[str, tuple[str, ...]]] = [
+        ("git", ("git",)),
+        ("eza/exa", ("eza", "exa")),
+        ("rg", ("rg",)),
+        ("fd", ("fd", "fdfind")),
+        ("jq", ("jq",)),
+        ("gh", ("gh",)),
+    ]
+    statuses: list[dict[str, object]] = []
+    for label, candidates in specs:
+        found_command = None
+        found_path = None
+        for candidate in candidates:
+            path = _safe_which(candidate)
+            if path and not found_path:
+                found_command = candidate
+                found_path = path
+        statuses.append({
+            "name": label,
+            "available": bool(found_path),
+            "command": found_command,
+            "path": found_path,
+            "candidates": candidates,
+        })
+    return statuses
+
+
+def _tinyfish_config_status() -> dict[str, object]:
+    """Return TinyFish SDK/key status without revealing secret values."""
+    try:
+        import tinyfish  # noqa: F401
+        sdk_installed = True
+    except Exception:
+        sdk_installed = False
+    configured = bool(str(os.getenv("TINYFISH_API_KEY") or "").strip())
+    return {
+        "sdk_installed": sdk_installed,
+        "configured": configured,
+        "source": "env:TINYFISH_API_KEY" if configured else "missing env:TINYFISH_API_KEY",
+    }
 
 
 def _termux_browser_setup_steps(node_installed: bool) -> list[str]:
@@ -1074,6 +1119,31 @@ def run_doctor(args):
     else:
         check_warn("ripgrep (rg) not found", "(file search uses grep fallback)")
         check_info(f"Install for faster search: {_system_package_install_cmd('ripgrep')}")
+
+    print()
+    print(color("◆ Atlas Repo Dependencies", Colors.CYAN, Colors.BOLD))
+    for dep in _atlas_dependency_statuses():
+        label = str(dep["name"])
+        if dep["available"]:
+            command = dep.get("command")
+            detail = f"({command} on PATH)" if command and command != label else "(on PATH)"
+            check_ok(label, detail)
+        else:
+            candidates_value = dep.get("candidates", ())
+            candidates = "/".join(str(item) for item in candidates_value) if isinstance(candidates_value, Iterable) else str(candidates_value)
+            check_warn(label, f"(missing; install command: {candidates})")
+
+    print()
+    print(color("◆ TinyFish", Colors.CYAN, Colors.BOLD))
+    tinyfish_status = _tinyfish_config_status()
+    if tinyfish_status["sdk_installed"]:
+        check_ok("tinyfish Python SDK", "(installed)")
+    else:
+        check_warn("tinyfish Python SDK not installed", "(run: python -m pip install tinyfish)")
+    if tinyfish_status["configured"]:
+        check_ok("TinyFish API key", f"({tinyfish_status['source']})")
+    else:
+        check_warn("TinyFish API key not configured", "(set TINYFISH_API_KEY in env or Hermes .env)")
     
     # Docker (optional)
     terminal_env = os.getenv("TERMINAL_ENV", "local")

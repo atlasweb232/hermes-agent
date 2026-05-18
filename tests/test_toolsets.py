@@ -32,6 +32,31 @@ class TestGetToolset:
         assert ts is not None
         assert "web_search" in ts["tools"]
 
+    def test_tinyfish_is_first_class_toolset_and_browser_preserves_it(self):
+        tinyfish_tools = {
+            "tinyfish_fetch",
+            "tinyfish_search",
+            "tinyfish_agent_run",
+            "tinyfish_agent_queue",
+            "tinyfish_run_status",
+        }
+
+        assert set(get_toolset("tinyfish")["tools"]) == tinyfish_tools
+        assert tinyfish_tools.issubset(set(get_toolset("browser")["tools"]))
+        assert tinyfish_tools.issubset(set(resolve_toolset("hermes-cli")))
+
+    def test_atlas_private_toolset_documents_repo_work_dependencies(self):
+        ts = get_toolset("atlas")
+        assert ts is not None
+        assert ts["tools"] == []
+        assert "git" in ts["machine_dependencies"]
+        assert "jq" in ts["machine_dependencies"]
+
+    def test_all_toolset_machine_dependencies_are_lists(self):
+        for name, ts in TOOLSETS.items():
+            if "machine_dependencies" in ts:
+                assert isinstance(ts["machine_dependencies"], list), name
+
     def test_merges_registry_tools_into_builtin_toolset(self, monkeypatch):
         reg = ToolRegistry()
         reg.register(
