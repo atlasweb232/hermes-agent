@@ -53,7 +53,10 @@ specs/001-learning-memory-runtime/
 │   ├── cli.md
 │   ├── event-bus.md
 │   ├── goal-allocation.md
-│   └── learning-state.md
+│   ├── health-sidecar.md
+│   ├── learning-state.md
+│   ├── restart-recovery.md
+│   └── task-graph.md
 └── tasks.md
 ```
 
@@ -64,6 +67,8 @@ hermes_cli/
 ├── config.py
 ├── main.py
 ├── goal_allocator.py
+├── health_sidecar.py
+├── restart_recovery.py
 ├── runtime_orchestrator.py
 ├── runtime_packets.py
 ├── runtime_templates.py
@@ -116,6 +121,12 @@ See [data-model.md](./data-model.md), [quickstart.md](./quickstart.md), and [con
 See [contracts/goal-allocation.md](./contracts/goal-allocation.md) and [../../docs/multi-agent-allocation-architecture.md](../../docs/multi-agent-allocation-architecture.md).
 
 This phase integrates upstream `/goal` continuation with deterministic worker allocation. `/goal` remains the continuation and pause/resume controller; the allocator owns worker ranking, latency budgets, attempt recording, worker health, fallback, and recovery decisions inside each bounded goal/task turn.
+
+## Phase 13: Self-Healing Workflow Control Plane
+
+See [contracts/task-graph.md](./contracts/task-graph.md), [contracts/health-sidecar.md](./contracts/health-sidecar.md), [contracts/restart-recovery.md](./contracts/restart-recovery.md), and [../../super-architecture.md](../../super-architecture.md).
+
+This phase plugs the remaining stability layer around the allocator: supervisor-owned parallel task graph, asynchronous health sidecar, and restart recovery. These services must be generic across chat, goal, dashboard, API, and worker workflows.
 
 ## Complexity Tracking
 

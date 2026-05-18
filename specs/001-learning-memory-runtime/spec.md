@@ -165,6 +165,23 @@ As the Hermes operator, I want `/goal`-backed workloads to allocate across avail
 3. **Given** `/goal resume` runs after a restart, **When** allocation state exists, **Then** the allocator resumes from `allocation:<session_id>:<task_id>` and skips workers still in cooldown.
 4. **Given** the supervisor uses fallback evidence, **When** it answers the operator, **Then** it discloses degraded worker evidence and does not claim the failed worker completed successfully.
 
+---
+
+### User Story 10 - Self-Healing Workflow Control Plane (Priority: P10)
+
+As the Hermes operator, I want long-running work to run as a supervisor-owned task graph with background health monitoring and restart recovery, so parallel agent work can survive drift, loops, outages, and process restarts without blocking the active workload.
+
+**Why this priority**: The allocator prevents a single worker route from trapping one turn, but production workflows also need durable parallel task ownership, background degradation monitoring, and safe recovery after VM/service restarts.
+
+**Independent Test**: Create a task graph with multiple subtasks, assign work through the allocator, simulate a stale worker lease, no-progress loop, network outage, and process restart, then verify the health sidecar emits bounded recovery actions and restart recovery resumes only safe work.
+
+**Acceptance Scenarios**:
+
+1. **Given** independent subtasks, **When** the graph runs, **Then** the supervisor dispatches only ready nodes within concurrency and owned-path constraints.
+2. **Given** a worker stops heartbeating, **When** the health sidecar runs, **Then** it marks the lease stale, updates worker health, emits a recovery packet, and leaves foreground chat unaffected.
+3. **Given** repeated no-progress or timeout signals, **When** the health sidecar evaluates the task, **Then** it blocks, pauses, or requests reassignment without marking the task complete.
+4. **Given** Hermes restarts, **When** recovery runs, **Then** active goals, task graphs, allocations, worker health, hot memory, and safe-to-resume tasks are reloaded without retrying unhealthy workers.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -255,6 +272,12 @@ As the Hermes operator, I want `/goal`-backed workloads to allocate across avail
 - **FR-062**: System MUST enforce total latency budget, per-worker timeout, retry budget, repeated-route suppression, and cooldown/retry-after decisions before each worker attempt.
 - **FR-063**: System MUST pause or schedule recovery rather than foreground sleep-loop when quota, network, auth, timeout, or repeated empty-output failures exhaust the allocation budget.
 - **FR-064**: System MUST expose allocator status through CLI/API-compatible JSON including active allocation, goal linkage, attempts, worker health, cooldowns, consumed latency budget, fallback reason, and next recovery action.
+- **FR-065**: System MUST maintain a supervisor-owned task graph for parallel subtasks, dependencies, ownership, concurrency limits, allocation refs, validation refs, and completion state.
+- **FR-066**: System MUST prevent parallel workers from writing overlapping owned paths unless the supervisor explicitly marks the overlap safe.
+- **FR-067**: System MUST run a health sidecar out of band to detect stale leases, missing heartbeats, no-progress loops, repeated failures, and worker degradation without blocking foreground chat, tool execution, or delegation.
+- **FR-068**: Health sidecar actions MUST be bounded to worker health updates, recovery packet emission, task/lease state updates, allocation pause/retry-after, and learning events; it MUST NOT edit code, complete tasks, approve memory, or enforce policy.
+- **FR-069**: System MUST provide restart recovery that loads active goals, supervisor task ledger, task graphs, allocations, worker health, sidecar leases, hot memory, and approved lessons before resuming work.
+- **FR-070**: Restart recovery MUST resume only safe ready work, skip cooled-down workers, avoid expensive LLM sidecars by default, and expose recovery status through CLI/API JSON.
 
 ### Key Entities
 
@@ -293,6 +316,10 @@ As the Hermes operator, I want `/goal`-backed workloads to allocate across avail
 - **Worker Allocation Plan**: Durable control-plane record describing candidate workers, ranked fallback order, memory packet, validation requirement, total latency budget, per-worker timeout, retry limits, cooldown policy, and goal/session linkage.
 - **Worker Attempt Result**: Structured attempt outcome containing worker, route, status, duration, output excerpts, artifact refs, error signature, validation status, fallback eligibility, and recovery hint.
 - **Worker Health Record**: Durable per-worker status containing success/failure timestamps, timeout/empty/quota/network counters, cooldown timestamps, last error signature, and confidence.
+- **Task Graph**: Supervisor-owned durable graph for a long-running request, containing task nodes, dependencies, concurrency limits, ownership rules, allocation refs, validation refs, and completion status.
+- **Task Node**: Bounded unit of work inside a task graph with dependencies, owned paths, worker assignment, memory packet, validation requirement, artifact refs, and state.
+- **Health Check Run**: Background sidecar execution record that scans task graphs, leases, allocations, workers, heartbeats, and degradation events and emits bounded recovery actions.
+- **Recovery Decision**: Startup or sidecar decision that marks a task/allocation safe to resume, paused, blocked, reassignable, or requiring operator action.
 
 ## Success Criteria
 
@@ -318,6 +345,9 @@ As the Hermes operator, I want `/goal`-backed workloads to allocate across avail
 - **SC-018**: `/goal` continuation cannot mark reclaimed, blocked, or validation-failed work as complete.
 - **SC-019**: Goal-based allocation tests prove quota exhaustion, auth failure, network degradation, timeout, empty worker output, and repeated-route failures either choose a ranked fallback or pause with retry-after before the foreground turn exceeds budget.
 - **SC-020**: `/goal resume` can recover persisted allocation state and worker health without repeating an unhealthy route before its cooldown expires.
+- **SC-021**: Task graph tests prove dependency ordering, concurrency caps, owned-path conflict rejection, validation-gated completion, and supervisor-only subtask acceptance.
+- **SC-022**: Health sidecar tests prove stale leases, missing heartbeats, no-progress loops, repeated timeout/empty-output failures, and quota/network degradation produce bounded recovery actions without blocking foreground runtime.
+- **SC-023**: Restart recovery tests prove active goals, task graphs, allocations, worker health, and approved memory are reloaded; unsafe workers are skipped; unknown in-flight attempts are not assumed successful; and expensive LLM sidecars are not called by default.
 
 ## Assumptions
 

@@ -277,25 +277,29 @@ Unapproved candidates and dreaming proposals must never be injected directly.
   Phase 12 examples still emphasize `/goal`. Implementation should keep the
   allocator callable from chat, dashboard, API, and supervisor tasks.
 
-### Missing Or Should Be Added Before Implementation
+### Phase 13 Artifacts Added
 
-- A `task-graph.md` contract for supervisor-owned parallel subtasks,
-  dependencies, ownership, concurrency caps, worktree assignment, and merge
-  authority.
+- `specs/001-learning-memory-runtime/contracts/task-graph.md` for
+  supervisor-owned parallel subtasks, dependencies, ownership, concurrency caps,
+  worktree assignment, and merge authority.
 
-- A `health-sidecar.md` contract for stale lease detection, worker heartbeat
-  monitoring, no-progress detection, cooldown updates, and recovery task
-  emission.
+- `specs/001-learning-memory-runtime/contracts/health-sidecar.md` for stale
+  lease detection, worker heartbeat monitoring, no-progress detection, cooldown
+  updates, and recovery task emission.
 
-- A `restart-recovery.md` contract describing exactly how service startup
-  reloads goals, supervisor tasks, allocations, worker health, memory hot cache,
-  and safe resumable work.
+- `specs/001-learning-memory-runtime/contracts/restart-recovery.md` describing
+  exactly how service startup reloads goals, supervisor tasks, allocations,
+  worker health, memory hot cache, and safe resumable work.
+
+### Still Missing In Implementation
 
 - Tests proving allocator is workflow-agnostic:
   - called from `/goal`
   - called from dashboard/API task
   - called from manual chat/supervisor task
   - same degradation classifier and worker health updates apply in all cases
+
+- Runtime implementation for task graph, health sidecar, and restart recovery.
 
 ## Implementation Principle
 

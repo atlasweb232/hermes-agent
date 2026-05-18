@@ -403,6 +403,41 @@
 
 **Checkpoint**: `/goal` can continue serious work without trapping Hermes in one failed worker route; allocation attempts are bounded, observable, resumable, and separated from memory/policy enforcement.
 
+## Phase 13: Self-Healing Workflow Control Plane (Priority: P10)
+
+**Goal**: Add the stability layer around goal allocation: supervisor-owned parallel task graph, asynchronous health sidecar, and restart recovery. This prevents long-running agentic work from drifting, blocking, or looping while preserving supervisor authority and foreground responsiveness.
+
+**Independent Test**: Create a multi-node task graph with Claude/Codex/DeepSeek workers, simulate stale lease, missing heartbeat, no-progress loop, network degradation, and service restart. Verify ready subtasks dispatch within ownership/concurrency rules, the health sidecar emits bounded recovery actions, and restart recovery resumes only safe work.
+
+**Boundary**: This phase must be workflow-agnostic. Chat, `/goal`, dashboard, API, and worker delegation should all use the same task graph, health sidecar, recovery, allocator, and degradation vocabulary.
+
+### Spec And Architecture Artifacts
+
+- [x] T150 [US10] Add `contracts/task-graph.md` defining supervisor-owned parallel subtasks, dependencies, ownership, concurrency caps, worktree refs, validation refs, and completion rules
+- [x] T151 [US10] Add `contracts/health-sidecar.md` defining stale lease, heartbeat, no-progress, repeated failure, cooldown, and bounded recovery sidecar behavior
+- [x] T152 [US10] Add `contracts/restart-recovery.md` defining startup recovery for goals, task graphs, allocations, worker health, sidecar leases, hot memory, and safe-to-resume work
+- [x] T153 [US10] Link Phase 13 from `plan.md`, `spec.md`, and `super-architecture.md`
+
+### Tests For Self-Healing Workflow Control Plane
+
+- [ ] T154 [P] [US10] Add task graph schema tests for task/node status, dependency ordering, concurrency cap, owned-path conflict rejection, read-only nodes, validation-gated completion, and supervisor-only subtask acceptance
+- [ ] T155 [P] [US10] Add health sidecar tests for stale lease, missing heartbeat, repeated timeout/empty-output failures, no-progress loop, worker cooldown, allocation pause, idempotent duplicate runs, and no foreground blocking
+- [ ] T156 [P] [US10] Add restart recovery tests for active goal reload, task graph reload, active allocation reload, worker cooldown preservation, unknown in-flight attempt handling, approved-memory-only hydration, and no default expensive LLM sidecar call
+- [ ] T157 [P] [US10] Add workflow-agnostic tests proving chat, `/goal`, dashboard/API task, and worker delegation paths share allocator/degradation/health/recovery behavior
+
+### Implementation For Self-Healing Workflow Control Plane
+
+- [ ] T158 [US10] Implement task graph and task node schemas with JSON serialization suitable for `SessionDB.state_meta` or supervisor task ledger storage
+- [ ] T159 [US10] Implement task graph state helpers for create/update/list/get, dependency readiness, concurrency checks, owned-path conflict detection, and validation-gated completion
+- [ ] T160 [US10] Wire task graph ready-node dispatch into the allocator so parallel subtasks receive bounded worker allocation without overlapping unsafe ownership
+- [ ] T161 [US10] Implement health sidecar scanner for task ledger, task graph, allocations, worker health, heartbeats, and degradation events with bounded leases, timeout, scan limit, and idempotent actions
+- [ ] T162 [US10] Implement health sidecar recovery actions: update worker health, mark stale lease/no-progress, emit recovery packet, request reassignment, pause allocation with retry-after, and publish learning events
+- [ ] T163 [US10] Implement restart recovery loader for goals, task ledger, task graphs, allocations, worker health, hot memory, approved lessons, sidecar leases, and safe-to-resume decisions
+- [ ] T164 [US10] Add CLI/API observability: `hermes runtime health check --once --json`, `hermes runtime task-graph list/get --json`, and `hermes runtime recovery status/run --json`
+- [ ] T165 [US10] Run controlled upstream-vs-branch smoke tests proving the branch avoids repeated failed worker loops, preserves foreground responsiveness, and resumes safe work after restart
+
+**Checkpoint**: Long-running workflows can run as supervisor-owned task graphs, recover from worker/platform degradation out of band, and restart from durable state without retrying unsafe routes or blocking foreground work.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -415,6 +450,7 @@
 - User Story 7 depends on runtime packet schemas, learning jobs, event bus, and observability surfaces so stale/looping work can be audited and recovered.
 - User Story 8 depends on Phase 10 validation and must finish persisted lesson storage/retrieval plus cost-budget instrumentation before production backend scale-out.
 - User Story 9 depends on the Phase 11 runtime-degradation gate and persisted memory retrieval, then adds deterministic allocation around upstream `/goal` continuation.
+- User Story 10 depends on User Story 9 allocator state and adds task graph, health sidecar, and restart recovery around it.
 
 ## Parallel Opportunities
 
@@ -424,6 +460,7 @@
 - Dashboard/backend observability can start once `learning_jobs.py` exposes stable JSON.
 - Low-end model eval fixtures and persisted lesson retrieval can be developed first. Realtime voice adapters, global bus adapters, production memory wiki backends, and training export tests are intentionally deferred until the core loop has measured value.
 - Goal-allocation schema, decision, resume, and observability tests can be developed in parallel after the contract lands.
+- Task graph, health sidecar, restart recovery, and workflow-agnostic tests can be developed in parallel after Phase 13 contracts land.
 
 ## Implementation Strategy
 
@@ -447,6 +484,7 @@
 9. Future enforcement mode only after audit evidence, judge approval, and operator approval.
 10. Production runtime surfaces and low-end model validation after Phase 10 smoke tests.
 11. Goal-based multi-agent allocation after runtime degradation evidence is reliable.
+12. Self-healing workflow control plane after allocator state exists.
 
 ### Phase 11A Immediate Order
 
@@ -473,3 +511,13 @@
 4. Wire allocator into supervisor delegation while preserving degraded-response gates.
 5. Add CLI/API observability for allocations and worker health.
 6. Run controlled upstream-vs-branch smoke tests to prove reduced looping and clearer degradation disclosure.
+
+### Phase 13 Order
+
+1. Add task graph schemas and state helpers.
+2. Add dependency, concurrency, and owned-path safety checks.
+3. Wire ready task nodes through the generic allocator.
+4. Add health sidecar scanner and bounded recovery actions.
+5. Add restart recovery loader and safe-to-resume decisions.
+6. Add CLI/API observability for task graph, health, and recovery.
+7. Run restart and degraded-worker smoke tests.
