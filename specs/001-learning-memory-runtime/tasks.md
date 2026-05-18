@@ -360,6 +360,14 @@
 - [x] T131A1 [US8] Add supervisor runtime failure final-response gate and worker foreground timeout cap so failed/timed-out/empty worker calls are disclosed as degraded fallback instead of silently reported as successful worker completion
 - [ ] T131B [US8] Extend the same generic runtime failure capture contract to delegated agents/workers so worker hallucinations, false completions, and route substitutions are captured before curator/judge sidecars run
 - [ ] T131C [US8] Add specialized curator/judge handling for `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
+- [x] T131D [US8] Document upstream `/goal` integration model: goal state is stored in `SessionDB.state_meta` as `goal:<session_id>`, continuation prompts remain user-role messages, and multi-agent allocation must extend this lifecycle rather than create a second loop
+- [ ] T131E [US8] Add `WorkerAllocationPlan` and `WorkerAttemptResult` schemas with worker ranking, total latency budget, per-worker timeout, retry budget, cooldown/sleep policy, memory packet id, validation requirement, and fallback eligibility
+- [ ] T131F [US8] Implement worker health registry in `SessionDB.state_meta` keyed by `worker_health:<worker_id>` with success/failure timestamps, timeout/empty/quota/network counters, cooldown_until, and last_error_signature
+- [ ] T131G [US8] Persist allocation state beside goal state as `allocation:<session_id>:<task_id>` so `/goal resume` can recover active worker attempts, cooldowns, and remaining latency budget
+- [ ] T131H [US8] Implement allocator decision logic: consult runtime memory and worker health, choose primary worker, enforce latency/retry budgets, skip unhealthy workers, try ranked fallbacks, and pause/schedule recovery instead of foreground sleeping on network degradation
+- [ ] T131I [US8] Wire allocator into supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy, while final response still discloses degraded worker evidence
+- [ ] T131J [US8] Add allocator CLI/API observability: list active allocations, worker health, last attempts, cooldowns, latency budget consumed, fallback reason, and goal/session linkage
+- [ ] T131K [US8] Add tests for quota exhaustion, auth failure, network degradation, timeout, empty worker output, ranked fallback success, repeated-route suppression, cooldown pause, and `/goal resume` recovery
 
 ### Deferred Phase 11B Global Indexing And Sync Sidecars
 
