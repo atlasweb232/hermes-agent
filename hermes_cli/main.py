@@ -11355,7 +11355,8 @@ Examples:
 
     runtime_delegate = runtime_sub.add_parser("delegate", help="Validate a worker delegation packet")
     runtime_delegate.add_argument("--task-id", required=True, help="Supervisor task packet id")
-    runtime_delegate.add_argument("--worker", required=True, help="Worker id")
+    runtime_delegate.add_argument("--worker", default="", help="Worker id")
+    runtime_delegate.add_argument("--allocation-id", default="", help="Select worker from allocation state")
     runtime_delegate.add_argument("--worker-kind", default="worker", help="Worker kind")
     runtime_delegate.add_argument("--repo-id", required=True, help="Repository id")
     runtime_delegate.add_argument("--branch-name", required=True, help="Feature branch")
@@ -11429,6 +11430,73 @@ Examples:
     runtime_control_goal.add_argument("--status", action="store_true", help="Show task goal state without invoking the judge")
     runtime_control_goal.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_allocations = runtime_sub.add_parser("allocations", help="Inspect and exercise worker allocation state")
+    runtime_allocations_sub = runtime_allocations.add_subparsers(dest="runtime_allocations_command")
+    runtime_allocations_list = runtime_allocations_sub.add_parser("list", help="List worker allocation plans")
+    runtime_allocations_list.add_argument("--session-id", default="")
+    runtime_allocations_list.add_argument("--task-id", default="")
+    runtime_allocations_list.add_argument("--status", default="")
+    runtime_allocations_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_allocations_get = runtime_allocations_sub.add_parser("get", help="Get one allocation with attempts and health")
+    runtime_allocations_get.add_argument("--allocation-id", required=True)
+    runtime_allocations_get.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_allocations_create = runtime_allocations_sub.add_parser("create", help="Create or update an allocation plan")
+    runtime_allocations_create.add_argument("--task-id", required=True)
+    runtime_allocations_create.add_argument("--session-id", required=True)
+    runtime_allocations_create.add_argument("--objective", required=True)
+    runtime_allocations_create.add_argument("--worker", action="append", required=True, help="Candidate worker; first is primary unless --primary-worker is set")
+    runtime_allocations_create.add_argument("--primary-worker", default="")
+    runtime_allocations_create.add_argument("--fallback", action="append", default=[])
+    runtime_allocations_create.add_argument("--tenant-id", default="")
+    runtime_allocations_create.add_argument("--repo-id", default="")
+    runtime_allocations_create.add_argument("--memory-packet-id", default="")
+    runtime_allocations_create.add_argument("--latency-budget", type=float, default=120.0)
+    runtime_allocations_create.add_argument("--per-worker-timeout", type=float, default=30.0)
+    runtime_allocations_create.add_argument("--max-attempts", type=int, default=3)
+    runtime_allocations_create.add_argument("--retry-same-worker", type=int, default=0)
+    runtime_allocations_create.add_argument("--cooldown-seconds", type=float, default=300.0)
+    runtime_allocations_create.add_argument("--retry-after-seconds", type=float, default=300.0)
+    runtime_allocations_create.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_allocations_attempt = runtime_allocations_sub.add_parser("attempt", help="Record a worker attempt and update worker health")
+    runtime_allocations_attempt.add_argument("--allocation-id", required=True)
+    runtime_allocations_attempt.add_argument("--worker", required=True)
+    runtime_allocations_attempt.add_argument("--route", required=True)
+    runtime_allocations_attempt.add_argument("--status", required=True)
+    runtime_allocations_attempt.add_argument("--duration", type=float, default=0.0)
+    runtime_allocations_attempt.add_argument("--stdout-excerpt", default="")
+    runtime_allocations_attempt.add_argument("--stderr-excerpt", default="")
+    runtime_allocations_attempt.add_argument("--error-signature", default="")
+    runtime_allocations_attempt.add_argument("--validation-status", default="skipped")
+    runtime_allocations_attempt.add_argument("--fallback-allowed", action="store_true", default=True)
+    runtime_allocations_attempt.add_argument("--no-fallback", dest="fallback_allowed", action="store_false")
+    runtime_allocations_attempt.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_allocations_decide = runtime_allocations_sub.add_parser("decide", help="Show next allocator decision")
+    runtime_allocations_decide.add_argument("--allocation-id", required=True)
+    runtime_allocations_decide.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_workers = runtime_sub.add_parser("workers", help="Inspect worker health")
+    runtime_workers_sub = runtime_workers.add_subparsers(dest="runtime_workers_command")
+    runtime_workers_health = runtime_workers_sub.add_parser("health", help="List worker health records")
+    runtime_workers_health.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_secrets = runtime_sub.add_parser("secrets", help="Check AWS Secrets Manager secret references without reading values")
+    runtime_secrets_sub = runtime_secrets.add_subparsers(dest="runtime_secrets_command")
+    runtime_secrets_check = runtime_secrets_sub.add_parser("check", help="Check required secret references")
+    runtime_secrets_check.add_argument("--secret", action="append", default=[], help="Secret name to check; default uses production smoke refs")
+    runtime_secrets_check.add_argument("--aws-profile", default="")
+    runtime_secrets_check.add_argument("--region", default="")
+    runtime_secrets_check.add_argument("--timeout", type=float, default=20.0)
+    runtime_secrets_check.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_smoke = runtime_sub.add_parser("smoke", help="Run deterministic runtime smoke scenarios")
+    runtime_smoke_sub = runtime_smoke.add_subparsers(dest="runtime_smoke_command")
+    runtime_smoke_compare = runtime_smoke_sub.add_parser("compare", help="Compare branch allocator/degradation capability with upstream")
+    runtime_smoke_compare.add_argument("--repo-path", default=".")
+    runtime_smoke_compare.add_argument("--branch-ref", default="HEAD")
+    runtime_smoke_compare.add_argument("--upstream-ref", default="origin/main")
+    runtime_smoke_compare.add_argument("--no-upstream", action="store_true")
+    runtime_smoke_compare.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     def cmd_runtime(args):
         from hermes_cli.runtime_orchestrator import (
             create_planner_packet,
@@ -11497,10 +11565,36 @@ Examples:
             _emit({"status": "created", "planner_packet": packet.to_dict(), "validation": packet.validate().to_dict()})
             return
         if cmd == "delegate":
+            worker_id = getattr(args, "worker", "") or ""
+            allocation_payload = None
+            allocation_id = getattr(args, "allocation_id", "") or ""
+            if allocation_id:
+                from hermes_cli.goal_allocator import allocation_status_payload, get_allocation_plan_by_id
+                from hermes_state import SessionDB
+
+                db = SessionDB()
+                try:
+                    plan = get_allocation_plan_by_id(db, allocation_id)
+                    if plan is None:
+                        raise SystemExit(f"unknown allocation: {allocation_id}")
+                    allocation_payload = allocation_status_payload(db, plan)
+                    decision = allocation_payload["decision"]
+                    if decision.get("action") != "dispatch" or not decision.get("worker_id"):
+                        _emit({
+                            "status": "blocked",
+                            "reason": "allocation did not select a dispatchable worker",
+                            "allocation": allocation_payload,
+                        })
+                        return
+                    worker_id = str(decision["worker_id"])
+                finally:
+                    db.close()
+            if not worker_id:
+                raise SystemExit("--worker or --allocation-id is required")
             packet = WorkerDelegationPacket(
                 id=f"delegate_{uuid.uuid4().hex[:16]}",
                 task_packet_id=getattr(args, "task_id"),
-                worker_id=getattr(args, "worker"),
+                worker_id=worker_id,
                 worker_kind=getattr(args, "worker_kind", "worker"),
                 repo_id=getattr(args, "repo_id"),
                 branch_name=getattr(args, "branch_name"),
@@ -11519,7 +11613,12 @@ Examples:
                 },
             )
             validation = validate_worker_delegation(packet)
-            _emit({"status": "valid" if validation.valid else "invalid", "delegation_packet": packet.to_dict(), "validation": validation.to_dict()})
+            _emit({
+                "status": "valid" if validation.valid else "invalid",
+                "delegation_packet": packet.to_dict(),
+                "validation": validation.to_dict(),
+                "allocation": allocation_payload,
+            })
             return
         if cmd == "validate":
             artifact_set = discover_speckit_artifacts(
@@ -11560,6 +11659,119 @@ Examples:
                 "validation": validation.to_dict(),
             })
             return
+        if cmd == "allocations":
+            from hermes_cli.goal_allocator import (
+                WorkerAllocationPlan,
+                WorkerAttemptResult,
+                allocation_status_payload,
+                get_allocation_plan_by_id,
+                list_allocation_plans,
+                list_worker_health_records,
+                record_worker_attempt,
+                save_allocation_plan,
+            )
+            from hermes_state import SessionDB
+
+            allocations_cmd = getattr(args, "runtime_allocations_command", None) or "list"
+            db = SessionDB()
+            try:
+                if allocations_cmd == "create":
+                    workers = getattr(args, "worker", []) or []
+                    plan = WorkerAllocationPlan(
+                        task_id=getattr(args, "task_id"),
+                        session_id=getattr(args, "session_id"),
+                        objective=getattr(args, "objective"),
+                        candidate_workers=workers,
+                        primary_worker=getattr(args, "primary_worker", "") or workers[0],
+                        fallback_order=getattr(args, "fallback", []) or [worker for worker in workers[1:]],
+                        tenant_id=getattr(args, "tenant_id", "") or None,
+                        repo_id=getattr(args, "repo_id", "") or None,
+                        memory_packet_id=getattr(args, "memory_packet_id", "") or None,
+                        latency_budget_seconds=getattr(args, "latency_budget", 120.0),
+                        per_worker_timeout_seconds=getattr(args, "per_worker_timeout", 30.0),
+                        max_attempts=getattr(args, "max_attempts", 3),
+                        retry_same_worker=getattr(args, "retry_same_worker", 0),
+                        cooldown_seconds=getattr(args, "cooldown_seconds", 300.0),
+                        retry_after_seconds=getattr(args, "retry_after_seconds", 300.0),
+                    )
+                    save_allocation_plan(db, plan)
+                    _emit(allocation_status_payload(db, plan))
+                elif allocations_cmd == "get":
+                    plan = get_allocation_plan_by_id(db, getattr(args, "allocation_id"))
+                    if plan is None:
+                        raise SystemExit(f"unknown allocation: {getattr(args, 'allocation_id')}")
+                    _emit(allocation_status_payload(db, plan))
+                elif allocations_cmd == "attempt":
+                    allocation_id = getattr(args, "allocation_id")
+                    plan = get_allocation_plan_by_id(db, allocation_id)
+                    if plan is None:
+                        raise SystemExit(f"unknown allocation: {allocation_id}")
+                    attempt = WorkerAttemptResult(
+                        allocation_id=allocation_id,
+                        worker_id=getattr(args, "worker"),
+                        route=getattr(args, "route"),
+                        status=getattr(args, "status"),
+                        duration_seconds=getattr(args, "duration", 0.0),
+                        stdout_excerpt=getattr(args, "stdout_excerpt", "") or "",
+                        stderr_excerpt=getattr(args, "stderr_excerpt", "") or "",
+                        error_signature=getattr(args, "error_signature", "") or "",
+                        validation_status=getattr(args, "validation_status", "skipped"),
+                        fallback_allowed=bool(getattr(args, "fallback_allowed", True)),
+                    )
+                    health = record_worker_attempt(db, plan, attempt)
+                    _emit({"attempt": attempt.to_dict(), "worker_health": health.to_dict(), "allocation": allocation_status_payload(db, plan)})
+                elif allocations_cmd == "decide":
+                    plan = get_allocation_plan_by_id(db, getattr(args, "allocation_id"))
+                    if plan is None:
+                        raise SystemExit(f"unknown allocation: {getattr(args, 'allocation_id')}")
+                    _emit(allocation_status_payload(db, plan)["decision"])
+                else:
+                    plans = list_allocation_plans(
+                        db,
+                        session_id=getattr(args, "session_id", "") or None,
+                        task_id=getattr(args, "task_id", "") or None,
+                        status=getattr(args, "status", "") or None,
+                    )
+                    _emit([allocation_status_payload(db, plan) for plan in plans])
+            finally:
+                db.close()
+            return
+        if cmd == "workers":
+            from hermes_cli.goal_allocator import list_worker_health_records
+            from hermes_state import SessionDB
+
+            workers_cmd = getattr(args, "runtime_workers_command", None) or "health"
+            db = SessionDB()
+            try:
+                if workers_cmd == "health":
+                    _emit([record.to_dict() for record in list_worker_health_records(db)])
+            finally:
+                db.close()
+            return
+        if cmd == "secrets":
+            secrets_cmd = getattr(args, "runtime_secrets_command", None) or "check"
+            if secrets_cmd == "check":
+                from hermes_cli.aws_secrets import check_secret_references
+
+                _emit(check_secret_references(
+                    getattr(args, "secret", []) or None,
+                    profile=getattr(args, "aws_profile", "") or "",
+                    region=getattr(args, "region", "") or "",
+                    timeout_seconds=getattr(args, "timeout", 20.0),
+                ))
+                return
+        if cmd == "smoke":
+            smoke_cmd = getattr(args, "runtime_smoke_command", None) or "compare"
+            if smoke_cmd == "compare":
+                from hermes_cli.runtime_smoke import run_allocator_comparison_smoke
+
+                result = run_allocator_comparison_smoke(
+                    repo_path=getattr(args, "repo_path", "."),
+                    branch_ref=getattr(args, "branch_ref", "HEAD"),
+                    upstream_ref=None if getattr(args, "no_upstream", False) else getattr(args, "upstream_ref", "origin/main"),
+                )
+                _emit(result.to_dict())
+                return
         if cmd == "control":
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_control_plane import (

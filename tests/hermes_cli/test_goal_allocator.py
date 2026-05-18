@@ -8,8 +8,14 @@ from hermes_cli.goal_allocator import (
     choose_next_worker,
     load_allocation_plan,
     load_worker_health,
+    list_allocation_plans,
+    list_worker_attempts,
+    list_worker_health_records,
+    allocation_status_payload,
+    record_worker_attempt,
     save_allocation_plan,
     save_worker_health,
+    save_worker_attempt,
     update_worker_health_from_attempt,
 )
 from hermes_state import SessionDB
@@ -114,6 +120,59 @@ def test_allocation_plan_and_worker_health_persist_to_state_meta(tmp_path):
         assert loaded_plan.memory_packet_id == "mempkt_1"
         assert loaded_health is not None
         assert loaded_health.provider == "anthropic"
+    finally:
+        db.close()
+
+
+def test_worker_attempts_persist_and_status_payload_explains_next_decision(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan()
+        save_allocation_plan(db, plan)
+        attempt = _attempt(plan, worker_id="claude-code", status="empty_output")
+        save_worker_attempt(db, attempt)
+
+        attempts = list_worker_attempts(db, plan.allocation_id)
+        payload = allocation_status_payload(db, plan, now=100)
+
+        assert attempts[0].status == "empty_output"
+        assert payload["plan"]["allocation_id"] == plan.allocation_id
+        assert payload["attempts"][0]["worker_id"] == "claude-code"
+        assert payload["decision"]["action"] == "dispatch"
+        assert payload["decision"]["worker_id"] == "codex"
+    finally:
+        db.close()
+
+
+def test_list_allocation_plans_and_worker_health_records(tmp_path):
+    db = _db(tmp_path)
+    try:
+        first = _plan(task_id="task_1", allocation_id="alloc_1")
+        second = _plan(task_id="task_2", allocation_id="alloc_2", status="paused")
+        save_allocation_plan(db, first)
+        save_allocation_plan(db, second)
+        save_worker_health(db, WorkerHealth(worker_id="claude-code", cooldown_until=200))
+
+        assert [plan.task_id for plan in list_allocation_plans(db, status="paused")] == ["task_2"]
+        assert list_allocation_plans(db, task_id="task_1")[0].allocation_id == "alloc_1"
+        assert list_worker_health_records(db)[0].worker_id == "claude-code"
+    finally:
+        db.close()
+
+
+def test_record_worker_attempt_updates_health_and_attempt_store(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan(cooldown_seconds=60)
+        save_allocation_plan(db, plan)
+        attempt = _attempt(plan, status="timed_out", duration_seconds=20)
+
+        health = record_worker_attempt(db, plan, attempt, now=100)
+
+        assert health.timeout_count == 1
+        assert health.cooldown_until == 160
+        assert list_worker_attempts(db, plan.allocation_id)[0].attempt_id == attempt.attempt_id
+        assert load_worker_health(db, "claude-code").timeout_count == 1
     finally:
         db.close()
 

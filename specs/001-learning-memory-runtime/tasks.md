@@ -389,15 +389,15 @@
 - [x] T139 [P] [US9] Add schema tests for `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth`, including invalid status, missing budget, missing validation requirement, and unsafe fallback eligibility
 - [x] T140 [P] [US9] Add allocator decision tests for ranked fallback, repeated-route suppression, worker cooldown, all-workers-unhealthy pause, and no foreground sleep on network degradation
 - [ ] T141 [P] [US9] Add `/goal resume` tests proving allocation state is recovered from `allocation:<session_id>:<task_id>` and unhealthy workers are skipped until cooldown expires
-- [ ] T142 [P] [US9] Add observability tests for active allocations, worker health, attempt history, consumed latency budget, fallback reason, retry-after, and goal/session linkage
+- [x] T142 [P] [US9] Add observability tests for active allocations, worker health, attempt history, consumed latency budget, fallback reason, retry-after, and goal/session linkage
 
 ### Implementation For Goal-Based Allocation
 
 - [x] T143 [US9] Implement `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth` schemas with JSON serialization suitable for `SessionDB.state_meta`
 - [x] T144 [US9] Implement allocation state helpers for `allocation:<session_id>:<task_id>` and worker health helpers for `worker_health:<worker_id>`
 - [x] T145 [US9] Implement allocator decision logic that consults runtime memory and worker health, selects primary worker, enforces latency/retry budgets, skips unhealthy workers, tries ranked fallbacks, and pauses/schedules recovery instead of foreground sleeping on degradation
-- [ ] T146 [US9] Wire allocator into the supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy while final responses still disclose degraded worker evidence
-- [ ] T147 [US9] Add allocator CLI/API observability: `hermes runtime allocations list/get --json` and `hermes runtime workers health --json`
+- [x] T146 [US9] Wire allocator into the supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy while final responses still disclose degraded worker evidence
+- [x] T147 [US9] Add allocator CLI/API observability: `hermes runtime allocations list/get --json` and `hermes runtime workers health --json`
 - [ ] T148 [US9] Extend generic runtime failure capture to delegated agents/workers so worker hallucinations, false completions, empty outputs, timeouts, and route substitutions are captured before curator/judge sidecars run
 - [ ] T149 [US9] Add specialized curator/judge handling for allocator and `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
 

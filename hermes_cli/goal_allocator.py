@@ -55,6 +55,10 @@ def _worker_health_key(worker_id: str) -> str:
     return f"worker_health:{worker_id}"
 
 
+def _worker_attempt_key(allocation_id: str, attempt_id: str) -> str:
+    return f"allocation_attempt:{allocation_id}:{attempt_id}"
+
+
 def _clean_str_list(values: List[str], *, field_name: str) -> List[str]:
     if not isinstance(values, list):
         raise ValueError(f"{field_name} must be a list")
@@ -301,6 +305,122 @@ def load_worker_health(db: Any, worker_id: str) -> Optional[WorkerHealth]:
     if not raw:
         return None
     return WorkerHealth.from_json(raw)
+
+
+def save_worker_attempt(db: Any, attempt: WorkerAttemptResult) -> None:
+    db.set_meta(_worker_attempt_key(attempt.allocation_id, attempt.attempt_id), attempt.to_json())
+
+
+def list_worker_attempts(db: Any, allocation_id: str) -> List[WorkerAttemptResult]:
+    prefix = f"allocation_attempt:{allocation_id}:"
+    rows = _list_state_meta_prefix(db, prefix)
+    attempts: List[WorkerAttemptResult] = []
+    for row in rows:
+        try:
+            attempts.append(WorkerAttemptResult.from_json(row["value"]))
+        except Exception:
+            continue
+    return sorted(attempts, key=lambda item: item.started_at)
+
+
+def record_worker_attempt(
+    db: Any,
+    plan: WorkerAllocationPlan,
+    attempt: WorkerAttemptResult,
+    *,
+    now: Optional[float] = None,
+) -> WorkerHealth:
+    if attempt.allocation_id != plan.allocation_id:
+        raise ValueError("attempt allocation_id does not match plan")
+    save_worker_attempt(db, attempt)
+    health = load_worker_health(db, attempt.worker_id) or WorkerHealth(worker_id=attempt.worker_id)
+    health = update_worker_health_from_attempt(
+        health,
+        attempt,
+        cooldown_seconds=plan.cooldown_seconds,
+        now=now,
+    )
+    save_worker_health(db, health)
+    return health
+
+
+def _list_state_meta_prefix(db: Any, prefix: str) -> List[Dict[str, str]]:
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT key, value FROM state_meta WHERE key LIKE ? ORDER BY key",
+            (f"{prefix}%",),
+        ).fetchall()
+    return [
+        {"key": row["key"], "value": row["value"]}
+        for row in rows
+    ]
+
+
+def list_allocation_plans(
+    db: Any,
+    *,
+    session_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[WorkerAllocationPlan]:
+    if session_id and task_id:
+        plan = load_allocation_plan(db, session_id, task_id)
+        plans = [plan] if plan else []
+    else:
+        plans = []
+        for row in _list_state_meta_prefix(db, "allocation:"):
+            try:
+                plans.append(WorkerAllocationPlan.from_json(row["value"]))
+            except Exception:
+                continue
+    if session_id:
+        plans = [plan for plan in plans if plan.session_id == session_id]
+    if task_id:
+        plans = [plan for plan in plans if plan.task_id == task_id]
+    if status:
+        plans = [plan for plan in plans if plan.status == status]
+    return sorted(plans, key=lambda item: item.updated_at, reverse=True)
+
+
+def get_allocation_plan_by_id(db: Any, allocation_id: str) -> Optional[WorkerAllocationPlan]:
+    for plan in list_allocation_plans(db):
+        if plan.allocation_id == allocation_id:
+            return plan
+    return None
+
+
+def list_worker_health_records(db: Any) -> List[WorkerHealth]:
+    records: List[WorkerHealth] = []
+    for row in _list_state_meta_prefix(db, "worker_health:"):
+        try:
+            records.append(WorkerHealth.from_json(row["value"]))
+        except Exception:
+            continue
+    return sorted(records, key=lambda item: item.updated_at, reverse=True)
+
+
+def allocation_status_payload(
+    db: Any,
+    plan: WorkerAllocationPlan,
+    *,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    attempts = list_worker_attempts(db, plan.allocation_id)
+    health_by_worker = {
+        health.worker_id: health
+        for health in list_worker_health_records(db)
+        if health.worker_id in set(plan.candidate_workers)
+    }
+    decision = choose_next_worker(plan, attempts, health_by_worker, now=now)
+    return {
+        "plan": plan.to_dict(),
+        "attempts": [attempt.to_dict() for attempt in attempts],
+        "worker_health": {
+            worker_id: health.to_dict()
+            for worker_id, health in health_by_worker.items()
+        },
+        "decision": decision.to_dict(),
+    }
 
 
 def update_worker_health_from_attempt(
