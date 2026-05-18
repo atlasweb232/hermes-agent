@@ -278,6 +278,10 @@ As the Hermes operator, I want long-running work to run as a supervisor-owned ta
 - **FR-068**: Health sidecar actions MUST be bounded to worker health updates, recovery packet emission, task/lease state updates, allocation pause/retry-after, and learning events; it MUST NOT edit code, complete tasks, approve memory, or enforce policy.
 - **FR-069**: System MUST provide restart recovery that loads active goals, supervisor task ledger, task graphs, allocations, worker health, sidecar leases, hot memory, and approved lessons before resuming work.
 - **FR-070**: Restart recovery MUST resume only safe ready work, skip cooled-down workers, avoid expensive LLM sidecars by default, and expose recovery status through CLI/API JSON.
+- **FR-071**: System MUST keep raw worker streams, stdout/stderr bodies, unbounded terminal transcripts, and log tails as store-only artifacts; they MUST NOT be appended directly to supervisor model context.
+- **FR-072**: Worker runtime wrappers MUST emit mandatory typed progress events independent of worker model cooperation, including start, heartbeat, stream reference, checkpoint, degraded/blocked, validation, and final-result events.
+- **FR-073**: System MUST provide a supervisor context gate that admits only bounded typed packets at decision boundaries, such as worker checkpoints, blocked/degraded packets, validation packets, allocation decisions, recovery packets, and final worker results.
+- **FR-074**: System MUST support a non-blocking cheap progress summarizer sidecar configured through the low-cost reasoning tier; it may summarize progress for UI/Slack/supervisor checkpoints but MUST NOT complete tasks, approve memory, or enforce policy.
 
 ### Key Entities
 

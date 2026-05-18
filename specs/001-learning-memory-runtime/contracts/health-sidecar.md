@@ -25,6 +25,7 @@ The health sidecar reads:
 - worker heartbeat/progress events
 - terminal/tool degradation events
 - runtime learning events
+- worker stream references and checkpoint packets
 
 ## Outputs
 
@@ -37,6 +38,8 @@ The health sidecar writes:
 - recovery packet references
 - learning job status
 - optional recovery task candidates
+- summarized progress/checkpoint events when the cheap progress summarizer is
+  enabled
 
 ## HealthCheckRun
 
@@ -116,3 +119,4 @@ Required test scenarios:
 - quota/auth/network degradation pauses allocation with retry-after
 - sidecar crash leaves foreground runtime unaffected
 - duplicate sidecar runs are idempotent
+- raw worker streams remain store-only and never enter supervisor context

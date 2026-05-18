@@ -200,6 +200,27 @@ This means the same timeout, empty-output, evidence-mismatch, and failed-route
 logic applies whether the task came from `/goal`, manual chat, dashboard, API,
 or a worker delegation.
 
+## Worker Progress And Context Preservation
+
+Worker progress is runtime data first, not supervisor prompt content. Every
+worker invocation must be wrapped by runtime code that emits typed events:
+start, heartbeat, stream reference, checkpoint, blocked/degraded, validation,
+and final result. This is enforced by wrappers and the event bus, not by asking
+the worker model to remember to report progress.
+
+Raw worker streams, stdout/stderr bodies, terminal transcripts, and log tails
+are stored as artifacts and exposed through observability. They do not enter
+supervisor context directly. A supervisor context gate admits only compact
+typed packets at decision boundaries: allocation decisions, bounded progress
+checkpoints, blocked/degraded packets, validation packets, recovery packets,
+and final worker results.
+
+A cheap progress summarizer sidecar can convert durable worker events into
+bounded checkpoints for Slack, dashboard, and supervisor review. That sidecar
+uses the configured low-cost reasoning tier by default, such as a local small
+model or hosted low-cost model. It cannot mark work complete, approve memory,
+or enforce policy.
+
 ## Memory And Learning Integration
 
 Memory retrieval is a task-start service:
@@ -249,6 +270,12 @@ Unapproved candidates and dreaming proposals must never be injected directly.
   - `specs/001-learning-memory-runtime/tasks.md` US3, US5, US6
   - `docs/curator-policy-framework-architecture.md`
 
+- Worker progress must be emitted by wrappers and gated before supervisor
+  context injection.
+  - `specs/001-learning-memory-runtime/spec.md` FR-071 through FR-074
+  - `specs/001-learning-memory-runtime/contracts/worker-progress-context-gate.md`
+  - `specs/001-learning-memory-runtime/tasks.md` T167 through T174
+
 - Memory/wiki/dreaming/policy/training layers are separated.
   - `specs/001-learning-memory-runtime/spec.md` FR-016, FR-032 through FR-044
   - `docs/curator-policy-framework-architecture.md`
@@ -291,6 +318,10 @@ Unapproved candidates and dreaming proposals must never be injected directly.
   exactly how service startup reloads goals, supervisor tasks, allocations,
   worker health, memory hot cache, and safe resumable work.
 
+- `specs/001-learning-memory-runtime/contracts/worker-progress-context-gate.md`
+  describing how worker streams remain observable without consuming supervisor
+  context and how low-cost progress summarization stays non-blocking.
+
 ### Still Missing In Implementation
 
 - Tests proving allocator is workflow-agnostic:
@@ -299,7 +330,8 @@ Unapproved candidates and dreaming proposals must never be injected directly.
   - called from manual chat/supervisor task
   - same degradation classifier and worker health updates apply in all cases
 
-- Runtime implementation for task graph, health sidecar, and restart recovery.
+- Runtime implementation for task graph, worker progress/context gate, health
+  sidecar, and restart recovery.
 
 ## Implementation Principle
 

@@ -141,3 +141,23 @@ Every worker attempt must produce a `WorkerAttemptResult` with:
   retry budget explicitly allows it.
 - No foreground sleep loop for network degradation; pause or schedule recovery
   through goal/allocation state instead.
+- No raw worker stream, raw stdout/stderr, untyped worker prose, full terminal
+  transcript, or unbounded log tail may enter supervisor context.
+- Supervisor context may receive only typed bounded packets at decision
+  boundaries: worker checkpoint, blocked/degraded, validation, final,
+  allocation decision, or recovery packet.
+
+## Worker Progress Context Preservation
+
+Worker progress is enforced by the runtime wrapper, not by prompt compliance.
+The wrapper emits mandatory start, heartbeat, stream-ref, checkpoint, degraded,
+validation, and final events to the event bus/task ledger. Raw output is stored
+by reference for observability and audit.
+
+A cheap progress summarizer sidecar may read those durable events and produce
+compact checkpoint packets. This sidecar should use the configured
+`low_cost_reasoning` tier by default, such as local Gemma/Ollama or hosted
+Cerebras `gpt-oss-120b`, and must not control completion or policy.
+
+Supervisor re-entry happens only at decision boundaries. Slack/UI may stream
+progress to humans, but display streams are not supervisor context.

@@ -124,9 +124,11 @@ This phase integrates upstream `/goal` continuation with deterministic worker al
 
 ## Phase 13: Self-Healing Workflow Control Plane
 
-See [contracts/task-graph.md](./contracts/task-graph.md), [contracts/health-sidecar.md](./contracts/health-sidecar.md), [contracts/restart-recovery.md](./contracts/restart-recovery.md), and [../../super-architecture.md](../../super-architecture.md).
+See [contracts/task-graph.md](./contracts/task-graph.md), [contracts/health-sidecar.md](./contracts/health-sidecar.md), [contracts/restart-recovery.md](./contracts/restart-recovery.md), [contracts/worker-progress-context-gate.md](./contracts/worker-progress-context-gate.md), and [../../super-architecture.md](../../super-architecture.md).
 
-This phase plugs the remaining stability layer around the allocator: supervisor-owned parallel task graph, asynchronous health sidecar, and restart recovery. These services must be generic across chat, goal, dashboard, API, and worker workflows.
+This phase plugs the remaining stability layer around the allocator: supervisor-owned parallel task graph, worker progress/context gate, asynchronous health sidecar, and restart recovery. These services must be generic across chat, goal, dashboard, API, and worker workflows.
+
+The immediate priority is context preservation. Worker streams must be visible through observability surfaces but remain store-only by default. The supervisor receives compact typed packets only at decision boundaries, while a low-cost progress summarizer sidecar can convert durable worker events into bounded checkpoints without blocking foreground work.
 
 ## Complexity Tracking
 

@@ -199,6 +199,31 @@ Every attempt should produce:
 The supervisor final response may summarize this, but it must not overwrite the
 structured status.
 
+## Worker Progress Context Gate
+
+Long-running workers should be observable without consuming the supervisor's
+model context. Worker-router, delegation, and future allocator paths must emit
+typed progress events programmatically:
+
+- `worker_started`
+- `worker_heartbeat`
+- `worker_stream_ref`
+- `worker_progress_checkpoint`
+- `worker_blocked`
+- `worker_degraded`
+- `worker_validation`
+- `worker_final`
+
+Raw stdout, stderr, terminal streams, watch output, and log tails are artifact
+references. They are not prompt material. The supervisor receives only bounded
+typed packets at decision boundaries, and the packet must include refs back to
+the raw evidence for audit.
+
+A cheap progress summarizer sidecar may read the event/log refs and publish a
+compact checkpoint for Slack, dashboard, or supervisor review. It uses the
+configured low-cost reasoning tier and is not allowed to complete work, approve
+memory, or enforce policy.
+
 ## Integration With Existing Runtime Gates
 
 The current branch already has:
