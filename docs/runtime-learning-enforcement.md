@@ -296,6 +296,39 @@ Caveat:
   acceptance test should prove the same behavior from automatic task-start
   memory hydration without that hint.
 
+## Automatic Task-Start Memory Injection
+
+Implemented on branch `132-learning-memory-runtime`.
+
+Plain `hermes chat` now builds an ephemeral runtime memory packet for the
+current user turn before the first model call. The packet is generated
+programmatically from the user message, tenant/repo metadata, and approved
+global lessons:
+
+```text
+user turn
+  -> infer_runtime_memory_event(...)
+  -> local hot-cache lookup
+  -> approved global exact/simhash/metadata-lexical retrieval
+  -> bounded advisory packet
+  -> append to current API user message only
+```
+
+The injected block is advisory-only and is not written into the persisted
+conversation history or cached system prompt. Explicit user instructions, git,
+tests, logs, and runtime evidence remain more authoritative than memory.
+
+Current acceptance coverage:
+
+- `tests/hermes_cli/test_runtime_memory_injection.py` proves Claude Code task
+  prompts retrieve the approved Claude router lesson without the user saying
+  "use memory".
+- `tests/hermes_cli/test_global_memory.py` proves metadata + lexical fallback
+  can retrieve a high-confidence command-repair lesson when no exact failure
+  signature is present in the user prompt.
+
+VM live smoke for the no-hint path remains pending.
+
 ## Phase 11A Cost/Value JSON Observability
 
 Implemented deterministic JSON reporting through:

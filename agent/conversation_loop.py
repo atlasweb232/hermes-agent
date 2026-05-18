@@ -457,6 +457,44 @@ def run_conversation(
     except Exception as exc:
         logger.warning("pre_llm_call hook failed: %s", exc)
 
+    # Runtime memory wiki injection: build a compact task-start packet from
+    # approved lessons. This is API-call-time only and never mutates persisted
+    # session messages.
+    _runtime_memory_context = ""
+    try:
+        from hermes_cli.config import load_config as _load_config
+        from hermes_cli.runtime_memory_injection import build_runtime_memory_context as _build_runtime_memory_context
+
+        _runtime_cfg = _load_config()
+        _inj_cfg = ((_runtime_cfg.get("supervisor") or {}).get("runtime_memory_injection") or {})
+        if _inj_cfg.get("enabled", True):
+            _runtime_db = getattr(agent, "_session_db", None)
+            _owns_runtime_db = False
+            if _runtime_db is None:
+                from hermes_state import SessionDB as _RuntimeSessionDB
+
+                _runtime_db = _RuntimeSessionDB()
+                _owns_runtime_db = True
+            try:
+                _runtime_result = _build_runtime_memory_context(
+                    _runtime_db,
+                    original_user_message if isinstance(original_user_message, str) else "",
+                    config=_runtime_cfg,
+                    tenant_id=getattr(agent, "_tenant_id", None) or None,
+                    repo_id=None,
+                    cwd=os.environ.get("TERMINAL_CWD") or os.getcwd(),
+                    token_budget=int(_inj_cfg.get("token_budget") or 600),
+                )
+                _runtime_memory_context = _runtime_result.context
+            finally:
+                if _owns_runtime_db:
+                    try:
+                        _runtime_db.close()
+                    except Exception:
+                        pass
+    except Exception as exc:
+        logger.debug("runtime memory injection skipped: %s", exc)
+
     # Main conversation loop
     api_call_count = 0
     final_response = None
@@ -690,6 +728,8 @@ def run_conversation(
                         _injections.append(_fenced)
                 if _plugin_user_context:
                     _injections.append(_plugin_user_context)
+                if _runtime_memory_context:
+                    _injections.append(_runtime_memory_context)
                 if _injections:
                     _base = api_msg.get("content", "")
                     if isinstance(_base, str):

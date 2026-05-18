@@ -736,6 +736,47 @@ def _near_lesson_match(event: GlobalPreCurationEvent, lesson: Dict[str, Any], *,
     return hamming_distance_hex(simple_simhash(event.normalized_text), lesson_simhash) <= max_distance
 
 
+def _token_overlap_score(left: str, right: str) -> float:
+    left_tokens = set(re.findall(r"[a-z0-9_./:@-]+", _normalize_text(left)))
+    right_tokens = set(re.findall(r"[a-z0-9_./:@-]+", _normalize_text(right)))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+
+
+def _metadata_lexical_lesson_match(
+    event: GlobalPreCurationEvent,
+    lesson: Dict[str, Any],
+    *,
+    min_overlap: float = 0.2,
+) -> tuple[bool, float]:
+    """Match by hard tool/task metadata plus bounded lexical overlap."""
+    lesson_tool = str(lesson.get("tool") or "").casefold()
+    if event.tool and lesson_tool and lesson_tool != event.tool.casefold():
+        return False, 0.0
+    lesson_task_type = str(lesson.get("task_type") or "").casefold()
+    event_task_type = event.task_type.casefold()
+    equivalent_task_types = {event_task_type}
+    if event_task_type == "tool_routing":
+        equivalent_task_types.add("worker_routing")
+    if event_task_type == "worker_routing":
+        equivalent_task_types.add("tool_routing")
+    if event.task_type and lesson_task_type and lesson_task_type not in equivalent_task_types:
+        return False, 0.0
+    text = " ".join(
+        part
+        for part in [
+            event.normalized_text,
+            event.worker_kind,
+            event.failure_signature,
+            event.success_signature,
+        ]
+        if part
+    )
+    score = _token_overlap_score(text, str(lesson.get("normalized_text") or ""))
+    return score >= min_overlap, score
+
+
 def _normalize_global_lesson(raw: Dict[str, Any]) -> GlobalLessonRecord:
     data = dict(raw or {})
     normalized_text = _normalize_text(str(data.get("normalized_text") or data.get("claim") or ""))
@@ -1070,15 +1111,21 @@ def retrieve_global_hot_cache_for_event(
             "status": "approved",
             "scope": row.get("scope"),
             "sensitivity": row.get("sensitivity"),
+            "tool": row.get("tool"),
+            "task_type": row.get("task_type"),
+            "worker_kind": row.get("worker_kind"),
             "failure_signature": row.get("failure_signature"),
             "success_signature": row.get("success_signature"),
             "confidence": row.get("confidence"),
+            "normalized_text": row.get("compact_text"),
             "cross_tenant_shareable": str(row.get("scope") or "") == "global",
         }
         ok, _reason = _event_matches_lesson_scope(evt, lesson_like)
         if not ok:
             continue
-        if _exact_lesson_match(evt, lesson_like):
+        confidence = _lesson_confidence(lesson_like)
+        metadata_match, _overlap = _metadata_lexical_lesson_match(evt, lesson_like)
+        if _exact_lesson_match(evt, lesson_like) or (confidence >= 0.75 and metadata_match):
             matches.append(row)
     matches.sort(key=lambda item: (-float(item.get("confidence") or 0), str(item.get("id") or "")))
     selected = matches[: max(0, int(limit))]
@@ -1236,6 +1283,15 @@ def retrieve_global_lessons_for_event(
             audit.near_matches += 1
             ranked.append((1, score, "near", lesson))
             audit.matched.append({"id": lesson["id"], "reason": "near", "score": score})
+        elif confidence >= min_confidence:
+            metadata_match, overlap = _metadata_lexical_lesson_match(evt, lesson)
+            if metadata_match:
+                score = min(0.95, confidence * 0.8 + overlap * 0.2)
+                audit.near_matches += 1
+                ranked.append((2, score, "metadata_lexical", lesson))
+                audit.matched.append({"id": lesson["id"], "reason": "metadata_lexical", "score": score})
+            else:
+                audit.rejected.append({"id": lesson["id"], "reason": "no_exact_or_near_match"})
         else:
             audit.rejected.append({"id": lesson["id"], "reason": "no_exact_or_near_match"})
 

@@ -283,9 +283,27 @@ enforcement layer.
 
 ## Injection And Enforcement
 
-The unresolved runtime issue is not memory capture or curation. It is injection
-and enforcement: Hermes can store a lesson and curate a policy candidate, but the
-terminal tool path must still consult approved policy before execution.
+Memory injection is now split from hard enforcement.
+
+Task-start injection is implemented as an advisory memory path:
+
+```text
+current user turn
+  -> deterministic task classifier
+  -> approved global lesson retrieval
+  -> local hot-cache materialization
+  -> compact advisory packet
+  -> current API user message only
+```
+
+This solves the first failure mode: the supervisor can see prior approved
+lessons before it chooses a worker or command, even when the user did not
+explicitly ask it to use memory. The context is ephemeral and does not mutate the
+cached system prompt or persisted session transcript.
+
+Hard enforcement remains separate: Hermes can store a lesson and curate a policy
+candidate, but the terminal tool path must still consult approved policy before
+rewriting or blocking execution.
 
 The generic policy engine runs as a terminal pre-tool step:
 

@@ -73,6 +73,7 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     cfg = load_config()
     wiki = cfg["supervisor"]["global_memory_wiki"]
     bus = cfg["supervisor"]["global_memory_bus"]
+    injection = cfg["supervisor"]["runtime_memory_injection"]
 
     assert wiki["object_store"]["backend"] == "local"
     assert wiki["state_store"]["backend"] == "sqlite"
@@ -81,6 +82,8 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     assert bus["backend"] == "sqlite"
     assert bus["topic_prefix"] == "hermes.memory"
     assert wiki["precuration"]["skip_expensive_curator_on_exact"] is True
+    assert injection["enabled"] is True
+    assert injection["token_budget"] == 600
 
 
 def test_discussion_memory_config_and_sidecars_exist(_isolate_hermes_home):
@@ -632,6 +635,45 @@ def test_retrieve_global_lessons_for_event_near_match_and_top_k(tmp_path):
         assert [lesson["id"] for lesson in result.lessons] == ["global-near-0", "global-near-1"]
         assert result.audit.near_matches == 3
         assert result.audit.returned == 2
+    finally:
+        db.close()
+
+
+def test_retrieve_global_lessons_for_event_metadata_lexical_match(tmp_path):
+    db = _db(tmp_path)
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "global-claude-router-lexical",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "tenant_id": "atlas",
+                "tool": "claude",
+                "task_type": "worker_routing",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+                "normalized_text": "Prefer direct Claude Code invocation after worker-router claude parse errors.",
+                "confidence": 0.91,
+                "cross_tenant_shareable": True,
+            },
+        )
+
+        result = retrieve_global_lessons_for_event(
+            db,
+            {
+                "event_id": "evt-claude-task-start",
+                "tenant_id": "atlas",
+                "tool": "claude",
+                "task_type": "worker_routing",
+                "normalized_text": "Ask Claude Code what is two plus two",
+            },
+        )
+
+        assert [lesson["id"] for lesson in result.lessons] == ["global-claude-router-lexical"]
+        assert result.audit.matched[0]["reason"] == "metadata_lexical"
     finally:
         db.close()
 

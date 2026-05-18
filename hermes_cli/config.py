@@ -574,6 +574,15 @@ DEFAULT_CONFIG = {
             # Minimum evidence rows required to promote a candidate.
             "min_evidence_items": 1,
         },
+        "runtime_memory_injection": {
+            "enabled": True,
+            "token_budget": 600,
+            "hot_limit": 3,
+            "global_limit": 3,
+            "max_items": 3,
+            "min_query_chars": 8,
+            "packet_ttl_seconds": 3600,
+        },
         "runtime_orchestration": {
             "enabled": True,
             "require_speckit_for_non_trivial": True,

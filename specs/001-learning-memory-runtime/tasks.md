@@ -311,7 +311,7 @@
 ### Tests for Production Runtime Surfaces
 
 - [x] T099 [P] [US8] Add low-end model baseline eval fixtures for repeated command failure, branch triage, validation discipline, and worker handoff quality in `tests/hermes_cli/test_learning_value.py`
-- [ ] T100 [P] [US8] Add memory-injection improvement tests proving task classifier + metadata retrieval + compact packet reduce repeated mistakes for cheaper workers without leaking unrelated tenant/repo lessons
+- [x] T100 [P] [US8] Add memory-injection improvement tests proving task classifier + metadata retrieval + compact packet reduce repeated mistakes for cheaper workers without leaking unrelated tenant/repo lessons
 - [ ] T101 [P] [US8] Add observability UI/API tests for historical jobs, active jobs, tenant/repo/date filters, worker status, blocker reason, completion status, line-item drilldown, and scoped Ask analysis
 - [ ] T102 [P] [US8] Add realtime voice config/transport tests for OpenAI `gpt-realtime-2`, MiniMax `speech-2.8`, and xAI/Grok provider selection, fallback reporting, and no secret leakage
 - [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving idempotent publish/consume/replay/dead-letter behavior
@@ -339,7 +339,7 @@
 - [ ] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [ ] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
-- [ ] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
+- [x] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
 - [x] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
 - [x] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval
 - [x] T119 [US8] Split local dreaming and global dreaming role/config/lease definitions so local dreaming stays tenant/repo scoped and global dreaming consumes only approved redacted global memory
