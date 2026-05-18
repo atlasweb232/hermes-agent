@@ -44,6 +44,9 @@ _HERMES_CORE_TOOLS = [
     "browser_type", "browser_scroll", "browser_back",
     "browser_press", "browser_get_images",
     "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
+    # TinyFish browser/agent APIs (gated on TINYFISH_API_KEY)
+    "tinyfish_fetch", "tinyfish_search", "tinyfish_agent_run",
+    "tinyfish_agent_queue", "tinyfish_run_status",
     # Text-to-speech
     "text_to_speech",
     # Planning & memory
@@ -164,7 +167,17 @@ TOOLSETS = {
             "browser_type", "browser_scroll", "browser_back",
             "browser_press", "browser_get_images",
             "browser_vision", "browser_console", "browser_cdp",
-            "browser_dialog", "web_search"
+            "browser_dialog", "web_search", "tinyfish_fetch", "tinyfish_search",
+            "tinyfish_agent_run", "tinyfish_agent_queue", "tinyfish_run_status"
+        ],
+        "includes": []
+    },
+
+    "tinyfish": {
+        "description": "TinyFish Browser Fetch, Search, and browser Agent API tools (requires TINYFISH_API_KEY)",
+        "tools": [
+            "tinyfish_fetch", "tinyfish_search", "tinyfish_agent_run",
+            "tinyfish_agent_queue", "tinyfish_run_status"
         ],
         "includes": []
     },
