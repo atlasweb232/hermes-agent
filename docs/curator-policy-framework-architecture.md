@@ -1806,3 +1806,39 @@ review.
 The same module also provides baseline-vs-memory-assisted comparison fixtures
 for low-end model evaluation. Those comparisons are evidence for future
 policies; they are not policy changes by themselves.
+
+### Runtime Feature Toggles And Local E2E
+
+Runtime-affecting experimental work is guarded by local feature toggles under
+`hermes runtime features`. Current local/dev feature ids are
+`runtime.health_sidecar`, `runtime.restart_recovery`, `runtime.task_graph`, and
+`runtime.benchmark_harness`. They default off, resolve through durable
+tenant/repo scoped `state_meta` records, and always report
+`enforcement_allowed: false`.
+
+Operators can inspect and change local toggles with:
+
+```bash
+hermes runtime features list --json
+hermes runtime features status --tenant-id tenant-a --repo-id repo-a --json
+hermes runtime features set runtime.health_sidecar on \
+  --tenant-id tenant-a --repo-id repo-a \
+  --reason "bounded local smoke" --json
+```
+
+The deterministic E2E runner is deliberately local and non-invasive:
+
+```bash
+hermes runtime e2e list --json
+hermes runtime e2e run --suite runtime.local_smoke \
+  --tenant-id tenant-a --repo-id repo-a \
+  --artifact-root /tmp/hermes-e2e --json
+hermes runtime e2e status --run-id e2e_... --json
+```
+
+Each run creates an isolated `HERMES_HOME` and artifact root, snapshots feature
+state for the requested tenant/repo, and stores only bounded structured records
+in the caller's local `state_meta`. Disabled smoke cases are reported as
+`skipped`; enabled scoped cases record synthetic bounded evidence refs. The
+runner does not start provider calls, hidden sidecars, Kafka/vector/graph/cloud
+services, enforcement, raw transcript capture, or unbounded log storage.

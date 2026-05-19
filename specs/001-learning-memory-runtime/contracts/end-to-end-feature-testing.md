@@ -65,10 +65,19 @@ Planned surfaces:
 - `hermes runtime features status --json`
 - `hermes runtime features set <feature_id> <on|off> --reason ... --json`
 - `hermes runtime e2e list --json`
-- `hermes runtime e2e run --suite <suite> --features <ids|all> --json`
-- `hermes runtime e2e report --run-id <id> --json`
+- `hermes runtime e2e run --suite <suite> --tenant-id <tenant> --repo-id <repo> --json`
+- `hermes runtime e2e status --run-id <id> --json`
+- `hermes runtime e2e report --run-id <id> --json` as a compatibility alias
 
 The backend API should use the same schemas as the CLI.
+
+The first local/dev implementation exposes suite `runtime.local_smoke` and the
+runtime feature ids already present in `hermes_cli/runtime_features.py`:
+`runtime.health_sidecar`, `runtime.restart_recovery`, `runtime.task_graph`, and
+`runtime.benchmark_harness`. These are safe/off by default. The suite records
+`skipped` cases when a feature is disabled for the requested tenant/repo and
+records `passed` only for the same tenant/repo scope where an explicit local
+override enables the feature.
 
 ## Feature Test Matrix
 
@@ -134,6 +143,11 @@ Each test case result must include:
 - Test fixtures may use synthetic secrets and synthetic provider responses.
 - Live provider tests must be opt-in and tagged separately from deterministic
   CI tests.
+- Deterministic local runs must create an isolated `HERMES_HOME` and artifact
+  root for each run. Persisted records may store paths, ids, bounded summaries,
+  and evidence refs, but not raw transcripts, secrets, or unbounded logs.
+- Enforcement remains unavailable in every feature snapshot, case result, run,
+  status, and report payload.
 
 ## Definition Of Done
 

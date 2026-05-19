@@ -499,26 +499,26 @@
 - [x] T193 [P] [US12] Add default-off resolver and scoped durable override tests proving tenant/repo scoped state, restart persistence, source/default/override reporting, and enforcement disabled by default in `tests/hermes_cli/test_runtime_features.py`
 - [x] T194 [P] [US12] Add reason safety tests proving `set` requires a reason, redacts secret-like values, bounds stored reason length, and never stores raw transcripts or unbounded logs in `tests/hermes_cli/test_runtime_features.py`
 - [x] T195 [P] [US12] Add CLI JSON tests for `hermes runtime features list --json`, `status --json`, `set <feature_id> <on|off> --reason ... --json`, and unknown-feature failure in `tests/hermes_cli/test_runtime_features.py`
-- [ ] T196 [P] [US12] Add E2E runner schema tests for workload id, isolated `HERMES_HOME`, repo snapshot refs, feature-toggle snapshot, validation commands, and artifact roots
-- [ ] T197 [P] [US12] Add E2E runner safety tests proving no enforcement enablement, no raw transcript storage, no cross-tenant state reuse, and no default expensive sidecar calls
-- [ ] T198 [P] [US12] Add CLI/API JSON tests for `hermes runtime e2e run --suite ... --json` and `hermes runtime e2e status --run-id ... --json`
-- [ ] T199 [P] [US12] Add feature-gated smoke tests proving health sidecar, restart recovery, task graph, and benchmark harness remain skipped unless their toggles resolve enabled
-- [ ] T200 [P] [US12] Add state migration/idempotency tests for feature toggle records and E2E runner records in local `state.db`
-- [ ] T201 [P] [US12] Add docs contract tests or examples proving CLI JSON fields remain stable for dashboard/API callers
+- [x] T196 [P] [US12] Add E2E runner schema tests for workload id, isolated `HERMES_HOME`, repo snapshot refs, feature-toggle snapshot, validation commands, and artifact roots
+- [x] T197 [P] [US12] Add E2E runner safety tests proving no enforcement enablement, no raw transcript storage, no cross-tenant state reuse, and no default expensive sidecar calls
+- [x] T198 [P] [US12] Add CLI/API JSON tests for `hermes runtime e2e run --suite ... --json` and `hermes runtime e2e status --run-id ... --json`
+- [x] T199 [P] [US12] Add feature-gated smoke tests proving health sidecar, restart recovery, task graph, and benchmark harness remain skipped unless their toggles resolve enabled
+- [x] T200 [P] [US12] Add state migration/idempotency tests for feature toggle records and E2E runner records in local `state.db`
+- [x] T201 [P] [US12] Add docs contract tests or examples proving CLI JSON fields remain stable for dashboard/API callers
 
 ### Implementation For Runtime Feature Toggles And E2E Runner
 
-- [ ] T202 [US12] Define E2E runner dataclasses and JSON serialization for suites, runs, steps, validation evidence, artifacts, and feature snapshots
-- [ ] T203 [US12] Implement local E2E runner state helpers using `SessionDB.state_meta` or existing local state tables with bounded evidence only
-- [ ] T204 [US12] Implement isolated local/dev E2E runner execution that uses separate homes/artifact roots and records validation summaries without raw transcripts
-- [ ] T205 [US12] Add CLI/API-compatible JSON surfaces for E2E run/status with deterministic status, blockers, validation refs, and cost/context placeholders
-- [ ] T206 [US12] Wire feature-gated runtime smoke entry points so disabled features report skipped instead of running hidden background work
+- [x] T202 [US12] Define E2E runner dataclasses and JSON serialization for suites, runs, steps, validation evidence, artifacts, and feature snapshots
+- [x] T203 [US12] Implement local E2E runner state helpers using `SessionDB.state_meta` or existing local state tables with bounded evidence only
+- [x] T204 [US12] Implement isolated local/dev E2E runner execution that uses separate homes/artifact roots and records validation summaries without raw transcripts
+- [x] T205 [US12] Add CLI/API-compatible JSON surfaces for E2E run/status with deterministic status, blockers, validation refs, and cost/context placeholders
+- [x] T206 [US12] Wire feature-gated runtime smoke entry points so disabled features report skipped instead of running hidden background work
 - [x] T207 [US12] Implement runtime feature definitions and resolver with safe/off defaults, source/default/override reporting, tenant/repo scoped durable local state, stable JSON, and unknown-feature errors in `hermes_cli/runtime_features.py`
 - [x] T208 [US12] Add CLI wiring for `hermes runtime features list/status/set` with JSON output, required bounded reasons, secret redaction, and enforcement disabled by default in `hermes_cli/main.py`
-- [ ] T209 [US12] Document runtime feature toggle contract, local/dev storage, safety boundaries, and operator workflow in `docs/curator-policy-framework-architecture.md`
-- [ ] T210 [US12] Document E2E runner contract and example suites in `specs/001-learning-memory-runtime/contracts/`
-- [ ] T211 [US12] Run focused runtime feature, E2E runner, CLI JSON, py_compile, and diff hygiene validation
-- [ ] T212 [US12] Run a local/dev smoke proving features default skipped, scoped override enables only the requested tenant/repo, and enforcement remains false
+- [x] T209 [US12] Document runtime feature toggle contract, local/dev storage, safety boundaries, and operator workflow in `docs/curator-policy-framework-architecture.md`
+- [x] T210 [US12] Document E2E runner contract and example suites in `specs/001-learning-memory-runtime/contracts/`
+- [x] T211 [US12] Run focused runtime feature, E2E runner, CLI JSON, py_compile, and diff hygiene validation
+- [x] T212 [US12] Run a local/dev smoke proving features default skipped, scoped override enables only the requested tenant/repo, and enforcement remains false
 
 **Checkpoint**: Runtime-affecting work is visible and testable through local feature toggles, but experimental features remain off until explicitly enabled and enforcement remains unavailable by default.
 

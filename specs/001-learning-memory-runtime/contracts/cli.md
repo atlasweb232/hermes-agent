@@ -172,6 +172,80 @@ Expected response:
 }
 ```
 
+## `hermes runtime e2e list --json`
+
+Lists deterministic local/dev E2E suites without writing state.
+
+Expected response:
+
+```json
+{
+  "schema_version": 1,
+  "suites": [
+    {
+      "suite_id": "runtime.local_smoke",
+      "workload_id": "runtime-local-dev-smoke",
+      "profile": "deterministic-local-dev",
+      "artifact_policy": {
+        "isolated_hermes_home": true,
+        "isolated_artifact_root": true,
+        "bounded_evidence_only": true,
+        "raw_transcripts_stored": false,
+        "enforcement_allowed": false
+      },
+      "validation_commands": ["runtime-e2e:deterministic-local-smoke"]
+    }
+  ]
+}
+```
+
+## `hermes runtime e2e run --suite runtime.local_smoke --json`
+
+Runs the local deterministic smoke suite and persists a bounded run record in
+local `state_meta`. Each run creates an isolated `HERMES_HOME` and artifact
+root under `--artifact-root` or `$HERMES_HOME/runtime-e2e/<run_id>`.
+
+Expected response:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "e2e_20260519T000000_example",
+  "suite_id": "runtime.local_smoke",
+  "workload_id": "runtime-local-dev-smoke",
+  "status": "skipped",
+  "scope": {
+    "tenant_id": "tenant-a",
+    "repo_id": "repo-a"
+  },
+  "isolated": {
+    "hermes_home": "/tmp/hermes-e2e/e2e_example/hermes-home",
+    "artifact_root": "/tmp/hermes-e2e/e2e_example",
+    "state_db": "/tmp/hermes-e2e/e2e_example/hermes-home/state.db"
+  },
+  "safety": {
+    "enforcement_allowed": false,
+    "raw_transcripts_stored": false,
+    "expensive_sidecars_started": false,
+    "provider_calls": 0
+  },
+  "cases": [
+    {
+      "case_id": "runtime.health_sidecar.disabled_or_enabled",
+      "feature_ids": ["runtime.health_sidecar"],
+      "status": "skipped",
+      "skip_reason": "feature disabled by scoped runtime toggle",
+      "enforcement_allowed": false
+    }
+  ]
+}
+```
+
+## `hermes runtime e2e status --run-id RUN_ID --json`
+
+Returns the persisted bounded run record. `report` is accepted as a compatible
+alias for callers that already adopted the earlier contract name.
+
 ## `hermes memory bus publish --topic TOPIC --json-payload JSON`
 
 Publishes a durable runtime event.

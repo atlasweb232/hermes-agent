@@ -11497,6 +11497,25 @@ Examples:
     runtime_features_set.add_argument("--reason", required=True, help="Bounded operator reason for the override")
     runtime_features_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_e2e = runtime_sub.add_parser("e2e", help="Run deterministic local/dev runtime E2E suites")
+    runtime_e2e_sub = runtime_e2e.add_subparsers(dest="runtime_e2e_command")
+    runtime_e2e_list = runtime_e2e_sub.add_parser("list", help="List runtime E2E suites")
+    runtime_e2e_list.add_argument("--repo-path", default=".", help="Repository path for snapshot refs")
+    runtime_e2e_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_e2e_run = runtime_e2e_sub.add_parser("run", help="Run one runtime E2E suite")
+    runtime_e2e_run.add_argument("--suite", required=True, help="Suite id to run")
+    runtime_e2e_run.add_argument("--tenant-id", default="", help="Tenant scope")
+    runtime_e2e_run.add_argument("--repo-id", default="", help="Repository scope")
+    runtime_e2e_run.add_argument("--artifact-root", default="", help="Root for isolated run artifacts")
+    runtime_e2e_run.add_argument("--repo-path", default=".", help="Repository path for snapshot refs")
+    runtime_e2e_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_e2e_status = runtime_e2e_sub.add_parser("status", help="Show a runtime E2E run")
+    runtime_e2e_status.add_argument("--run-id", required=True, help="Runtime E2E run id")
+    runtime_e2e_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_e2e_report = runtime_e2e_sub.add_parser("report", help="Alias for runtime E2E status")
+    runtime_e2e_report.add_argument("--run-id", required=True, help="Runtime E2E run id")
+    runtime_e2e_report.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
     runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
     runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
@@ -11814,6 +11833,41 @@ Examples:
                     _emit(payload)
                 else:
                     _emit(status_runtime_features(db, tenant_id=tenant_id, repo_id=repo_id))
+            finally:
+                db.close()
+            return
+        if cmd == "e2e":
+            from hermes_cli.runtime_e2e import (
+                get_e2e_run,
+                list_e2e_suites,
+                run_e2e_suite,
+            )
+            from hermes_state import SessionDB
+
+            e2e_cmd = getattr(args, "runtime_e2e_command", None) or "list"
+            if e2e_cmd == "list":
+                _emit(list_e2e_suites(repo_path=Path(getattr(args, "repo_path", ".") or ".")))
+                return
+            db = SessionDB()
+            try:
+                if e2e_cmd == "run":
+                    try:
+                        payload = run_e2e_suite(
+                            db,
+                            suite_id=getattr(args, "suite"),
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            artifact_root=getattr(args, "artifact_root", "") or None,
+                            repo_path=getattr(args, "repo_path", ".") or ".",
+                        )
+                    except ValueError as exc:
+                        raise SystemExit(str(exc)) from exc
+                    _emit(payload)
+                elif e2e_cmd in {"status", "report"}:
+                    try:
+                        _emit(get_e2e_run(db, getattr(args, "run_id")))
+                    except ValueError as exc:
+                        raise SystemExit(str(exc)) from exc
             finally:
                 db.close()
             return
