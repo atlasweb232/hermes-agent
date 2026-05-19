@@ -67,6 +67,85 @@ Expected response:
 }
 ```
 
+## `hermes runtime features list --json`
+
+Lists deterministic local/dev runtime feature definitions without writing state.
+
+Expected response:
+
+```json
+{
+  "schema_version": 1,
+  "scope": {
+    "tenant_id": null,
+    "repo_id": null
+  },
+  "features": [
+    {
+      "feature_id": "runtime.health_sidecar",
+      "default_enabled": false,
+      "runtime_affecting": true,
+      "experimental": true,
+      "safety": {
+        "enforcement_allowed_default": false,
+        "requires_explicit_enable": true
+      }
+    }
+  ]
+}
+```
+
+## `hermes runtime features status --json`
+
+Resolves effective feature states for the optional tenant/repo scope.
+
+Expected response:
+
+```json
+{
+  "schema_version": 1,
+  "scope": {
+    "tenant_id": "tenant-a",
+    "repo_id": "repo-a"
+  },
+  "features": [
+    {
+      "feature_id": "runtime.health_sidecar",
+      "enabled": false,
+      "effective": false,
+      "source": "default",
+      "override": null,
+      "reason": null,
+      "updated_at": null,
+      "enforcement_allowed": false
+    }
+  ]
+}
+```
+
+## `hermes runtime features set FEATURE_ID on|off --reason TEXT --json`
+
+Writes a bounded scoped override to local state. A reason is required, secret-like
+values are redacted, and enforcement remains disabled by default.
+
+Expected response:
+
+```json
+{
+  "feature_id": "runtime.health_sidecar",
+  "enabled": true,
+  "effective": true,
+  "source": "override",
+  "reason": "bounded health sidecar smoke",
+  "updated_at": "2026-05-19T00:00:00Z",
+  "scope": {
+    "tenant_id": "tenant-a",
+    "repo_id": "repo-a"
+  },
+  "enforcement_allowed": false
+}
+```
+
 ## `hermes memory judge-run --json`
 
 Runs the learning judge over eligible proposed candidates.

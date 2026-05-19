@@ -11479,6 +11479,24 @@ Examples:
     runtime_workers_health = runtime_workers_sub.add_parser("health", help="List worker health records")
     runtime_workers_health.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_features = runtime_sub.add_parser("features", help="Inspect and set local runtime feature toggles")
+    runtime_features_sub = runtime_features.add_subparsers(dest="runtime_features_command")
+    runtime_features_list = runtime_features_sub.add_parser("list", help="List known runtime feature definitions")
+    runtime_features_list.add_argument("--tenant-id", default="", help="Tenant scope")
+    runtime_features_list.add_argument("--repo-id", default="", help="Repository scope")
+    runtime_features_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_features_status = runtime_features_sub.add_parser("status", help="Resolve effective runtime feature states")
+    runtime_features_status.add_argument("--tenant-id", default="", help="Tenant scope")
+    runtime_features_status.add_argument("--repo-id", default="", help="Repository scope")
+    runtime_features_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_features_set = runtime_features_sub.add_parser("set", help="Set one scoped runtime feature override")
+    runtime_features_set.add_argument("feature_id", help="Runtime feature id")
+    runtime_features_set.add_argument("state", choices=["on", "off"], help="Desired feature state")
+    runtime_features_set.add_argument("--tenant-id", default="", help="Tenant scope")
+    runtime_features_set.add_argument("--repo-id", default="", help="Repository scope")
+    runtime_features_set.add_argument("--reason", required=True, help="Bounded operator reason for the override")
+    runtime_features_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
     runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
     runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
@@ -11761,6 +11779,41 @@ Examples:
             try:
                 if workers_cmd == "health":
                     _emit([record.to_dict() for record in list_worker_health_records(db)])
+            finally:
+                db.close()
+            return
+        if cmd == "features":
+            from hermes_cli.runtime_features import (
+                list_runtime_features,
+                parse_feature_enabled,
+                set_runtime_feature_override,
+                status_runtime_features,
+            )
+            from hermes_state import SessionDB
+
+            features_cmd = getattr(args, "runtime_features_command", None) or "status"
+            tenant_id = getattr(args, "tenant_id", "") or None
+            repo_id = getattr(args, "repo_id", "") or None
+            if features_cmd == "list":
+                _emit(list_runtime_features(tenant_id=tenant_id, repo_id=repo_id))
+                return
+            db = SessionDB()
+            try:
+                if features_cmd == "set":
+                    try:
+                        payload = set_runtime_feature_override(
+                            db,
+                            getattr(args, "feature_id"),
+                            enabled=parse_feature_enabled(getattr(args, "state")),
+                            reason=getattr(args, "reason", "") or "",
+                            tenant_id=tenant_id,
+                            repo_id=repo_id,
+                        )
+                    except ValueError as exc:
+                        raise SystemExit(str(exc)) from exc
+                    _emit(payload)
+                else:
+                    _emit(status_runtime_features(db, tenant_id=tenant_id, repo_id=repo_id))
             finally:
                 db.close()
             return
