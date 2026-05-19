@@ -11479,6 +11479,22 @@ Examples:
     runtime_workers_health = runtime_workers_sub.add_parser("health", help="List worker health records")
     runtime_workers_health.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
+    runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
+    runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
+    runtime_notify_urgent.add_argument("--severity", default="needs_operator")
+    runtime_notify_urgent.add_argument("--title", default="runtime event needs attention")
+    runtime_notify_urgent.add_argument("--message", default="")
+    runtime_notify_urgent.add_argument("--task-id", default="")
+    runtime_notify_urgent.add_argument("--repo-id", default="")
+    runtime_notify_urgent.add_argument("--worker", default="")
+    runtime_notify_urgent.add_argument("--event-kind", default="")
+    runtime_notify_urgent.add_argument("--source", default="runtime")
+    runtime_notify_urgent.add_argument("--platform", default="slack")
+    runtime_notify_urgent.add_argument("--event-json", default="", help="Optional runtime event JSON to route")
+    runtime_notify_urgent.add_argument("--dry-run", action="store_true")
+    runtime_notify_urgent.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_secrets = runtime_sub.add_parser("secrets", help="Check AWS Secrets Manager secret references without reading values")
     runtime_secrets_sub = runtime_secrets.add_subparsers(dest="runtime_secrets_command")
     runtime_secrets_check = runtime_secrets_sub.add_parser("check", help="Check required secret references")
@@ -11748,6 +11764,45 @@ Examples:
             finally:
                 db.close()
             return
+        if cmd == "notify":
+            notify_cmd = getattr(args, "runtime_notify_command", None) or "urgent"
+            if notify_cmd == "urgent":
+                from hermes_cli.runtime_urgent_notify import (
+                    UrgentNotification,
+                    event_is_urgent,
+                    notification_from_event,
+                    send_urgent_notification,
+                )
+
+                event_json = getattr(args, "event_json", "") or ""
+                if event_json:
+                    try:
+                        event = json.loads(event_json)
+                    except Exception as exc:
+                        raise SystemExit(f"invalid --event-json: {exc}") from exc
+                    if not isinstance(event, dict):
+                        raise SystemExit("--event-json must decode to an object")
+                    if not event_is_urgent(event):
+                        _emit({"status": "skipped", "reason": "event is not urgent", "event": event})
+                        return
+                    notification = notification_from_event(event)
+                else:
+                    notification = UrgentNotification(
+                        severity=getattr(args, "severity", "needs_operator"),
+                        title=getattr(args, "title", "runtime event needs attention"),
+                        message=getattr(args, "message", "") or "",
+                        task_id=getattr(args, "task_id", "") or None,
+                        repo_id=getattr(args, "repo_id", "") or None,
+                        worker_id=getattr(args, "worker", "") or None,
+                        event_kind=getattr(args, "event_kind", "") or None,
+                        source=getattr(args, "source", "runtime") or "runtime",
+                    )
+                _emit(send_urgent_notification(
+                    notification,
+                    platform=getattr(args, "platform", "slack") or "slack",
+                    dry_run=bool(getattr(args, "dry_run", False)),
+                ))
+                return
         if cmd == "secrets":
             secrets_cmd = getattr(args, "runtime_secrets_command", None) or "check"
             if secrets_cmd == "check":
