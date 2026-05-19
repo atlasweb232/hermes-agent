@@ -447,6 +447,40 @@
 
 **Checkpoint**: Long-running workflows can run as supervisor-owned task graphs, recover from worker/platform degradation out of band, and restart from durable state without retrying unsafe routes or blocking foreground work.
 
+## Phase 14: Production Evaluation Harness (Priority: P11)
+
+**Goal**: Build a side-by-side upstream-vs-branch evaluation harness that proves whether memory wrapping, sidecars, judges, allocator fallback, QA workers, and context gates improve long-horizon task quality without unacceptable token/cost/latency overhead.
+
+**Independent Test**: Run the same workload pack against upstream Hermes and `132-learning-memory-runtime` with isolated homes and shared repo snapshots. Verify comparison output includes quality, validation, latency, token/cost, context growth, sidecar overhead, memory usefulness, urgent alerts, operator interventions, and production gate result.
+
+**Boundary**: This is the production-readiness gate. Do not productionize self-learning, global memory, CI/CD automation, or multi-agent clusters until the harness shows value over upstream.
+
+### Spec And Architecture Artifacts
+
+- [x] T175 [US11] Add `contracts/production-evaluation-harness.md` defining upstream-vs-branch environments, workload classes, telemetry, sidecar/judge assertions, quality metrics, storage, and human-in-the-loop gates
+- [x] T176 [US11] Add `docs/production-evaluation-harness-architecture.md` covering message bus/storage flow, Delta/object-store evolution, cost/context telemetry, sidecar verification, QA toolsets, and production gate reporting
+- [x] T177 [US11] Link Phase 14 from `plan.md`, `spec.md`, and `tasks.md`
+
+### Tests For Production Evaluation Harness
+
+- [ ] T178 [P] [US11] Add benchmark environment tests proving upstream and branch runs use separate `HERMES_HOME`, separate artifact roots, shared workload definitions, and no cross-contamination
+- [ ] T179 [P] [US11] Add telemetry schema tests for token/cost/latency/context/path attribution across supervisor, planner, worker, judge, curator, dreaming, progress summarizer, QA, deployment, memory retrieval, and Slack/dashboard analysis
+- [ ] T180 [P] [US11] Add production gate tests proving rollout is blocked when branch quality regresses, sidecars block foreground work, urgent alerts are missing, memory approval boundaries are violated, or cost exceeds thresholds
+- [ ] T181 [P] [US11] Add workload pack fixture tests for review, implementation, QA, deployment, long-running goal, fallback, stale worker, repeated failure, multi-repo decomposition, and hallucinated completion cases
+
+### Implementation For Production Evaluation Harness
+
+- [ ] T182 [US11] Implement benchmark workload dataclasses and JSON/YAML loader with repo refs, prompt, model/tool profile, expected artifacts, validation commands, and pass/fail rubric
+- [ ] T183 [US11] Implement isolated environment runner that can invoke upstream Hermes and branch Hermes with separate homes, worktrees, env files, and artifact roots
+- [ ] T184 [US11] Implement telemetry collector for model usage, latency, cost estimates, context admitted, raw bytes stored, worker attempts, sidecar runs, judge decisions, memory hits, validation results, notifications, and operator interventions
+- [ ] T185 [US11] Implement comparison report generator with upstream-vs-branch quality/cost/latency/context/self-learning metrics and production gate status
+- [ ] T186 [US11] Add CLI/API surfaces: `hermes runtime benchmark run --suite ... --json`, `hermes runtime benchmark report --run-id ... --json`, and `hermes runtime costs status --json`
+- [ ] T187 [US11] Add urgent Slack integration for benchmark failures and production-gate blocks
+- [ ] T188 [US11] Add CI/CD harness template that runs deterministic benchmark smoke on PRs and full long-horizon benchmark on scheduled/operator-triggered runs
+- [ ] T189 [US11] Run Azure VM side-by-side smoke: upstream clean Hermes vs branch Hermes on the Azure port workflow, recording token/cost/latency/quality/self-learning results
+
+**Checkpoint**: Production readiness is based on measured upstream-vs-branch evidence, not anecdotal task success.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -460,6 +494,7 @@
 - User Story 8 depends on Phase 10 validation and must finish persisted lesson storage/retrieval plus cost-budget instrumentation before production backend scale-out.
 - User Story 9 depends on the Phase 11 runtime-degradation gate and persisted memory retrieval, then adds deterministic allocation around upstream `/goal` continuation.
 - User Story 10 depends on User Story 9 allocator state and adds task graph, health sidecar, and restart recovery around it.
+- User Story 11 depends on User Stories 8 through 10 enough to measure them and becomes the gate for production rollout.
 
 ## Parallel Opportunities
 
@@ -470,6 +505,7 @@
 - Low-end model eval fixtures and persisted lesson retrieval can be developed first. Realtime voice adapters, global bus adapters, production memory wiki backends, and training export tests are intentionally deferred until the core loop has measured value.
 - Goal-allocation schema, decision, resume, and observability tests can be developed in parallel after the contract lands.
 - Task graph, health sidecar, restart recovery, and workflow-agnostic tests can be developed in parallel after Phase 13 contracts land.
+- Benchmark workload loader, telemetry schema, isolated runner, and report generator can be developed in parallel after Phase 14 contracts land.
 
 ## Implementation Strategy
 
@@ -533,3 +569,13 @@
 8. Add restart recovery loader and safe-to-resume decisions.
 9. Add CLI/API observability for task graph, health, and recovery.
 10. Run restart and degraded-worker smoke tests.
+
+### Phase 14 Order
+
+1. Add benchmark workload schema and telemetry schema tests.
+2. Add isolated upstream/branch runner with separate homes and artifact roots.
+3. Add token/cost/latency/context telemetry collection.
+4. Add sidecar/judge/memory assertion checks.
+5. Add comparison report and production gate.
+6. Add CI/CD smoke and scheduled long-horizon benchmark harness.
+7. Run Azure VM upstream-vs-branch benchmark and record results.

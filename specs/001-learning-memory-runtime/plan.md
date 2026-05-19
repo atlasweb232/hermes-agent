@@ -130,9 +130,16 @@ This phase plugs the remaining stability layer around the allocator: supervisor-
 
 The immediate priority is context preservation. Worker streams must be visible through observability surfaces but remain store-only by default. The supervisor receives compact typed packets only at decision boundaries, while a low-cost progress summarizer sidecar can convert durable worker events into bounded checkpoints without blocking foreground work.
 
+## Phase 14: Production Evaluation Harness
+
+See [contracts/production-evaluation-harness.md](./contracts/production-evaluation-harness.md) and [../../docs/production-evaluation-harness-architecture.md](../../docs/production-evaluation-harness-architecture.md).
+
+This phase creates a controlled upstream-vs-branch evaluation environment for long-horizon tasks. It must measure quality, latency, token/cost usage, context growth, memory usefulness, sidecar overhead, judge decisions, Slack alerts, and human-in-the-loop events before production rollout. The harness is the production gate for the memory framework, self-learning loop, sidecars, judges, multi-agent allocation, QA toolsets, and CI/CD integration.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
 | Multiple learning state types | Required to prevent raw events, proposals, wiki, and enforcement from collapsing into one unsafe memory store | A single `memory` table would make approval state and audit boundaries ambiguous |
 | Background bus before distributed bus | Required to decouple foreground work without deploying Kafka/Redis | Direct synchronous sidecar calls would drag the agent loop and make failures user-visible |
+| Side-by-side evaluation harness | Required to prove memory/sidecars/judges improve outcomes over upstream before production | Anecdotal task success cannot justify higher infrastructure and model cost |

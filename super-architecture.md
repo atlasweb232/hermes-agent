@@ -246,6 +246,28 @@ runtime event / task outcome
 
 Unapproved candidates and dreaming proposals must never be injected directly.
 
+## Production Evaluation Gate
+
+Hermes must be benchmarked against upstream before production rollout. The
+evaluation runs upstream Hermes and `132-learning-memory-runtime` in isolated
+homes against the same workload pack and repo snapshots.
+
+```text
+workload suite
+  -> upstream environment
+  -> branch environment
+  -> telemetry collector
+  -> sidecar/judge/memory verifier
+  -> comparison report
+  -> production gate
+```
+
+The gate measures task success, validation quality, false completions, repeated
+errors, latency, token/cost usage, supervisor context growth, sidecar overhead,
+memory usefulness, urgent alerts, and operator interventions. Production rollout
+is blocked if the branch does not improve quality or if sidecars, judges,
+memory promotion, or cost controls violate policy.
+
 ## Spec Kit Coverage Review
 
 ### Already Captured
@@ -275,6 +297,12 @@ Unapproved candidates and dreaming proposals must never be injected directly.
   - `specs/001-learning-memory-runtime/spec.md` FR-071 through FR-074
   - `specs/001-learning-memory-runtime/contracts/worker-progress-context-gate.md`
   - `specs/001-learning-memory-runtime/tasks.md` T167 through T174
+
+- Production readiness must be proven through upstream-vs-branch benchmarks.
+  - `specs/001-learning-memory-runtime/spec.md` FR-075 through FR-080
+  - `specs/001-learning-memory-runtime/contracts/production-evaluation-harness.md`
+  - `docs/production-evaluation-harness-architecture.md`
+  - `specs/001-learning-memory-runtime/tasks.md` T175 through T189
 
 - Memory/wiki/dreaming/policy/training layers are separated.
   - `specs/001-learning-memory-runtime/spec.md` FR-016, FR-032 through FR-044

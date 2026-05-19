@@ -182,6 +182,24 @@ As the Hermes operator, I want long-running work to run as a supervisor-owned ta
 3. **Given** repeated no-progress or timeout signals, **When** the health sidecar evaluates the task, **Then** it blocks, pauses, or requests reassignment without marking the task complete.
 4. **Given** Hermes restarts, **When** recovery runs, **Then** active goals, task graphs, allocations, worker health, hot memory, and safe-to-resume tasks are reloaded without retrying unhealthy workers.
 
+---
+
+### User Story 11 - Production Evaluation Harness (Priority: P11)
+
+As the Hermes operator, I want an isolated upstream-vs-branch benchmark harness with cost, latency, memory, sidecar, judge, and quality telemetry, so production rollout is based on concrete evidence over long-horizon workloads.
+
+**Why this priority**: The platform must prove that memory wrapping, sidecars, judges, allocator fallback, and QA agents improve task quality without increasing context bloat, cost, drift, or operational risk.
+
+**Independent Test**: Run the same workload suite against upstream Hermes and `132-learning-memory-runtime`, then compare task success, validation pass rate, false completions, repeated errors, latency, token/cost usage, sidecar overhead, memory usefulness, Slack urgent alerts, and operator interventions.
+
+**Acceptance Scenarios**:
+
+1. **Given** a workload pack and two isolated Hermes homes, **When** the harness runs, **Then** upstream and branch execute the same tasks against the same repo snapshots with separate artifacts and telemetry.
+2. **Given** the branch environment completes tasks, **When** telemetry is collected, **Then** model/provider/task/session token usage, estimated cost, latency, context admitted, raw bytes stored, sidecar runs, judge decisions, memory hits, and validation results are recorded.
+3. **Given** a blocked/degraded/fallback-exhausted task, **When** the harness evaluates notifications, **Then** urgent Slack delivery is recorded and missing alerts fail the benchmark.
+4. **Given** a self-learning candidate is produced, **When** the benchmark checks memory state, **Then** candidates, judge decisions, approved memory, wiki claims, dreaming proposals, and policies remain separated.
+5. **Given** branch quality or cost is worse than upstream beyond threshold, **When** the production gate runs, **Then** rollout is blocked with a concrete comparison report.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -282,6 +300,12 @@ As the Hermes operator, I want long-running work to run as a supervisor-owned ta
 - **FR-072**: Worker runtime wrappers MUST emit mandatory typed progress events independent of worker model cooperation, including start, heartbeat, stream reference, checkpoint, degraded/blocked, validation, and final-result events.
 - **FR-073**: System MUST provide a supervisor context gate that admits only bounded typed packets at decision boundaries, such as worker checkpoints, blocked/degraded packets, validation packets, allocation decisions, recovery packets, and final worker results.
 - **FR-074**: System MUST support a non-blocking cheap progress summarizer sidecar configured through the low-cost reasoning tier; it may summarize progress for UI/Slack/supervisor checkpoints but MUST NOT complete tasks, approve memory, or enforce policy.
+- **FR-075**: System MUST provide an isolated upstream-vs-branch benchmark harness with separate Hermes homes, shared workload definitions, shared repo snapshots, and comparable model/tool configurations.
+- **FR-076**: System MUST record realtime token, cost, latency, context, worker, sidecar, judge, memory, validation, notification, and operator-intervention telemetry per task/session/model/path.
+- **FR-077**: System MUST attribute telemetry to runtime paths including supervisor, planner, worker, judge, curator, dreaming, progress summarizer, QA/test worker, deployment worker, Slack/dashboard analysis, and memory retrieval.
+- **FR-078**: System MUST support benchmark workload packs for branch review, implementation, QA validation, deployment, long-running goals, fallback, stale worker, repeated failure, multi-repo decomposition, and hallucinated completion cases.
+- **FR-079**: System MUST produce an upstream-vs-branch comparison report with quality, latency, cost, context growth, repeated-error, false-completion, memory-usefulness, sidecar-overhead, and urgent-alert metrics.
+- **FR-080**: System MUST block production-readiness status unless benchmark gates pass under configured thresholds and memory/judge/operator boundaries remain intact.
 
 ### Key Entities
 
@@ -324,6 +348,9 @@ As the Hermes operator, I want long-running work to run as a supervisor-owned ta
 - **Task Node**: Bounded unit of work inside a task graph with dependencies, owned paths, worker assignment, memory packet, validation requirement, artifact refs, and state.
 - **Health Check Run**: Background sidecar execution record that scans task graphs, leases, allocations, workers, heartbeats, and degradation events and emits bounded recovery actions.
 - **Recovery Decision**: Startup or sidecar decision that marks a task/allocation safe to resume, paused, blocked, reassignable, or requiring operator action.
+- **Benchmark Workload**: Versioned task definition used by upstream and branch environments with prompt, repo refs, tool/model profile, expected artifacts, validation commands, and pass/fail rubric.
+- **Telemetry Span**: Runtime measurement record for one model call, worker attempt, sidecar run, judge run, memory retrieval, notification, or validation step.
+- **Production Gate Report**: Aggregated upstream-vs-branch result deciding whether the branch is eligible for broader rollout.
 
 ## Success Criteria
 
@@ -352,6 +379,9 @@ As the Hermes operator, I want long-running work to run as a supervisor-owned ta
 - **SC-021**: Task graph tests prove dependency ordering, concurrency caps, owned-path conflict rejection, validation-gated completion, and supervisor-only subtask acceptance.
 - **SC-022**: Health sidecar tests prove stale leases, missing heartbeats, no-progress loops, repeated timeout/empty-output failures, and quota/network degradation produce bounded recovery actions without blocking foreground runtime.
 - **SC-023**: Restart recovery tests prove active goals, task graphs, allocations, worker health, and approved memory are reloaded; unsafe workers are skipped; unknown in-flight attempts are not assumed successful; and expensive LLM sidecars are not called by default.
+- **SC-024**: Benchmark harness tests prove upstream and branch runs use isolated Hermes homes, shared workload definitions, separate artifacts, and comparable model/tool profiles.
+- **SC-025**: Telemetry tests prove token/cost/latency/context/path attribution is recorded for supervisor, workers, sidecars, judges, memory retrieval, QA, deployment, and Slack/dashboard analysis.
+- **SC-026**: Production gate tests prove rollout is blocked when branch quality is worse than upstream, sidecars block foreground work, urgent alerts are missing, or memory approval boundaries are violated.
 
 ## Assumptions
 
