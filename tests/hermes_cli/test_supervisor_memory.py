@@ -9,11 +9,13 @@ from unittest.mock import patch
 
 from hermes_cli.supervisor_memory import (
     approve_meta_candidate,
+    build_runtime_failure_advisory_packet,
     create_memory_packet,
     evaluate_memory_readiness,
     memory_tier_for_candidate,
     monitor_learning,
     reject_meta_candidate,
+    render_runtime_failure_advisory_packet,
     reconcile_learning_candidates,
     retrieve_learning_context,
     run_candidate_housekeeping,
@@ -504,6 +506,180 @@ def test_reconcile_learning_candidates_does_not_auto_promote_runtime_failure_adv
         assert result.applied == 0
         assert row["status"] == "proposed"
         assert result.metrics["promotion_skipped"]["not_auto_promotable"] == 1
+    finally:
+        db.close()
+
+
+def test_runtime_failure_advisory_packet_retrieves_approved_failure_classes(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        for status in ("timed_out", "quota_exhausted", "auth_failed", "network_degraded"):
+            db.upsert_meta_candidate(
+                candidate_id=f"metacand_{status}",
+                kind="worker_health_rule",
+                claim=f"Advisory for {status} worker route",
+                evidence_json={
+                    "policy_type": "supervisor_runtime_failure_advisory",
+                    "mode": "advisory",
+                    "source_record_id": f"memrec_{status}",
+                    "failure_classifications": [status.replace("_", " ")],
+                    "payload": {
+                        "tenant_id": "atlas",
+                        "repo_id": "hermes-agent",
+                        "task_id": "task-runtime",
+                        "worker_id": "codex",
+                        "route": "delegate_task:codex",
+                        "command_family": "delegate_task",
+                        "status": status,
+                        "error_excerpt": "bounded diagnostic",
+                    },
+                    "approved_for_enforcement": False,
+                },
+                score=0.8,
+                status="approved",
+                tenant_id="atlas",
+                repo_id="hermes-agent",
+            )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_validation",
+            kind="validation_rule",
+            claim="Advisory validation mismatch recovery",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "mode": "advisory",
+                "source_record_id": "memrec_validation",
+                "failure_classifications": ["validation mismatch"],
+                "payload": {
+                    "tenant_id": "atlas",
+                    "repo_id": "hermes-agent",
+                    "task_id": "task-runtime",
+                    "worker_id": "codex",
+                    "route": "delegate_task:codex",
+                    "command_family": "delegate_task",
+                    "status": "success",
+                    "validation_mismatch": {"expected": "files changed", "actual": "no diff"},
+                },
+                "approved_for_enforcement": False,
+            },
+            score=0.85,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+
+        packet = build_runtime_failure_advisory_packet(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            task_id="task-runtime",
+            worker_id="codex",
+            tool_family="delegate_task",
+            route="delegate_task:codex",
+            limit=10,
+        )
+
+        statuses = {item["status"] for item in packet["advisories"]}
+        classes = {klass for item in packet["advisories"] for klass in item["failure_class"]}
+        assert packet["mode"] == "advisory"
+        assert packet["enforcement_allowed"] is False
+        assert statuses >= {"timed_out", "quota_exhausted", "auth_failed", "network_degraded", "success"}
+        assert "validation mismatch" in classes
+        assert all(item["tenant_id"] == "atlas" for item in packet["advisories"])
+    finally:
+        db.close()
+
+
+def test_runtime_failure_advisory_packet_filters_scope_and_redacts_bounds(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="metacand_empty_output",
+            kind="recovery_hint",
+            claim="Repeated empty output from codex; ask for artifact refs and retry with validation. token=sk-secret123456789",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "mode": "advisory",
+                "source_record_id": "memrec_empty",
+                "failure_classifications": ["empty_output"],
+                "payload": {
+                    "tenant_id": "atlas",
+                    "repo_id": "hermes-agent",
+                    "task_id": "task-runtime",
+                    "worker_id": "codex",
+                    "route": "delegate_task:codex",
+                    "command_family": "delegate_task",
+                    "status": "empty_output",
+                    "output_excerpt": "api_key=sk-secret123456789\n" + ("empty output line " * 200),
+                },
+                "approved_for_enforcement": False,
+            },
+            score=0.91,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_other_repo",
+            kind="recovery_hint",
+            claim="Other repo should not match",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "payload": {
+                    "tenant_id": "atlas",
+                    "repo_id": "other-repo",
+                    "worker_id": "codex",
+                    "command_family": "delegate_task",
+                    "status": "empty_output",
+                },
+                "failure_classifications": ["empty_output"],
+            },
+            score=0.99,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="other-repo",
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_other_tool",
+            kind="recovery_hint",
+            claim="Other tool should not match",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "payload": {
+                    "tenant_id": "atlas",
+                    "repo_id": "hermes-agent",
+                    "worker_id": "codex",
+                    "command_family": "terminal",
+                    "status": "empty_output",
+                },
+                "failure_classifications": ["empty_output"],
+            },
+            score=0.99,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+
+        packet = build_runtime_failure_advisory_packet(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            worker_id="codex",
+            tool_family="delegate_task",
+            token_budget=70,
+        )
+        rendered = render_runtime_failure_advisory_packet(packet)
+
+        assert packet["count"] == 1
+        assert packet["advisories"][0]["candidate_id"] == "metacand_empty_output"
+        assert "Repeated empty output" in rendered
+        assert "sk-secret" not in json.dumps(packet)
+        assert "sk-secret" not in rendered
+        assert packet["estimated_tokens"] <= 70
+        assert len(rendered) < 400
     finally:
         db.close()
 

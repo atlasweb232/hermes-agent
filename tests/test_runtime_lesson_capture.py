@@ -440,3 +440,58 @@ def test_agent_delegate_task_result_captures_child_timeout_before_gate(tmp_path)
     assert payload["evidence_refs"] == ["hermes:delegate:task-delegate-runtime:subagent-0"]
     assert payload["validation_mismatch"]["exit_reason"] == "timeout"
     assert "sk-abc" not in json.dumps(payload)
+
+
+def test_agent_delegate_task_injects_bounded_empty_output_advisory(tmp_path, monkeypatch):
+    from run_agent import AIAgent
+
+    db = SessionDB(tmp_path / "state.db")
+    db.upsert_meta_candidate(
+        candidate_id="metacand_empty_output",
+        kind="recovery_hint",
+        claim="Repeated empty output from codex; request artifact refs before accepting completion.",
+        evidence_json={
+            "policy_type": "supervisor_runtime_failure_advisory",
+            "mode": "advisory",
+            "failure_classifications": ["empty_output"],
+            "payload": {
+                "tenant_id": "atlas",
+                "repo_id": "hermes-agent",
+                "task_id": "task-delegate-runtime",
+                "worker_id": "subagent-0",
+                "route": "delegate_task:codex",
+                "command_family": "delegate_task",
+                "status": "empty_output",
+                "output_excerpt": "api_key=sk-secret123456789\n" + ("no summary " * 200),
+            },
+            "approved_for_enforcement": False,
+        },
+        score=0.91,
+        status="approved",
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+    )
+    agent = object.__new__(AIAgent)
+    agent._session_db = db
+    agent.session_id = "session-delegate-runtime"
+    agent._current_task_id = "task-delegate-runtime"
+    agent.tenant_id = "atlas"
+    agent.repo_id = "hermes-agent"
+
+    captured = {}
+
+    def fake_delegate_task(**kwargs):
+        captured.update(kwargs)
+        return json.dumps({"results": [{"task_index": 0, "status": "success", "summary": "done"}]})
+
+    monkeypatch.setattr("tools.delegate_tool.delegate_task", fake_delegate_task)
+    monkeypatch.setattr("hermes_cli.completion_gate.run_completion_gate", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("skip")))
+
+    agent._dispatch_delegate_task({"goal": "Fix the failing test", "role": "codex", "context": "Existing context."})
+
+    injected = captured["context"]
+    assert "Runtime failure advisories" in injected
+    assert "Repeated empty output" in injected
+    assert "advisory only" in injected
+    assert "sk-secret" not in injected
+    assert len(injected) < 700

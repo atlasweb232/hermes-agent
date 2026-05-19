@@ -400,6 +400,10 @@
 - [x] T147 [US9] Add allocator CLI/API observability: `hermes runtime allocations list/get --json` and `hermes runtime workers health --json`
 - [x] T148 [US9] Extend generic runtime failure capture to delegated agents/workers so worker hallucinations, false completions, empty outputs, timeouts, and route substitutions are captured before curator/judge sidecars run
 - [x] T149 [US9] Add specialized curator/judge handling for allocator and `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
+- [x] T149A [US9] Add scoped runtime advisory packet retrieval for approved/applied `supervisor_runtime_failure_advisory` candidates, including tenant/repo/task/worker/tool/route filtering, secret redaction, confidence, recency, and token bounds
+- [x] T149B [US9] Inject runtime failure advisory packets before `delegate_task` dispatch as warning/recovery context without command rewriting, auto-approval, or blocking
+- [x] T149C [US9] Expose allocator runtime advisory packets while preserving retry, cooldown, and latency-budget decisions
+- [x] T149D [US9] Document the capture -> curator -> judge/operator -> advisory retrieval -> dispatch flow and why `supervisor_runtime_failure` remains curator-only during generic rollup
 
 **Checkpoint**: `/goal` can continue serious work without trapping Hermes in one failed worker route; allocation attempts are bounded, observable, resumable, and separated from memory/policy enforcement.
 

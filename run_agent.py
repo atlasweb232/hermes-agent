@@ -3786,9 +3786,15 @@ class AIAgent:
         invocation paths (concurrent, sequential, inline).
         """
         from tools.delegate_tool import delegate_task as _delegate_task
+        advisory_context = self._build_delegate_runtime_advisory_context(function_args)
+        delegate_context = function_args.get("context")
+        if advisory_context:
+            delegate_context = "\n\n".join(
+                part for part in (str(delegate_context or "").strip(), advisory_context) if part
+            )
         delegate_result = _delegate_task(
             goal=function_args.get("goal"),
-            context=function_args.get("context"),
+            context=delegate_context,
             toolsets=function_args.get("toolsets"),
             tasks=function_args.get("tasks"),
             max_iterations=function_args.get("max_iterations"),
@@ -3829,6 +3835,33 @@ class AIAgent:
         except Exception:
             logger.debug("completion gate after delegate_task failed", exc_info=True)
             return delegate_result
+
+    def _build_delegate_runtime_advisory_context(self, function_args: dict) -> str:
+        """Build advisory-only runtime failure context for delegate_task."""
+        try:
+            from hermes_cli.supervisor_memory import (
+                build_runtime_failure_advisory_packet,
+                render_runtime_failure_advisory_packet,
+            )
+            from hermes_state import SessionDB
+
+            db = getattr(self, "_session_db", None) or SessionDB()
+            task_id = str(getattr(self, "_current_task_id", None) or getattr(self, "session_id", None) or "delegate_task")
+            role = str(function_args.get("role") or function_args.get("acp_command") or "subagent")
+            packet = build_runtime_failure_advisory_packet(
+                db,
+                tenant_id=getattr(self, "tenant_id", None),
+                repo_id=getattr(self, "repo_id", None),
+                task_id=task_id,
+                tool_family="delegate_task",
+                route=f"delegate_task:{role}",
+                limit=3,
+                token_budget=140,
+            )
+            return render_runtime_failure_advisory_packet(packet)
+        except Exception:
+            logger.debug("delegate runtime advisory retrieval failed", exc_info=True)
+            return ""
 
     def _capture_delegate_runtime_failures(self, function_args: dict, delegate_result: str, gate: Any = None) -> None:
         """Persist bounded failure records for delegate_task child outcomes."""

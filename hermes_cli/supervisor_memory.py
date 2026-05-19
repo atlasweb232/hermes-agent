@@ -1040,6 +1040,308 @@ def _query_tokens(query: str) -> List[str]:
     ]
 
 
+def _runtime_advisory_redact(value: Any, *, max_chars: int = 180) -> str:
+    try:
+        from hermes_cli.runtime_lesson_capture import redact_sensitive_text
+
+        text = redact_sensitive_text(str(value or ""))
+    except Exception:
+        text = str(value or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_chars:
+        return text[: max(0, max_chars - 3)].rstrip() + "..."
+    return text
+
+
+def _runtime_advisory_tokens(packet: Dict[str, Any]) -> int:
+    advisories = packet.get("advisories") if isinstance(packet.get("advisories"), list) else []
+    text = " ".join(
+        " ".join(
+            str(item.get(key) or "")
+            for key in ("status", "worker_id", "tool_family", "route", "failure_class", "claim", "evidence")
+        )
+        for item in advisories
+        if isinstance(item, dict)
+    )
+    return max(1, (len(text) // 4) + 12)
+
+
+def _runtime_payload_matches(
+    payload: Dict[str, Any],
+    *,
+    tenant_id: Optional[str],
+    repo_id: Optional[str],
+    task_id: Optional[str],
+    worker_id: Optional[str],
+    tool_family: Optional[str],
+    route: Optional[str],
+) -> bool:
+    checks = (
+        ("tenant_id", tenant_id),
+        ("repo_id", repo_id),
+        ("task_id", task_id),
+        ("worker_id", worker_id),
+    )
+    for key, expected in checks:
+        if expected is not None and str(payload.get(key) or "") != str(expected):
+            return False
+    if tool_family is not None:
+        family = str(payload.get("command_family") or payload.get("tool_family") or "").casefold()
+        if family != str(tool_family).casefold():
+            return False
+    if route is not None:
+        payload_route = str(payload.get("route") or "").casefold()
+        expected_route = str(route).casefold()
+        if payload_route and payload_route != expected_route:
+            return False
+    return True
+
+
+def _runtime_advisory_from_candidate(candidate: Dict[str, Any], now: float) -> Optional[Dict[str, Any]]:
+    evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
+    if evidence.get("policy_type") != "supervisor_runtime_failure_advisory":
+        return None
+    payload = evidence.get("payload") if isinstance(evidence.get("payload"), dict) else {}
+    if not payload:
+        payload = {}
+    classifications = evidence.get("failure_classifications")
+    if not isinstance(classifications, list):
+        classifications = []
+    created_at = float(candidate.get("created_at") or now)
+    confidence = candidate.get("score")
+    try:
+        confidence_value = max(0.0, min(1.0, float(confidence)))
+    except Exception:
+        confidence_value = 0.0
+    mismatch = payload.get("validation_mismatch") if isinstance(payload.get("validation_mismatch"), dict) else {}
+    evidence_bits = [
+        payload.get("error_excerpt"),
+        payload.get("output_excerpt"),
+        mismatch.get("error_signature"),
+        mismatch.get("validation_status"),
+    ]
+    return {
+        "candidate_id": candidate.get("id"),
+        "source_record_id": evidence.get("source_record_id"),
+        "kind": candidate.get("kind"),
+        "tenant_id": candidate.get("tenant_id") or payload.get("tenant_id"),
+        "repo_id": candidate.get("repo_id") or payload.get("repo_id"),
+        "task_id": payload.get("task_id"),
+        "worker_id": payload.get("worker_id"),
+        "tool_family": payload.get("command_family") or payload.get("tool_family"),
+        "route": payload.get("route"),
+        "status": payload.get("status"),
+        "failure_class": [_runtime_advisory_redact(item, max_chars=48) for item in classifications],
+        "confidence": confidence_value,
+        "recency_seconds": max(0.0, now - created_at),
+        "claim": _runtime_advisory_redact(candidate.get("claim"), max_chars=150),
+        "evidence": _runtime_advisory_redact(" ".join(str(bit or "") for bit in evidence_bits if bit), max_chars=140),
+        "enforcement_allowed": bool(
+            evidence.get("approved_for_enforcement")
+            and evidence.get("judge_approved_for_enforcement")
+            and evidence.get("operator_approved_for_enforcement")
+        ),
+    }
+
+
+def _runtime_advisory_from_record(record: Dict[str, Any], now: float) -> Optional[Dict[str, Any]]:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    if not payload:
+        return None
+    created_at = float(record.get("created_at") or now)
+    confidence = record.get("score")
+    try:
+        confidence_value = max(0.0, min(1.0, float(confidence)))
+    except Exception:
+        confidence_value = 0.0
+    status = str(payload.get("status") or "").strip()
+    failure_class = status.replace("_", " ") if status else str(payload.get("failure_type") or "runtime failure")
+    mismatch = payload.get("validation_mismatch") if isinstance(payload.get("validation_mismatch"), dict) else {}
+    return {
+        "record_id": record.get("id"),
+        "kind": "supervisor_runtime_failure",
+        "tenant_id": record.get("tenant_id") or payload.get("tenant_id"),
+        "repo_id": record.get("repo_id") or payload.get("repo_id"),
+        "task_id": record.get("task_id") or payload.get("task_id"),
+        "worker_id": payload.get("worker_id"),
+        "tool_family": payload.get("command_family") or payload.get("tool_family"),
+        "route": payload.get("route"),
+        "status": status,
+        "failure_class": [_runtime_advisory_redact(failure_class, max_chars=48)],
+        "confidence": confidence_value,
+        "recency_seconds": max(0.0, now - created_at),
+        "claim": _runtime_advisory_redact(record.get("body") or record.get("title"), max_chars=150),
+        "evidence": _runtime_advisory_redact(
+            " ".join(
+                str(bit or "")
+                for bit in (
+                    payload.get("error_excerpt"),
+                    payload.get("output_excerpt"),
+                    mismatch.get("error_signature"),
+                    mismatch.get("validation_status"),
+                )
+                if bit
+            ),
+            max_chars=140,
+        ),
+        "enforcement_allowed": False,
+    }
+
+
+def build_runtime_failure_advisory_packet(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    tool_family: Optional[str] = None,
+    route: Optional[str] = None,
+    limit: int = 4,
+    token_budget: int = 400,
+    include_active_records: bool = False,
+) -> Dict[str, Any]:
+    """Return compact advisory-only runtime failure guidance for dispatch."""
+    now = _now()
+    candidates: List[Dict[str, Any]] = []
+    for status in ("approved", "applied"):
+        candidates.extend(
+            db.list_meta_candidates(
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+                status=status,
+                limit=max(limit * 4, 20),
+            )
+        )
+
+    advisories: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        item = _runtime_advisory_from_candidate(candidate, now)
+        if item is None:
+            continue
+        payload = {
+            "tenant_id": item.get("tenant_id"),
+            "repo_id": item.get("repo_id"),
+            "task_id": item.get("task_id"),
+            "worker_id": item.get("worker_id"),
+            "command_family": item.get("tool_family"),
+            "route": item.get("route"),
+        }
+        if not _runtime_payload_matches(
+            payload,
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            task_id=task_id,
+            worker_id=worker_id,
+            tool_family=tool_family,
+            route=route,
+        ):
+            continue
+        identifier = str(item.get("candidate_id") or item.get("source_record_id") or "")
+        if identifier and identifier in seen:
+            continue
+        seen.add(identifier)
+        advisories.append(item)
+
+    if include_active_records:
+        for record in db.list_memory_records(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            kind="supervisor_runtime_failure",
+            status="active",
+            limit=max(limit * 2, 10),
+        ):
+            item = _runtime_advisory_from_record(record, now)
+            if item is None:
+                continue
+            payload = {
+                "tenant_id": item.get("tenant_id"),
+                "repo_id": item.get("repo_id"),
+                "task_id": item.get("task_id"),
+                "worker_id": item.get("worker_id"),
+                "command_family": item.get("tool_family"),
+                "route": item.get("route"),
+            }
+            if not _runtime_payload_matches(
+                payload,
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+                task_id=task_id,
+                worker_id=worker_id,
+                tool_family=tool_family,
+                route=route,
+            ):
+                continue
+            identifier = str(item.get("record_id") or "")
+            if identifier and identifier in seen:
+                continue
+            seen.add(identifier)
+            advisories.append(item)
+
+    advisories.sort(key=lambda item: (float(item.get("confidence") or 0.0), -float(item.get("recency_seconds") or 0.0)), reverse=True)
+    advisories = advisories[: max(0, limit)]
+    packet: Dict[str, Any] = {
+        "packet_type": "supervisor_runtime_failure_advisory",
+        "mode": "advisory",
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "task_id": task_id,
+        "worker_id": worker_id,
+        "tool_family": tool_family,
+        "route": route,
+        "count": len(advisories),
+        "advisories": advisories,
+        "enforcement_allowed": bool(advisories) and all(item.get("enforcement_allowed") for item in advisories),
+        "created_at": now,
+    }
+    while packet["advisories"] and _runtime_advisory_tokens(packet) > token_budget:
+        if len(packet["advisories"]) == 1:
+            item = packet["advisories"][0]
+            item["evidence"] = _runtime_advisory_redact(item.get("evidence"), max_chars=60)
+            item["claim"] = _runtime_advisory_redact(item.get("claim"), max_chars=90)
+            if _runtime_advisory_tokens(packet) <= token_budget:
+                break
+            item["evidence"] = ""
+            item["claim"] = _runtime_advisory_redact(item.get("claim"), max_chars=70)
+            if _runtime_advisory_tokens(packet) <= token_budget:
+                break
+        packet["advisories"].pop()
+        packet["count"] = len(packet["advisories"])
+        packet["enforcement_allowed"] = bool(packet["advisories"]) and all(
+            item.get("enforcement_allowed") for item in packet["advisories"]
+        )
+    packet["estimated_tokens"] = _runtime_advisory_tokens(packet)
+    return packet
+
+
+def render_runtime_failure_advisory_packet(packet: Dict[str, Any]) -> str:
+    advisories = packet.get("advisories") if isinstance(packet.get("advisories"), list) else []
+    if not advisories:
+        return ""
+    lines = [
+        "Runtime failure advisories (advisory only; do not rewrite commands, approve work, or block dispatch from this packet alone):"
+    ]
+    for item in advisories:
+        classes = ", ".join(str(value) for value in item.get("failure_class") or [] if value)
+        parts = [
+            f"{item.get('status') or 'runtime_failure'}",
+            f"worker={item.get('worker_id')}" if item.get("worker_id") else "",
+            f"route={item.get('route')}" if item.get("route") else "",
+            f"class={classes}" if classes else "",
+            f"confidence={float(item.get('confidence') or 0.0):.2f}",
+        ]
+        claim = _runtime_advisory_redact(item.get("claim"), max_chars=130)
+        evidence = _runtime_advisory_redact(item.get("evidence"), max_chars=100)
+        line = "- " + "; ".join(part for part in parts if part)
+        if claim:
+            line += f"; hint={claim}"
+        if evidence:
+            line += f"; evidence={evidence}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _candidate_matches_query(candidate: Dict[str, Any], query: str) -> bool:
     tokens = _query_tokens(query)
     if not tokens:

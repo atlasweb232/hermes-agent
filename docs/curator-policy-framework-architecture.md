@@ -161,6 +161,44 @@ long or repeated command-family failure, route substitution, missing matching
 evidence, and potential false completion. Sidecars may interpret the event, but
 the runtime controller owns first capture.
 
+## Runtime Failure Advisory Injection
+
+`supervisor_runtime_failure` records now have a live advisory path after capture:
+
+```text
+worker/allocator failure
+  -> hermes_memory_records(kind=supervisor_runtime_failure)
+  -> specialized curator produces advisory candidate
+  -> judge/operator may approve the candidate while keeping advisory mode
+  -> runtime advisory retrieval scopes by tenant, repo, task, worker, route, tool family
+  -> delegate_task context or goal allocator status receives a compact packet
+  -> worker dispatch continues under normal retry, cooldown, and latency budgets
+```
+
+The injected packet is deliberately small. Each item carries only dispatch-safe
+metadata: `tenant_id`, `repo_id`, `task_id`, `worker_id`, tool or command family,
+failure class, route, status, confidence, recency, and a redacted bounded hint.
+Raw logs, secrets, and long stdout/stderr are never injected. Matching is scoped
+so a failure from a different tenant, repo, task, worker, route, or tool family is
+ignored.
+
+Injection happens immediately before worker delegation and when allocator status
+is assembled for a dispatch decision. The packet is advisory-only by default:
+Hermes does not rewrite commands, auto-approve work, skip validation, block a
+worker, or force a route from these advisories. Enforcement is allowed only when
+the candidate evidence explicitly records judge approval and operator approval
+for enforcement; even then, dispatch code must opt into an enforcement policy.
+The current runtime path consumes the packet as warning and recovery context
+only.
+
+Advisories are ignored when there are no approved/applied
+`supervisor_runtime_failure_advisory` candidates in the matching scope, when the
+packet would exceed its token budget after trimming, or when the candidate is
+still merely `proposed`, `rejected`, `archived`, or `rolled_back`. Active raw
+`supervisor_runtime_failure` records remain curator evidence and are not promoted
+into generic runtime guidance unless a specialized retrieval caller explicitly
+asks to include active records.
+
 ## Generic Rollup Quality Gates
 
 Generic rollup is intentionally conservative. It should not turn every recent
@@ -171,7 +209,9 @@ deterministic gates:
 
 - curator-only record kinds, such as `tool_routing_lesson` and
   `supervisor_runtime_failure`, are skipped and left for specialized curator and
-  judge passes
+  judge passes; generic rollup does not have enough runtime context to decide
+  whether an empty output, timeout, quota, auth, network, or validation-mismatch
+  event is a reusable lesson or a one-off degraded attempt
 - memory records with terminal statuses such as `archived`, `rejected`, or
   `rolled_back` are skipped
 - existing candidates with terminal statuses such as `approved`, `applied`,

@@ -8,6 +8,7 @@ from hermes_cli.goal_allocator import (
     WorkerAttemptResult,
     WorkerHealth,
     choose_next_worker,
+    load_allocation_runtime_advisory_packet,
     load_allocation_plan,
     load_worker_health,
     list_allocation_plans,
@@ -295,6 +296,59 @@ def test_choose_next_worker_pauses_on_attempt_and_latency_budget():
 
     assert budget_decision.action == "pause"
     assert budget_decision.reason == "latency budget exhausted"
+
+
+def test_allocator_loads_runtime_advisory_packet_without_changing_budgets(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan(
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            task_id="task-runtime",
+            candidate_workers=["codex", "claude-code"],
+            primary_worker="codex",
+            fallback_order=["claude-code"],
+            retry_same_worker=0,
+            max_attempts=2,
+            latency_budget_seconds=35,
+            per_worker_timeout_seconds=20,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_timeout",
+            kind="worker_health_rule",
+            claim="Advisory timeout recovery for codex",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "mode": "advisory",
+                "failure_classifications": ["timeout"],
+                "payload": {
+                    "tenant_id": "atlas",
+                    "repo_id": "hermes-agent",
+                    "task_id": "task-runtime",
+                    "worker_id": "codex",
+                    "route": "delegate_task:codex",
+                    "command_family": "delegate_task",
+                    "status": "timed_out",
+                },
+                "approved_for_enforcement": False,
+            },
+            score=0.9,
+            status="approved",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+        attempts = [_attempt(plan, worker_id="codex", status="timed_out", duration_seconds=16)]
+        packet = load_allocation_runtime_advisory_packet(db, plan, worker_id="codex")
+
+        decision = choose_next_worker(plan, attempts, advisory_packet=packet, now=100)
+
+        assert packet["count"] == 1
+        assert decision.action == "pause"
+        assert decision.reason == "latency budget exhausted"
+        assert decision.attempts_used == 1
+        assert decision.remaining_latency_budget_seconds == 19
+    finally:
+        db.close()
 
 
 def test_update_worker_health_from_attempt_sets_counters_and_cooldowns():

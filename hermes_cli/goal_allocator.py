@@ -454,7 +454,10 @@ def allocation_status_payload(
         for health in list_worker_health_records(db)
         if health.worker_id in set(plan.candidate_workers)
     }
-    decision = choose_next_worker(plan, attempts, health_by_worker, now=now)
+    advisory_packet = load_allocation_runtime_advisory_packet(db, plan)
+    decision = choose_next_worker(plan, attempts, health_by_worker, advisory_packet=advisory_packet, now=now)
+    if decision.worker_id:
+        advisory_packet = load_allocation_runtime_advisory_packet(db, plan, worker_id=decision.worker_id)
     return {
         "plan": plan.to_dict(),
         "attempts": [attempt.to_dict() for attempt in attempts],
@@ -462,8 +465,41 @@ def allocation_status_payload(
             worker_id: health.to_dict()
             for worker_id, health in health_by_worker.items()
         },
+        "runtime_failure_advisory": advisory_packet,
         "decision": decision.to_dict(),
     }
+
+
+def load_allocation_runtime_advisory_packet(
+    db: Any,
+    plan: WorkerAllocationPlan,
+    *,
+    worker_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    try:
+        from hermes_cli.supervisor_memory import build_runtime_failure_advisory_packet
+
+        route = f"delegate_task:{worker_id}" if worker_id else None
+        return build_runtime_failure_advisory_packet(
+            db,
+            tenant_id=plan.tenant_id,
+            repo_id=plan.repo_id,
+            task_id=plan.task_id,
+            worker_id=worker_id,
+            tool_family="delegate_task",
+            route=route,
+            limit=3,
+            token_budget=140,
+        )
+    except Exception:
+        return {
+            "packet_type": "supervisor_runtime_failure_advisory",
+            "mode": "advisory",
+            "count": 0,
+            "advisories": [],
+            "enforcement_allowed": False,
+            "estimated_tokens": 0,
+        }
 
 
 def update_worker_health_from_attempt(
@@ -505,6 +541,7 @@ def choose_next_worker(
     attempts: List[WorkerAttemptResult],
     health_by_worker: Optional[Dict[str, WorkerHealth]] = None,
     *,
+    advisory_packet: Optional[Dict[str, Any]] = None,
     now: Optional[float] = None,
 ) -> AllocationDecision:
     timestamp = _now() if now is None else now
