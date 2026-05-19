@@ -939,11 +939,17 @@ def reconcile_learning_candidates(
 
 def _candidate_is_auto_promotable(candidate: Dict[str, Any]) -> bool:
     """Return whether policy reconciliation may auto-approve a candidate."""
-    if candidate.get("kind") != "command_repair_policy":
-        return True
     evidence = candidate.get("evidence_json")
     if not isinstance(evidence, dict):
+        evidence = {}
+    if evidence.get("policy_type") == "supervisor_runtime_failure_advisory":
         return False
+    if candidate.get("kind") in {"recovery_hint", "routing_hint", "validation_rule", "worker_health_rule"} and (
+        evidence.get("requires_judge") or evidence.get("operator_approval_required")
+    ):
+        return False
+    if candidate.get("kind") != "command_repair_policy":
+        return True
     validation = evidence.get("validation")
     if not isinstance(validation, dict):
         return False

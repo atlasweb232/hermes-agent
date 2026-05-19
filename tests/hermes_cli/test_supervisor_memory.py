@@ -442,6 +442,72 @@ def test_reconcile_learning_candidates_promotes_threshold_hits(tmp_path, monkeyp
         db.close()
 
 
+def test_reconcile_learning_candidates_does_not_auto_promote_runtime_failure_advisory(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = _make_db(home)
+    try:
+        db.upsert_memory_packet(
+            packet_id="mempkt_ready",
+            query="worker runtime failure",
+            status="ready",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            scopes=["hermes-agent"],
+            claims_json=[{"record_id": "rec-1", "title": "claim", "score": 0.9}],
+            evidence_json=[{"uri": "artifact://evidence.txt"}],
+            contradictions_json=[],
+            freshness_json={"policy": "fresh"},
+            confidence=0.9,
+            source="test",
+            expires_at=None,
+        )
+        db.upsert_meta_candidate(
+            candidate_id="metacand_runtime_failure_advisory",
+            kind="worker_health_rule",
+            claim="Advisory allocator recovery hint for quota exhaustion",
+            evidence_json={
+                "policy_type": "supervisor_runtime_failure_advisory",
+                "mode": "advisory",
+                "source_record_id": "memrec_allocator_failure",
+                "failure_classifications": ["quota exhaustion"],
+                "requires_judge": True,
+                "operator_approval_required": True,
+                "approved_for_enforcement": False,
+            },
+            score=0.95,
+            status="proposed",
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+        )
+
+        result = reconcile_learning_candidates(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            config={
+                "supervisor": {
+                    "learning": {
+                        "promotion": {
+                            "enabled": True,
+                            "min_score": 0.7,
+                            "min_ready_ratio": 0.0,
+                            "auto_apply": True,
+                        }
+                    }
+                }
+            },
+        )
+
+        row = db.get_meta_candidate("metacand_runtime_failure_advisory")
+        assert result.promoted == 0
+        assert result.applied == 0
+        assert row["status"] == "proposed"
+        assert result.metrics["promotion_skipped"]["not_auto_promotable"] == 1
+    finally:
+        db.close()
+
+
 def test_reconcile_does_not_promote_unvalidated_command_repair_policy(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

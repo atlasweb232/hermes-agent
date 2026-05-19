@@ -30,6 +30,43 @@ def _seed_lesson(db):
     )
 
 
+def _seed_supervisor_failure(db, *, record_id="memrec_supervisor_failure", **payload_overrides):
+    payload = {
+        "detector": "runtime_lesson_capture.delegated_worker_runtime_failure",
+        "failure_type": "delegated_worker_runtime_failure",
+        "task_id": "task_149",
+        "worker_id": "claude-code",
+        "route": "worker-router claude-code",
+        "command_family": "worker-router",
+        "status": "empty_output",
+        "evidence_refs": ["hermes:allocation:alloc_149:attempt_1"],
+        "validation_mismatch": {
+            "validation_status": "failed",
+            "error_signature": "claimed_done_no_files",
+        },
+        "output_excerpt": "token=[REDACTED]\n" + ("bounded excerpt " * 30),
+        "error_excerpt": "no files changed",
+        "allocation_id": "alloc_149",
+        "attempt_id": "attempt_1",
+        "requires_judge": True,
+        "operator_approval_required": True,
+    }
+    payload.update(payload_overrides)
+    return db.upsert_memory_record(
+        record_id=record_id,
+        kind="supervisor_runtime_failure",
+        title="Delegated worker runtime failure: claude-code",
+        body="A delegated worker failed and should produce advisory-only recovery guidance.",
+        payload_json=payload,
+        status="active",
+        score=0.91,
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+        task_id="task_149",
+        evidence_uri="hermes:allocation:alloc_149:attempt_1",
+    )
+
+
 def test_load_curator_config_defaults_to_ollama():
     cfg = load_curator_config({})
 
@@ -95,6 +132,71 @@ def test_policy_pass_writes_advisory_candidate(tmp_path):
     assert rows[0]["status"] == "proposed"
     assert rows[0]["evidence_json"]["mode"] == "advisory"
     assert rows[0]["evidence_json"]["validation"]["status"] == "valid"
+
+
+def test_policy_pass_writes_advisory_supervisor_failure_candidate(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_supervisor_failure(db)
+
+    result = run_curator_policy_pass(
+        db,
+        config={"supervisor": {"curator": {"provider": "ollama", "max_records": 5}}},
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+        model_call=lambda cfg, prompt: "Worker returned empty output; retry with validation before accepting completion.",
+    )
+
+    assert result.status == "completed"
+    assert result.candidates_created == 1
+    assert result.candidates[0].kind == "recovery_hint"
+    rows = db.list_meta_candidates(status="proposed", tenant_id="atlas", repo_id="hermes-agent", limit=5)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["kind"] == "recovery_hint"
+    evidence = row["evidence_json"]
+    assert evidence["policy_type"] == "supervisor_runtime_failure_advisory"
+    assert evidence["mode"] == "advisory"
+    assert evidence["source_record_id"] == "memrec_supervisor_failure"
+    assert evidence["failure_classifications"] == ["empty_output", "validation mismatch"]
+    assert evidence["requires_judge"] is True
+    assert evidence["operator_approval_required"] is True
+    assert evidence["approved_for_enforcement"] is False
+    assert "failed_commands" not in evidence
+    serialized = str(evidence)
+    assert "sk-" not in serialized
+    assert "token=" not in serialized
+    assert len(evidence["payload"]["output_excerpt"]) <= 360
+
+
+def test_policy_pass_classifies_allocator_runtime_failure_as_worker_health_rule(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_supervisor_failure(
+        db,
+        record_id="memrec_allocator_failure",
+        detector="goal_allocator.record_worker_attempt",
+        failure_type="allocator_runtime_failure",
+        worker_id="deepseek",
+        route="worker-router deepseek",
+        status="quota_exhausted",
+        validation_mismatch={},
+        error_excerpt="quota exhausted for model",
+    )
+
+    run_curator_policy_pass(
+        db,
+        config={"supervisor": {"curator": {"provider": "ollama", "max_records": 5}}},
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+        model_call=lambda cfg, prompt: "Pause this worker route after quota exhaustion and select a fallback.",
+    )
+
+    row = db.list_meta_candidates(status="proposed", tenant_id="atlas", repo_id="hermes-agent", limit=5)[0]
+    assert row["kind"] == "worker_health_rule"
+    evidence = row["evidence_json"]
+    assert evidence["failure_classifications"] == ["quota exhaustion"]
+    assert evidence["payload"]["status"] == "quota_exhausted"
+    assert evidence["mode"] == "advisory"
+    assert evidence["approved_for_enforcement"] is False
 
 
 def test_policy_pass_rerun_upserts_same_candidate_for_source_record(tmp_path):

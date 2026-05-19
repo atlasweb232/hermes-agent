@@ -133,6 +133,31 @@ def build_command_repair_prompt(record: dict[str, Any]) -> str:
     )
 
 
+def build_supervisor_failure_prompt(record: dict[str, Any]) -> str:
+    payload = _bounded_supervisor_failure_payload(record)
+    evidence = {
+        "record_id": record.get("id"),
+        "title": record.get("title"),
+        "body": _redact_and_bound_text(str(record.get("body") or ""), max_chars=400),
+        "kind": record.get("kind"),
+        "score": record.get("score"),
+        "payload": payload,
+    }
+    return (
+        "You are the Hermes offline curator. Produce advisory-only recovery "
+        "guidance from the structured supervisor runtime failure below.\n\n"
+        "Rules:\n"
+        "- Do not rewrite commands.\n"
+        "- Do not enable enforcement or claim enforcement is active.\n"
+        "- Do not approve memory automatically.\n"
+        "- Preserve judge and operator approval gates.\n"
+        "- Use only bounded, redacted evidence; never include raw logs or secrets.\n"
+        "- Keep output concise and auditable.\n\n"
+        f"Policy version: {CURATOR_POLICY_VERSION}\n"
+        f"Evidence JSON:\n{json.dumps(evidence, indent=2, ensure_ascii=False)}\n"
+    )
+
+
 def call_curator_model(curator_config: CuratorConfig, prompt: str) -> str:
     provider = curator_config.provider.lower()
     if provider == "ollama":
@@ -313,6 +338,146 @@ def build_command_repair_policy_data(record: dict[str, Any], output: str) -> dic
     }
 
 
+def _redact_and_bound_text(value: Any, *, max_chars: int) -> str:
+    text = str(value or "")
+    text = re.sub(
+        r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*\S+",
+        "[REDACTED_SECRET]",
+        text,
+    )
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [REDACTED]", text)
+    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[REDACTED]", text)
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _bounded_supervisor_failure_payload(record: dict[str, Any]) -> dict[str, Any]:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    validation_mismatch = payload.get("validation_mismatch")
+    if not isinstance(validation_mismatch, dict):
+        validation_mismatch = {}
+    bounded_mismatch = {
+        _redact_and_bound_text(key, max_chars=80): _redact_and_bound_text(value, max_chars=220)
+        for key, value in list(validation_mismatch.items())[:12]
+    }
+    evidence_refs = payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else []
+    return {
+        "detector": _redact_and_bound_text(payload.get("detector"), max_chars=120),
+        "failure_type": _redact_and_bound_text(payload.get("failure_type"), max_chars=80),
+        "task_id": _redact_and_bound_text(payload.get("task_id") or record.get("task_id"), max_chars=120),
+        "worker_id": _redact_and_bound_text(payload.get("worker_id"), max_chars=120),
+        "route": _redact_and_bound_text(payload.get("route"), max_chars=220),
+        "command_family": _redact_and_bound_text(payload.get("command_family"), max_chars=120),
+        "status": _redact_and_bound_text(payload.get("status"), max_chars=80),
+        "allocation_id": _redact_and_bound_text(payload.get("allocation_id"), max_chars=120),
+        "attempt_id": _redact_and_bound_text(payload.get("attempt_id"), max_chars=120),
+        "evidence_refs": [
+            _redact_and_bound_text(ref, max_chars=220)
+            for ref in evidence_refs[:10]
+            if str(ref or "").strip()
+        ],
+        "validation_mismatch": bounded_mismatch,
+        "output_excerpt": _redact_and_bound_text(payload.get("output_excerpt"), max_chars=360),
+        "error_excerpt": _redact_and_bound_text(payload.get("error_excerpt"), max_chars=360),
+        "route_substitution": bool(payload.get("route_substitution")),
+        "requires_judge": bool(payload.get("requires_judge", True)),
+        "operator_approval_required": bool(payload.get("operator_approval_required", True)),
+    }
+
+
+def classify_supervisor_failure_types(record: dict[str, Any]) -> list[str]:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    status = str(payload.get("status") or "").strip().lower()
+    failure_type = str(payload.get("failure_type") or "").strip().lower()
+    validation_mismatch = payload.get("validation_mismatch")
+    mismatch = validation_mismatch if isinstance(validation_mismatch, dict) else {}
+    text = " ".join(
+        str(part or "").lower()
+        for part in [
+            status,
+            failure_type,
+            payload.get("route"),
+            payload.get("error_excerpt"),
+            payload.get("output_excerpt"),
+            json.dumps(mismatch, sort_keys=True),
+        ]
+    )
+    classes: list[str] = []
+
+    def add(label: str) -> None:
+        if label not in classes:
+            classes.append(label)
+
+    if status == "empty_output" or "empty output" in text:
+        add("empty_output")
+    if status in {"timeout", "timed_out"} or "timed out" in text or "timeout" in text:
+        add("timeout")
+    if status in {"false_completion", "completion_blocked_hallucination"} or re.search(
+        r"\b(false completion|claimed completion)\b",
+        text,
+    ):
+        add("false completion")
+    validation_status = str(mismatch.get("validation_status") or "").strip().lower()
+    if mismatch and (validation_status not in {"", "passed", "success", "ok"} or "validation" in text):
+        add("validation mismatch")
+    if payload.get("route_substitution") or (
+        mismatch.get("expected_route") and mismatch.get("actual_route")
+    ):
+        add("route substitution")
+    if status in {"auth_failed", "auth_failure"} or re.search(r"\b(auth|unauthorized|forbidden)\b", text):
+        add("auth failure")
+    if status == "network_degraded" or re.search(r"\b(network|connection|dns|degraded)\b", text):
+        add("network degradation")
+    if status == "quota_exhausted" or re.search(r"\b(quota|rate limit|429)\b", text):
+        add("quota exhaustion")
+    if not classes:
+        add("validation mismatch" if mismatch else "timeout" if "timed" in text else "empty_output")
+    return classes
+
+
+def _supervisor_failure_candidate_kind(record: dict[str, Any], classifications: list[str]) -> str:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    failure_type = str(payload.get("failure_type") or "").lower()
+    detector = str(payload.get("detector") or "").lower()
+    labels = set(classifications)
+    if labels & {"quota exhaustion", "auth failure", "network degradation"}:
+        return "worker_health_rule"
+    if "allocator" in failure_type or "allocator" in detector:
+        return "worker_health_rule"
+    if "route substitution" in labels:
+        return "routing_hint"
+    if labels & {"empty_output", "timeout"}:
+        return "recovery_hint"
+    if labels <= {"validation mismatch", "false completion"} or "false completion" in labels:
+        return "validation_rule"
+    return "recovery_hint"
+
+
+def build_supervisor_failure_policy_data(
+    record: dict[str, Any],
+    output: str,
+    validation: CuratorValidationResult,
+) -> dict[str, Any]:
+    classifications = classify_supervisor_failure_types(record)
+    return {
+        "policy_version": CURATOR_POLICY_VERSION,
+        "policy_type": "supervisor_runtime_failure_advisory",
+        "mode": "advisory",
+        "source_record_id": record.get("id"),
+        "source_record_kind": "supervisor_runtime_failure",
+        "failure_classifications": classifications,
+        "payload": _bounded_supervisor_failure_payload(record),
+        "curator_output": _redact_and_bound_text(output, max_chars=1200),
+        "validation": validation.to_dict(),
+        "requires_judge": True,
+        "operator_approval_required": True,
+        "approved_for_enforcement": False,
+        "created_at": time.time(),
+    }
+
+
 def run_curator_policy_pass(
     db: Any,
     *,
@@ -330,13 +495,21 @@ def run_curator_policy_pass(
             config=curator_config.to_dict(),
         )
 
-    records = db.list_memory_records(
+    tool_records = db.list_memory_records(
         tenant_id=tenant_id,
         repo_id=repo_id,
         kind="tool_routing_lesson",
         status="active",
         limit=curator_config.max_records,
     )
+    failure_records = db.list_memory_records(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        kind="supervisor_runtime_failure",
+        status="active",
+        limit=curator_config.max_records,
+    )
+    records = [*tool_records, *failure_records]
     candidates: list[CuratorPolicyCandidate] = []
     errors: list[str] = []
     precuration_metrics: dict[str, Any] = {
@@ -353,37 +526,47 @@ def run_curator_policy_pass(
         score = float(record.get("score") or 0.0)
         if score < curator_config.min_score:
             continue
-        precuration = _run_record_precuration(
-            db,
-            record,
-            config=config,
-            tenant_id=tenant_id,
-            repo_id=repo_id,
-        )
-        if precuration is not None:
-            decision = precuration.get("decision") or {}
-            metric = str(decision.get("metric") or "")
-            if metric:
-                precuration_metrics[metric] = int(precuration_metrics.get(metric, 0)) + 1
-            precuration_metrics["decisions"].append(precuration)
-            if decision.get("should_run_expensive_curator") is False:
-                precuration_metrics["records_skipped"] += 1
-                continue
-        prompt = build_command_repair_prompt(record)
+        is_supervisor_failure = record.get("kind") == "supervisor_runtime_failure"
+        if not is_supervisor_failure:
+            precuration = _run_record_precuration(
+                db,
+                record,
+                config=config,
+                tenant_id=tenant_id,
+                repo_id=repo_id,
+            )
+            if precuration is not None:
+                decision = precuration.get("decision") or {}
+                metric = str(decision.get("metric") or "")
+                if metric:
+                    precuration_metrics[metric] = int(precuration_metrics.get(metric, 0)) + 1
+                precuration_metrics["decisions"].append(precuration)
+                if decision.get("should_run_expensive_curator") is False:
+                    precuration_metrics["records_skipped"] += 1
+                    continue
+        prompt = build_supervisor_failure_prompt(record) if is_supervisor_failure else build_command_repair_prompt(record)
         try:
             output = caller(curator_config, prompt)
         except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as exc:
             errors.append(f"{record.get('id')}: {type(exc).__name__}: {exc}")
             continue
         validation = validate_curator_output(output, record)
-        policy_data = build_command_repair_policy_data(record, output)
-        policy_data["validation"] = validation.to_dict()
-        candidate_id = _stable_candidate_id(record, output)
-        claim = _candidate_claim(record)
+        if is_supervisor_failure:
+            classifications = classify_supervisor_failure_types(record)
+            kind = _supervisor_failure_candidate_kind(record, classifications)
+            policy_data = build_supervisor_failure_policy_data(record, output, validation)
+            candidate_id = _stable_supervisor_failure_candidate_id(record, kind)
+            claim = _supervisor_failure_candidate_claim(record, kind, classifications)
+        else:
+            kind = "command_repair_policy"
+            policy_data = build_command_repair_policy_data(record, output)
+            policy_data["validation"] = validation.to_dict()
+            candidate_id = _stable_candidate_id(record, output)
+            claim = _candidate_claim(record)
         status = "proposed"
         db.upsert_meta_candidate(
             candidate_id=candidate_id,
-            kind="command_repair_policy",
+            kind=kind,
             claim=claim,
             evidence_json=policy_data,
             score=score,
@@ -394,7 +577,7 @@ def run_curator_policy_pass(
         candidates.append(
             CuratorPolicyCandidate(
                 candidate_id=candidate_id,
-                kind="command_repair_policy",
+                kind=kind,
                 claim=claim,
                 status=status,
                 score=score,
@@ -482,3 +665,30 @@ def _stable_candidate_id(record: dict[str, Any], output: str) -> str:
     )
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"curpol_{digest}"
+
+
+def _supervisor_failure_candidate_claim(record: dict[str, Any], kind: str, classifications: list[str]) -> str:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    worker = payload.get("worker_id") or payload.get("command_family") or "worker"
+    task_id = payload.get("task_id") or record.get("task_id") or "task"
+    labels = ", ".join(classifications)
+    if kind == "worker_health_rule":
+        return f"Advisory worker health rule for {worker} after {labels} in {task_id}"
+    if kind == "routing_hint":
+        return f"Advisory routing hint after {labels} in {task_id}"
+    if kind == "validation_rule":
+        return f"Advisory validation rule after {labels} in {task_id}"
+    return f"Advisory recovery hint after {labels} in {task_id}"
+
+
+def _stable_supervisor_failure_candidate_id(record: dict[str, Any], kind: str) -> str:
+    raw = "|".join(
+        [
+            kind,
+            "supervisor_runtime_failure_advisory",
+            CURATOR_POLICY_VERSION,
+            str(record.get("id") or ""),
+        ]
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return f"curadv_{digest}"
