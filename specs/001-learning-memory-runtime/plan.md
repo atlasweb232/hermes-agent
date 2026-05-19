@@ -136,6 +136,30 @@ See [contracts/production-evaluation-harness.md](./contracts/production-evaluati
 
 This phase creates a controlled upstream-vs-branch evaluation environment for long-horizon tasks. It must measure quality, latency, token/cost usage, context growth, memory usefulness, sidecar overhead, judge decisions, Slack alerts, and human-in-the-loop events before production rollout. The harness is the production gate for the memory framework, self-learning loop, sidecars, judges, multi-agent allocation, QA toolsets, and CI/CD integration.
 
+## Phase 15: End-to-End Feature Testing And Feature Toggles
+
+See [contracts/end-to-end-feature-testing.md](./contracts/end-to-end-feature-testing.md).
+
+This phase adds a feature-by-feature E2E test matrix and runtime feature toggles. The goal is to validate each subsystem independently, prove disabled features do not leak behavior, and only then run aggregate benchmark scenarios. Feature toggles are also the operational safety mechanism for staged rollout, provider outages, cost control, and isolating faulty sidecars.
+
+## Phase 16: Tenant Platform Onboarding And Scaling
+
+See [../../docs/tenant-platform-architecture.md](../../docs/tenant-platform-architecture.md).
+
+This phase defines the SaaS/control-plane layer around Hermes: tenant registry, repo onboarding, communication connectors, toolset profiles, runtime cells, budgets, admin observability, and tenant-scoped job submission. The recommended implementation path is a shared control plane plus isolated tenant runtime cells, starting with a local/dev adapter before committing to Kafka, Kubernetes, vector DB, or graph DB.
+
+## Phase 17: Skill And Memory Pipeline
+
+See [../../docs/skill-memory-pipeline-architecture.md](../../docs/skill-memory-pipeline-architecture.md).
+
+This phase connects procedural skills to the memory infrastructure. Skills are retrieved and injected through the same classifier, tenant scope, safety, feature-toggle, and context-budget rules as memory packets. SkillClaw may provide skill evolution and distribution, but published skills must remain evidence-backed, validated, versioned, and approval-gated.
+
+## Phase 18: Dreaming Integration Revision
+
+See [../../docs/dreaming-integration-architecture.md](../../docs/dreaming-integration-architecture.md).
+
+This phase revises dreaming for the tenant and skill platform. Dreaming stays proposal-only but can now explicitly propose skill candidates, skill repairs, CI/CD hardening, test gaps, routing improvements, cost optimizations, and architecture review items. Local dreaming remains tenant/repo scoped; global dreaming reads only redacted approved shareable memory/wiki evidence.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
@@ -143,3 +167,6 @@ This phase creates a controlled upstream-vs-branch evaluation environment for lo
 | Multiple learning state types | Required to prevent raw events, proposals, wiki, and enforcement from collapsing into one unsafe memory store | A single `memory` table would make approval state and audit boundaries ambiguous |
 | Background bus before distributed bus | Required to decouple foreground work without deploying Kafka/Redis | Direct synchronous sidecar calls would drag the agent loop and make failures user-visible |
 | Side-by-side evaluation harness | Required to prove memory/sidecars/judges improve outcomes over upstream before production | Anecdotal task success cannot justify higher infrastructure and model cost |
+| Tenant runtime cells | Required to isolate enterprise repos, secrets, worktrees, memory, connectors, and cost ledgers | One shared always-on Hermes process would make tenant leakage and cost attribution too risky |
+| Skill evolution boundary | Required to turn repeated lessons into reusable procedures without making raw session data authoritative | Injecting whole skill libraries or auto-publishing generated skills would create context bloat and unsafe hidden policy |
+| Proposal-only dreaming | Required to capture long-horizon improvement ideas without letting speculative synthesis mutate runtime | Letting dreaming write skills, config, goals, or policy directly would create unsafe autonomous drift |

@@ -200,6 +200,64 @@ As the Hermes operator, I want an isolated upstream-vs-branch benchmark harness 
 4. **Given** a self-learning candidate is produced, **When** the benchmark checks memory state, **Then** candidates, judge decisions, approved memory, wiki claims, dreaming proposals, and policies remain separated.
 5. **Given** branch quality or cost is worse than upstream beyond threshold, **When** the production gate runs, **Then** rollout is blocked with a concrete comparison report.
 
+---
+
+### User Story 12 - End-to-End Feature Testing and Feature Toggles (Priority: P12)
+
+As the Hermes operator, I want a feature-by-feature end-to-end test matrix with runtime toggles, so each platform capability can be validated, isolated, disabled, and compared before the full system is enabled.
+
+**Why this priority**: The platform now has multiple interacting subsystems. Operators need to prove each subsystem adds value without dragging foreground work, increasing context bloat, or hiding failures.
+
+**Independent Test**: Run `hermes runtime e2e run --suite feature-matrix --json` with selected feature toggles enabled and disabled. Verify each feature has pass/fail evidence, expected side effects, telemetry, and safe fallback behavior when disabled.
+
+**Acceptance Scenarios**:
+
+1. **Given** all optional features are disabled, **When** a baseline chat/delegation task runs, **Then** Hermes still responds and records that memory, sidecars, allocator fallback, dreaming, wiki, urgent notifications, and enforcement were skipped by toggle.
+2. **Given** runtime failure capture is enabled but curator/judge/advisory retrieval are disabled, **When** a worker fails or returns empty output, **Then** only the raw structured failure record is created and no memory packet is injected.
+3. **Given** curator and judge are enabled but enforcement is disabled, **When** a runtime failure candidate is approved, **Then** the candidate becomes advisory-only memory and cannot rewrite commands or block dispatch.
+4. **Given** allocator fallback is enabled with a latency budget, **When** the primary worker times out, **Then** Hermes records the failure, respects cooldown, attempts the next eligible worker, or pauses with recovery instructions instead of looping.
+5. **Given** goal continuation is enabled, **When** Hermes restarts during an active goal, **Then** `/goal resume` reloads safe state and does not retry unhealthy workers.
+6. **Given** context gate and progress summarizer are enabled, **When** a worker emits large streams, **Then** raw streams remain store-only and the supervisor receives only bounded typed packets.
+7. **Given** memory wiki, dreaming, global memory, urgent notifications, telemetry, and dashboard observability are enabled, **When** the E2E suite runs, **Then** each feature produces separate artifacts and no proposal, wiki claim, or telemetry item becomes enforcement without approval.
+
+---
+
+### User Story 13 - Tenant Platform Onboarding and Scaling (Priority: P13)
+
+As a platform operator, I want tenants to onboard repositories, communication channels, toolsets, budgets, and isolated runtime cells, so Hermes can run enterprise and power-user workloads safely at scale.
+
+**Why this priority**: Scaling the platform requires tenancy boundaries, repo onboarding, communication adapters, cost controls, and runtime isolation before multiple organizations can safely assign production jobs.
+
+**Independent Test**: Create a tenant, connect a repo, register Slack/Telegram/WhatsApp-style communication bindings, assign a toolset profile, provision an isolated runtime cell, submit a Spec Kit-backed job, and verify tenant-scoped observability, cost, memory, and fault records without cross-tenant leakage.
+
+**Acceptance Scenarios**:
+
+1. **Given** a new tenant, **When** onboarding completes, **Then** the tenant has users/roles, repo registrations, communication bindings, toolset profile, budget policy, feature profile, and runtime cell assignment.
+2. **Given** a tenant connects a repository, **When** the repo preflight runs, **Then** Hermes records clone refs, branch policy, protected paths, validation commands, secrets references, Spec Kit policy, and memory sharing policy before write-capable work is allowed.
+3. **Given** a tenant submits work from Slack, Telegram, WhatsApp, dashboard, or API, **When** the adapter receives it, **Then** the request becomes a tenant-scoped supervisor task packet with reply routing and approval routing.
+4. **Given** enterprise isolation mode, **When** a job starts, **Then** Hermes runs in a dedicated runtime cell with separate home/state/worktree/secrets/memory/cost ledger.
+5. **Given** pooled mode, **When** a job starts, **Then** tenant boundaries still apply to state rows, worktree roots, secret namespaces, memory retrieval, communication routes, and cost telemetry.
+6. **Given** global admin opens the dashboard, **When** tenant jobs are active or blocked, **Then** admin can see tenant activity, faults, cost, worker health, sidecar health, memory flow, and urgent alerts without exposing tenant secrets or unauthorized raw data.
+7. **Given** a tenant enables the CI/CD toolset, **When** a user asks Hermes to create or repair a deployment pipeline, **Then** Hermes uses Spec Kit, references secrets safely, respects protected environments, emits validation evidence, and routes approval requests through the tenant connector.
+
+---
+
+### User Story 14 - Skill And Memory Pipeline (Priority: P14)
+
+As the Hermes operator, I want skills to be retrieved, injected, validated, evolved, and scoped through the same memory and tenant safety model, so reusable procedures improve agents without becoming unsafe hidden policy.
+
+**Why this priority**: Skills are how repeated work becomes procedural competence, but they must be evidence-backed, tenant-scoped, versioned, and bounded like memory packets.
+
+**Independent Test**: Run a task whose classifier matches a tenant-approved CI/CD or TinyFish QA skill. Verify only relevant skill summaries are injected, the worker receives role-specific skill refs, validation evidence records whether the skill helped, and harmful/irrelevant skill use creates feedback without cross-tenant leakage.
+
+**Acceptance Scenarios**:
+
+1. **Given** a tenant has a private skill for CI/CD workflow creation, **When** a matching job starts, **Then** the supervisor receives a bounded skill packet and the CI/CD worker receives the role-specific skill reference.
+2. **Given** skill injection is disabled, **When** the same job starts, **Then** no skill packet is injected and a skipped-by-toggle audit event is recorded.
+3. **Given** approved memory or wiki evidence identifies a recurring workflow, **When** the skill compiler runs, **Then** it creates a skill candidate but does not publish it until validation and approval pass.
+4. **Given** a skill causes drift, invalid commands, or failed validation, **When** outcome feedback runs, **Then** Hermes records harmful feedback and creates a demotion or repair candidate for that skill version.
+5. **Given** a global skill exists, **When** another tenant runs a similar task, **Then** the skill is retrieved only if redaction, shareability, tenant opt-in, safety, and relevance gates pass.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -221,6 +279,21 @@ As the Hermes operator, I want an isolated upstream-vs-branch benchmark harness 
 - `/goal resume` finds an active allocation whose primary worker is still in cooldown.
 - All configured workers are unhealthy, unauthenticated, over quota, or over latency budget.
 - A worker wrapper returns empty output or progress-only logs after a long run.
+- A feature is disabled after prior state exists and must not leak stale state into runtime.
+- A feature is enabled without required provider credentials and must fail closed without blocking baseline chat/delegation.
+- Two enabled features conflict on one runtime path and the lower-risk advisory behavior must win.
+- A test suite asks for enforcement while judge or operator approval is missing.
+- A tenant communication channel receives a message from an unauthorized user or wrong channel.
+- A repo onboarding preflight finds missing credentials, protected branch policy, or no Spec Kit path.
+- A pooled runtime cell accidentally sees another tenant's memory, worktree, channel, or cost ledger.
+- A tenant exceeds token, model, tool, or sidecar budget during a job.
+- A global memory candidate is useful across tenants but lacks explicit shareability approval.
+- A connector credential is valid but the bot lacks access to the configured channel.
+- A CI/CD provider is connected but protected environment approval blocks deployment.
+- A user asks to speak directly to a worker and expert mode is disabled.
+- A skill exists for the same task type but wrong tenant, repo, toolset, worker role, or safety status.
+- A skill version was helpful historically but conflicts with current repo evidence or operator instruction.
+- SkillClaw proposes a skill from raw session data without approved memory/wiki provenance.
 
 ## Requirements
 
@@ -306,6 +379,42 @@ As the Hermes operator, I want an isolated upstream-vs-branch benchmark harness 
 - **FR-078**: System MUST support benchmark workload packs for branch review, implementation, QA validation, deployment, long-running goals, fallback, stale worker, repeated failure, multi-repo decomposition, and hallucinated completion cases.
 - **FR-079**: System MUST produce an upstream-vs-branch comparison report with quality, latency, cost, context growth, repeated-error, false-completion, memory-usefulness, sidecar-overhead, and urgent-alert metrics.
 - **FR-080**: System MUST block production-readiness status unless benchmark gates pass under configured thresholds and memory/judge/operator boundaries remain intact.
+- **FR-081**: System MUST expose runtime feature toggles for memory retrieval, global memory, runtime failure capture, runtime failure advisories, allocator fallback, goal continuation, health sidecar, context gate, progress summarizer, learning sidecar, curator, learning judge, memory wiki, dreaming, urgent notifications, telemetry, benchmark harness, and enforcement.
+- **FR-082**: Feature toggles MUST be visible through CLI/API-compatible JSON with configured value, effective value, source, default, risk level, dependencies, and last change metadata.
+- **FR-083**: Risky features MUST default to safe advisory/off behavior, and enforcement MUST default to disabled.
+- **FR-084**: Disabling a feature MUST prevent its runtime behavior while preserving audit history and baseline chat/delegation functionality.
+- **FR-085**: System MUST provide an E2E feature test matrix where every feature toggle has at least one enabled test, one disabled test, expected artifacts, expected telemetry, and pass/fail criteria.
+- **FR-086**: E2E tests MUST support selective execution by feature, suite, tenant, repo, workload, and risk profile.
+- **FR-087**: E2E test results MUST record feature states, runtime path, worker/model/provider, latency budget, token/cost estimates, memory injected/skipped, sidecars run/skipped, notifications, validation evidence, and final status.
+- **FR-088**: E2E tests MUST prove that raw events, curator candidates, judge decisions, approved memory, wiki claims, dreaming proposals, telemetry, and enforcement policies remain separate.
+- **FR-089**: E2E tests MUST include a workload fixture for the Azure desktop chat/voice port so platform behavior can be validated against a real production-style task.
+- **FR-090**: E2E test reports MUST identify whether failures are product defects, environment/auth issues, provider quota/network issues, missing feature implementation, or expected toggle-disabled behavior.
+- **FR-091**: System MUST provide a tenant registry with tenant status, isolation mode, users/roles, budgets, feature profile, runtime cell assignment, and audit metadata.
+- **FR-092**: System MUST provide repository onboarding records with provider, clone refs, branch policy, protected paths, validation commands, deployment mapping, secret references, Spec Kit policy, and memory sharing policy.
+- **FR-093**: System MUST provide communication connector registrations for Slack, Telegram, WhatsApp, dashboard, API, and future adapters with tenant/user/channel allowlists and urgent/approval routes.
+- **FR-094**: System MUST provide toolset profiles that control planner, Spec Kit creator, code workers, QA/browser tools, TinyFish API/browser agents, deployment tools, cloud tools, repo tools, voice/image tools, credentials, scopes, budgets, and approvals.
+- **FR-095**: System MUST support tenant runtime cells with isolated Hermes home/state/worktree/secrets/memory/cost ledger and optional dedicated container/volume deployment.
+- **FR-096**: System MUST support pooled runtime mode only when tenant IDs, worktrees, secrets, communication routes, memory retrieval, and cost ledgers remain isolated.
+- **FR-097**: Tenant-submitted jobs MUST become supervisor task packets with tenant, repo, requester, objective, constraints, toolset profile, model budget, validation policy, approval policy, reply route, and memory policy.
+- **FR-098**: Admin observability MUST expose tenant activity, faults, worker health, sidecar health, communication connector state, cost, token/context usage, memory flow, judge decisions, policy audits, and deployment status.
+- **FR-099**: System MUST keep tenant-private memory private and allow global/cross-tenant memory only after redaction, judge/operator approval, shareability metadata, and sensitivity gates.
+- **FR-100**: Tenant onboarding MUST include a smoke test proving repo access, communication reply route, toolset availability, budget policy, feature profile, runtime cell isolation, and baseline job execution.
+- **FR-101**: Communication connectors MUST normalize Slack, Telegram, WhatsApp, dashboard/API, email, and webhook messages into tenant-scoped task/message envelopes with authenticated user, channel/thread, permissions, reply route, and approval route.
+- **FR-102**: System MUST keep direct worker chat disabled by default; optional expert mode MUST remain tenant-scoped, audited, and unable to bypass supervisor validation, repo ownership, secret policy, memory policy, or approval gates.
+- **FR-103**: System MUST provide CI/CD toolset support for creating, inspecting, repairing, running, and validating pipelines across supported providers such as GitHub Actions, GitLab CI, Azure DevOps Pipelines, Jenkins, Buildkite, and cloud-native deployment pipelines.
+- **FR-104**: CI/CD automation MUST use secret references, protected environment policy, approval gates, validation evidence, rollback expectations, and urgent failure notifications.
+- **FR-105**: System MUST maintain skill metadata with skill id, name, version, scope, tenant/repo/toolset/worker/task metadata, approval state, safety state, content hash, source memory/wiki refs, validation refs, usage stats, and retirement state.
+- **FR-106**: System MUST retrieve skills using task classifier metadata and hard filters for tenant visibility, repo visibility, tool compatibility, worker role, approval state, safety state, and feature toggles before semantic ranking.
+- **FR-107**: System MUST inject only bounded skill packets into supervisor/planner/worker context, including skill id, version, scope, summary, match reason, confidence, and validation hooks.
+- **FR-108**: Skills MUST remain advisory execution aids and MUST NOT override user instructions, tenant policy, repo protection, current evidence, validation gates, memory policy, or approval requirements.
+- **FR-109**: System MUST record skill outcome feedback as helpful, irrelevant, harmful, or unknown per task/session/skill version and use it for confidence, demotion, repair, or retirement.
+- **FR-110**: Skill candidates derived from memory/wiki evidence MUST require validation and approval before publishing to tenant or global skill libraries.
+- **FR-111**: SkillClaw integration MUST be optional and adapter-based, supporting local, tenant, and global/shared modes without making raw session data the source of truth for published skills.
+- **FR-112**: Dreaming MUST support separate local and global roles, where local dreaming remains tenant/repo scoped and global dreaming consumes only redacted approved shareable global memory/wiki evidence.
+- **FR-113**: Dreaming MAY propose skill candidates, skill repairs, CI/CD hardening tasks, test gaps, observability gaps, routing improvements, toolset recommendations, cost optimizations, training corpus candidates, and architecture review items, but MUST NOT apply them directly.
+- **FR-114**: Dreaming proposals MUST include proposal type, scope, evidence refs, risk level, expected benefit, affected feature ids, approval path, forbidden direct actions, and suggested validation.
+- **FR-115**: Dreaming proposal conversion MUST route through deterministic validation, judge review, and operator or tenant-admin approval before becoming approved memory, wiki update, skill candidate, test task, policy candidate, goal, or training corpus candidate.
+- **FR-116**: Dashboard/API observability MUST expose dreaming proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history.
 
 ### Key Entities
 
@@ -326,6 +435,21 @@ As the Hermes operator, I want an isolated upstream-vs-branch benchmark harness 
 - **Memory Graph Edge**: Typed relationship explaining where memory applies, what it avoids, what it recommends, and what evidence produced it.
 - **Training Corpus Record**: Sanitized, scoped, evidence-backed export derived from wiki claims or approved memory, never raw transcripts. For migration work, it preserves source/target repo refs, before/after commit refs, Spec Kit refs, failure/repair labels, validation evidence, and drift-evaluation anchors.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
+- **Feature Toggle**: Runtime configuration switch that controls whether a platform capability can affect foreground behavior, sidecar behavior, observability, or enforcement.
+- **E2E Feature Test Case**: One executable feature-level scenario with required toggle state, workload fixture, expected artifacts, telemetry assertions, validation commands, and pass/fail classification.
+- **E2E Feature Test Report**: Operator-facing summary of feature state, test evidence, platform impact, cost/latency, and rollout recommendation.
+- **Tenant**: Organization or power-user boundary with users, roles, repos, communication channels, budgets, feature policy, runtime isolation, and memory visibility rules.
+- **Runtime Cell**: Isolated execution environment for a tenant workspace, including Hermes home, state, worktrees, secrets, memory, sidecars, worker allocation, and event spool.
+- **Repository Registration**: Tenant-scoped record describing a connected repo, branch/protection policy, validation commands, Spec Kit policy, deployment mapping, and secret references.
+- **Communication Connector**: Tenant-scoped Slack, Telegram, WhatsApp, dashboard, API, email, or webhook binding that maps authenticated messages to task packets and replies.
+- **Toolset Profile**: Tenant/repo/job-scoped configuration for enabled planning, coding, QA, browser, TinyFish, deployment, cloud, media, and repo tools with scopes and budgets.
+- **CI/CD Toolset**: Tenant-scoped capability that lets Hermes create, inspect, repair, run, validate, and report on build/test/deploy pipelines while respecting secrets, approvals, and protected environments.
+- **Skill**: Versioned procedural artifact, usually `SKILL.md` plus optional files, that teaches an agent how to perform a recurring task pattern.
+- **Skill Packet**: Bounded prompt-ready representation of selected skills with ids, versions, summaries, match reasons, scope, confidence, and validation hooks.
+- **Skill Candidate**: Proposed skill creation/update derived from approved memory or wiki evidence and awaiting validation/approval.
+- **Skill Outcome Feedback**: Post-task record linking a skill version to helpful, irrelevant, harmful, or unknown impact.
+- **SkillClaw Adapter**: Optional integration boundary for reading/writing skill bundles, validating candidates, and syncing tenant/global skill libraries.
+- **Dreaming Conversion Target**: Approved destination for a proposal, such as memory candidate, wiki update, skill candidate, test task, Spec Kit task, CI/CD hardening task, policy audit candidate, routing advisory, or training corpus candidate.
 - **Supervisor Task Packet**: Structured intake record for a user or dashboard request before planning or delegation.
 - **Planner Packet**: Bounded request sent to the planner agent to create or update Spec Kit artifacts.
 - **Spec Kit Artifact Set**: Branch/worktree plus `spec.md`, `plan.md`, `tasks.md`, and related design docs.

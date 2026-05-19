@@ -522,6 +522,127 @@
 
 **Checkpoint**: Runtime-affecting work is visible and testable through local feature toggles, but experimental features remain off until explicitly enabled and enforcement remains unavailable by default.
 
+## Phase 16: Tenant Platform Onboarding And Scaling (Priority: P13)
+
+**Goal**: Define and implement the tenant onboarding/control-plane layer so enterprise tenants and power users can connect repos, communication channels, toolsets, budgets, and isolated runtime cells before submitting jobs.
+
+**Independent Test**: Onboard a tenant, register a repo, connect a communication route, assign a toolset profile, provision a runtime cell, submit a Spec Kit-backed job, and verify tenant-scoped observability, cost, memory, and fault records without cross-tenant leakage.
+
+**Boundary**: Start with schemas, local/dev adapters, and E2E smoke. Do not require Kafka, Kubernetes, vector DB, graph DB, or full marketplace behavior before the control-plane shape is proven.
+
+### Spec And Architecture Artifacts
+
+- [x] T213 [US13] Add `docs/tenant-platform-architecture.md` defining control plane, tenant runtime cells, repo onboarding, communication connectors, toolset profiles, isolation, memory, admin dashboard, cost, deployment, and bus options
+- [ ] T214 [US13] Add tenant onboarding contract covering registry, repo registration, communication connector, toolset profile, runtime cell, budget, feature profile, and smoke-test schemas
+- [ ] T215 [US13] Link tenant onboarding architecture from dashboard, observability, memory, and deployment docs
+
+### Tests For Tenant Onboarding
+
+- [ ] T216 [P] [US13] Add tenant registry schema tests for tenant status, isolation mode, users/roles, budgets, feature profile, runtime cell assignment, and audit metadata
+- [ ] T217 [P] [US13] Add repo onboarding tests for provider refs, clone URL, branch policy, protected paths, validation commands, deployment mapping, secret refs, Spec Kit policy, and memory sharing policy
+- [ ] T218 [P] [US13] Add communication connector tests for Slack, Telegram, WhatsApp, dashboard/API route registration, tenant/user/channel allowlists, urgent routes, approval routes, and unauthorized sender rejection
+- [ ] T219 [P] [US13] Add toolset profile tests for planner, Spec Kit creator, code workers, QA/browser, TinyFish API/browser agent, CI/CD, deployment, cloud, repo, voice/image tools, scopes, budgets, and approval requirements
+- [ ] T220 [P] [US13] Add runtime cell isolation tests proving tenant homes, worktrees, secrets, memory, connectors, sidecars, and cost ledgers do not cross boundaries
+- [ ] T221 [P] [US13] Add tenant budget tests proving token/model/tool/sidecar budget exhaustion pauses or degrades jobs without looping
+- [ ] T221A [P] [US13] Add connector onboarding tests proving provided Slack/Telegram/WhatsApp credentials are stored as secret references, verified with a test message, and activated only after channel access succeeds
+- [ ] T221B [P] [US13] Add CI/CD pipeline task tests proving workflow creation/repair uses Spec Kit, secret references, protected environment approvals, validation evidence, rollback expectations, and urgent failure notification
+
+### Implementation For Tenant Platform
+
+- [ ] T222 [US13] Implement tenant registry DTOs/state helpers with local SQLite/dev adapter and JSON serialization
+- [ ] T223 [US13] Implement repo registration DTOs/state helpers and read-only repo preflight output
+- [ ] T224 [US13] Implement communication connector registration DTOs/state helpers with adapter-neutral route metadata
+- [ ] T225 [US13] Implement toolset profile DTOs/state helpers and merge logic with job-level overrides
+- [ ] T226 [US13] Implement runtime cell assignment model for dedicated and pooled modes with isolation metadata
+- [ ] T227 [US13] Implement tenant-scoped job submission packet builder that feeds the existing supervisor task packet path
+- [ ] T228 [US13] Add CLI/API-compatible surfaces for tenant onboarding: `hermes tenant create/status`, `hermes tenant repo add/preflight`, `hermes tenant connector add/status`, `hermes tenant toolset set/status`, and `hermes tenant smoke --json`
+- [ ] T229 [US13] Add admin dashboard DTOs for tenants, runtime cells, connectors, repos, jobs, faults, worker health, sidecar health, cost, memory flow, and urgent alerts
+- [ ] T230 [US13] Add E2E onboarding smoke fixture that proves a tenant can submit a Spec Kit-backed job through a registered connector with isolated runtime state
+- [ ] T231 [US13] Implement connector-normalized tenant message envelope and reply/approval/urgent route DTOs
+- [ ] T232 [US13] Implement CI/CD toolset profile DTOs and worker packet builder for pipeline create/repair/run/validate/report tasks
+
+**Checkpoint**: Multiple tenants can be represented, isolated, observed, budgeted, and smoke-tested before production multi-tenant deployment begins.
+
+## Phase 17: Skill And Memory Pipeline (Priority: P14)
+
+**Goal**: Connect procedural skills to the memory pipeline so skills are selected, injected, validated, evolved, scoped, and optionally synced through SkillClaw without bypassing tenant, memory, or approval gates.
+
+**Independent Test**: Run a tenant-scoped CI/CD or TinyFish QA task whose classifier matches an approved skill. Verify bounded skill packet injection, role-specific worker skill refs, validation feedback, and no cross-tenant leakage.
+
+**Boundary**: Skills are advisory execution aids. They do not replace memory, policy, validation, or approval. SkillClaw is optional adapter infrastructure, not the source of truth for memory.
+
+### Spec And Architecture Artifacts
+
+- [x] T233 [US14] Add `docs/skill-memory-pipeline-architecture.md` defining memory vs skill boundaries, retrieval, injection points, authority, evolution, tenant/global libraries, SkillClaw modes, and E2E tests
+- [ ] T234 [US14] Add skill pipeline contract covering skill metadata, retrieval query, packet schema, outcome feedback, candidate state, and SkillClaw adapter interface
+- [ ] T235 [US14] Link skill pipeline architecture from tenant platform, memory wiki, dreaming, and E2E feature testing docs
+
+### Tests For Skill Retrieval And Injection
+
+- [ ] T236 [P] [US14] Add skill metadata schema tests for id, version, scope, tenant/repo/toolset/worker/task metadata, approval state, safety state, content hash, source refs, validation refs, usage stats, and retirement state
+- [ ] T237 [P] [US14] Add skill retrieval tests proving tenant/repo/toolset/worker-role/safety/approval hard filters run before semantic ranking
+- [ ] T238 [P] [US14] Add bounded skill packet tests proving supervisor, planner, worker, QA, browser, and deployment contexts receive only relevant skill summaries or refs
+- [ ] T239 [P] [US14] Add disabled-skill-feature tests proving skill retrieval/injection can be turned off without breaking baseline memory retrieval or delegation
+- [ ] T240 [P] [US14] Add cross-tenant skill isolation tests proving tenant-private skills never appear in other tenant packets
+
+### Tests For Skill Evolution And SkillClaw
+
+- [ ] T241 [P] [US14] Add skill outcome feedback tests for helpful, irrelevant, harmful, and unknown impact per task/session/skill version
+- [ ] T242 [P] [US14] Add skill candidate tests proving approved memory/wiki can propose skill creation/update but cannot publish without validation and approval
+- [ ] T243 [P] [US14] Add harmful skill demotion tests proving failed validation creates repair/retire candidates and lowers retrieval confidence
+- [ ] T244 [P] [US14] Add SkillClaw adapter tests for local bundle read/write, content hash/version preservation, validation result ingestion, and disabled shared sync by default
+- [ ] T245 [P] [US14] Add E2E skill test using a CI/CD or TinyFish QA skill from retrieval through worker dispatch, validation, feedback, and candidate evolution
+
+### Implementation For Skill Pipeline
+
+- [ ] T246 [US14] Implement skill metadata DTOs/state helpers and local registry adapter
+- [ ] T247 [US14] Implement skill retrieval query builder using existing task classifier metadata
+- [ ] T248 [US14] Implement skill scorer with hard filters, lexical/semantic hooks, scope penalties, confidence, recency, and usage feedback
+- [ ] T249 [US14] Implement bounded skill packet builder for supervisor/planner/worker/QA/browser/deployment roles
+- [ ] T250 [US14] Add skill refs to supervisor task packets, planner packets, worker delegation packets, validation reports, and session summaries
+- [ ] T251 [US14] Implement skill outcome feedback recording and confidence/demotion helpers
+- [ ] T252 [US14] Implement skill candidate creation from approved memory/wiki records
+- [ ] T253 [US14] Implement optional SkillClaw adapter interface for local bundle read/write, validation status, and tenant/global sync hooks
+- [ ] T254 [US14] Add CLI/API-compatible surfaces for `hermes skills runtime search`, `hermes skills runtime packet`, `hermes skills feedback`, and `hermes skills candidates --json`
+
+**Checkpoint**: Skills can improve repeated task execution without context bloat, cross-tenant leakage, raw-session publishing, or hidden enforcement.
+
+## Phase 18: Dreaming Integration Revision (Priority: P15)
+
+**Goal**: Update dreaming for tenant runtime cells, global memory, SkillClaw/skills, CI/CD automation, E2E testing, and dashboard review while keeping dreaming proposal-only.
+
+**Independent Test**: Run local and global dreaming fixtures. Verify local proposals stay tenant/repo scoped, global proposals use only redacted shareable evidence, skill/CI/CD/test proposals require judge/operator conversion, and no proposal mutates runtime directly.
+
+**Boundary**: This phase revises dreaming integration. It must not enable direct prompt injection, skill publishing, config mutation, goal queueing, policy enforcement, repo edits, deployment, or training export from dreaming output.
+
+### Spec And Architecture Artifacts
+
+- [x] T255 [US15] Add `docs/dreaming-integration-architecture.md` covering local/global dreaming, inputs, outputs, triggers, approval flow, skill integration, CI/CD/test proposals, dashboard review, toggles, E2E tests, and failure modes
+- [ ] T256 [US15] Add dreaming integration contract covering proposal types, evidence packet schema, conversion targets, validator output, judge/operator state, dashboard DTOs, and feature toggles
+- [ ] T257 [US15] Link dreaming integration architecture from skill pipeline, tenant platform, global memory wiki, E2E feature testing, and production evaluation docs
+
+### Tests For Dreaming Integration
+
+- [ ] T258 [P] [US15] Add local dreaming tests proving proposals remain tenant/repo scoped and cannot publish globally
+- [ ] T259 [P] [US15] Add global dreaming tests proving only redacted approved shareable global memory/wiki evidence is consumed
+- [ ] T260 [P] [US15] Add proposal schema tests for skill candidate, skill repair, test gap, CI/CD hardening, memory wiki update, routing improvement, allocator policy candidate, observability gap, tenant onboarding improvement, toolset recommendation, cost optimization, training corpus candidate, and architecture review item
+- [ ] T261 [P] [US15] Add conversion-gate tests proving dreaming proposals require deterministic validation, judge review, and operator or tenant-admin approval before becoming memory/wiki/skill/test/policy/goal/training candidates
+- [ ] T262 [P] [US15] Add negative tests proving dreaming cannot inject prompts, publish skills, update wiki, change config, queue goals, enforce policy, edit repos, deploy code, or export training data directly
+- [ ] T263 [P] [US15] Add dashboard/API tests for listing proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history
+- [ ] T264 [P] [US15] Add feature-toggle tests proving disabled dreaming records skipped-by-toggle and produces no proposal
+
+### Implementation For Dreaming Integration
+
+- [ ] T265 [US15] Extend dreaming proposal DTOs with proposal type, affected feature ids, conversion target, expected benefit, forbidden direct actions, suggested validation, and tenant/global role metadata
+- [ ] T266 [US15] Add local/global dreaming role resolver and input builder with strict evidence filters
+- [ ] T267 [US15] Add proposal validators for skill, CI/CD, test-gap, routing, cost, training, and architecture proposal types
+- [ ] T268 [US15] Add conversion helpers that create downstream candidates only after judge/operator approval
+- [ ] T269 [US15] Add dashboard/observability DTOs for dreaming proposal review and approval history
+- [ ] T270 [US15] Add CLI/API-compatible surfaces for `hermes memory dream proposals --json`, `hermes memory dream convert --json`, and proposal status filtering
+- [ ] T271 [US15] Add E2E fixture proving dreaming can propose a SkillClaw skill repair and CI/CD hardening task without mutating runtime until approved
+
+**Checkpoint**: Dreaming can generate valuable improvement work while remaining isolated, reviewable, tenant-scoped, and non-authoritative.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -536,6 +657,10 @@
 - User Story 9 depends on the Phase 11 runtime-degradation gate and persisted memory retrieval, then adds deterministic allocation around upstream `/goal` continuation.
 - User Story 10 depends on User Story 9 allocator state and adds task graph, health sidecar, and restart recovery around it.
 - User Story 11 depends on User Stories 8 through 10 enough to measure them and becomes the gate for production rollout.
+- User Story 12 depends on existing feature contracts and should run before User Story 11 aggregate benchmarking so each feature can be isolated and toggled safely.
+- User Story 13 depends on supervisor packets, observability, memory scope, feature toggles, and E2E smoke enough to safely expose the platform to multiple tenants.
+- User Story 14 depends on task classifier metadata, tenant scope, memory retrieval, feature toggles, and worker packet boundaries so skills can be injected safely.
+- User Story 15 depends on existing dreaming storage, tenant/global scope, skill candidates, feature toggles, and observability so proposals can be reviewed without runtime mutation.
 
 ## Parallel Opportunities
 
@@ -547,6 +672,10 @@
 - Goal-allocation schema, decision, resume, and observability tests can be developed in parallel after the contract lands.
 - Task graph, health sidecar, restart recovery, and workflow-agnostic tests can be developed in parallel after Phase 13 contracts land.
 - Benchmark workload loader, telemetry schema, isolated runner, and report generator can be developed in parallel after Phase 14 contracts land.
+- Feature toggle schema, E2E fixture definitions, and report writer can be developed in parallel after Phase 15 contracts land.
+- Tenant registry, repo registration, connector registration, and toolset profile schemas can be developed in parallel after Phase 16 architecture lands.
+- Skill metadata, retrieval, packet building, feedback, and SkillClaw adapter tests can be developed in parallel after Phase 17 architecture lands.
+- Dreaming proposal-type validators, local/global input builders, dashboard DTOs, and conversion-gate tests can be developed in parallel after Phase 18 architecture lands.
 
 ## Implementation Strategy
 
@@ -620,3 +749,45 @@
 5. Add comparison report and production gate.
 6. Add CI/CD smoke and scheduled long-horizon benchmark harness.
 7. Run Azure VM upstream-vs-branch benchmark and record results.
+
+### Phase 15 Order
+
+1. Add feature toggle config schema, dependency validation, and safe defaults.
+2. Add CLI/API-compatible feature list/status/set surfaces.
+3. Add deterministic feature fixture registry and local E2E runner.
+4. Add enabled/disabled tests for each major subsystem.
+5. Add integrated failure-to-advisory-to-next-dispatch test with enforcement off.
+6. Add Azure desktop chat/voice workload as an opt-in live-provider fixture.
+7. Run deterministic E2E suite before Phase 14 aggregate benchmark.
+
+### Phase 16 Order
+
+1. Add tenant onboarding contract and schemas.
+2. Add local/dev tenant registry and repo registration helpers.
+3. Add communication connector and toolset profile helpers.
+4. Add runtime cell assignment model and isolation checks.
+5. Add tenant-scoped job submission into supervisor task packets.
+6. Add admin observability DTOs.
+7. Add tenant onboarding smoke test.
+8. Decide production adapters for runtime cells, object storage, event bus, vector index, and graph index only after the local/dev model proves useful.
+
+### Phase 17 Order
+
+1. Add skill pipeline contract and metadata schema.
+2. Add local skill registry adapter.
+3. Add skill retrieval using task classifier metadata and hard scope filters.
+4. Add bounded skill packets and packet refs.
+5. Add skill feedback and demotion helpers.
+6. Add skill candidates from approved memory/wiki records.
+7. Add optional SkillClaw adapter.
+8. Run E2E skill test for CI/CD or TinyFish QA.
+
+### Phase 18 Order
+
+1. Add dreaming integration contract and proposal type schema.
+2. Add local/global role resolver and strict input builder.
+3. Add validators for skill, CI/CD, test-gap, routing, cost, training, and architecture proposals.
+4. Add conversion helpers behind judge/operator gates.
+5. Add dashboard/API proposal review DTOs.
+6. Add CLI/API proposal list/convert/status surfaces.
+7. Add E2E fixture for skill repair and CI/CD hardening proposals.
