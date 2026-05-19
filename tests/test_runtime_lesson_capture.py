@@ -5,6 +5,7 @@ from hermes_cli.runtime_lesson_capture import (
     ToolOutcome,
     append_lesson_capture_note,
     apply_runtime_failure_gate_to_final_response,
+    capture_delegated_worker_runtime_failure,
     classify_terminal_status,
     parse_terminal_failure,
     persist_runtime_lesson,
@@ -266,6 +267,46 @@ def test_persist_generic_supervisor_failure_writes_supervisor_runtime_failure(tm
     assert records[0]["payload_json"]["failure_type"] == "supervisor_tool_loop_failure"
 
 
+def test_capture_delegated_worker_failure_persists_structured_record_without_raw_secret(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        capture = capture_delegated_worker_runtime_failure(
+            db,
+            task_id="task-131b",
+            worker_id="subagent-2",
+            route="delegate_task:codex",
+            status="timeout",
+            evidence_refs=["hermes:delegate:task-131b:subagent-2"],
+            output_excerpt="token=sk-abc123456789XYZ\n" + "raw log line\n" * 200,
+            validation_mismatch={"expected": "tests passed", "actual": "no output"},
+            session_id="session-131b",
+            expected_route="delegate_task:claude",
+        )
+
+        assert capture["runtime_failure_captured"] is True
+        records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+        record = records[0]
+        payload = record["payload_json"]
+        assert record["task_id"] == "task-131b"
+        assert payload["task_id"] == "task-131b"
+        assert payload["worker_id"] == "subagent-2"
+        assert payload["route"] == "delegate_task:codex"
+        assert payload["command_family"] == "delegate_task"
+        assert payload["status"] == "timeout"
+        assert payload["evidence_refs"] == ["hermes:delegate:task-131b:subagent-2"]
+        assert payload["validation_mismatch"]["expected"] == "tests passed"
+        assert payload["validation_mismatch"]["actual"] == "no output"
+        assert payload["route_substitution"] is True
+        assert payload["validation_mismatch"]["expected_route"] == "delegate_task:claude"
+        assert payload["validation_mismatch"]["actual_route"] == "delegate_task:codex"
+        assert payload["secret_safe"] is True
+        serialized = json.dumps(payload)
+        assert "sk-abc" not in serialized
+        assert len(payload["output_excerpt"]) < 900
+    finally:
+        db.close()
+
+
 def test_append_lesson_capture_note_preserves_json_result():
     result = append_lesson_capture_note(
         json.dumps({"exit_code": 0, "stdout": "4"}),
@@ -364,3 +405,38 @@ def test_agent_runtime_failure_gate_discloses_worker_degradation(tmp_path):
     assert "Worker delegation degraded" in response
     assert "worker-router" in response
     assert "The answer is 4." in response
+
+
+def test_agent_delegate_task_result_captures_child_timeout_before_gate(tmp_path):
+    from run_agent import AIAgent
+
+    db = SessionDB(tmp_path / "state.db")
+    agent = object.__new__(AIAgent)
+    agent._session_db = db
+    agent.session_id = "session-delegate-runtime"
+    agent._current_task_id = "task-delegate-runtime"
+    result = json.dumps(
+        {
+            "results": [
+                {
+                    "task_index": 0,
+                    "status": "timeout",
+                    "summary": None,
+                    "error": "token=sk-abc123456789XYZ child timed out",
+                    "exit_reason": "timeout",
+                }
+            ]
+        }
+    )
+
+    agent._capture_delegate_runtime_failures({"role": "worker"}, result)
+
+    records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+    payload = records[0]["payload_json"]
+    assert records[0]["task_id"] == "task-delegate-runtime"
+    assert payload["worker_id"] == "subagent-0"
+    assert payload["route"] == "delegate_task:worker"
+    assert payload["status"] == "timeout"
+    assert payload["evidence_refs"] == ["hermes:delegate:task-delegate-runtime:subagent-0"]
+    assert payload["validation_mismatch"]["exit_reason"] == "timeout"
+    assert "sk-abc" not in json.dumps(payload)

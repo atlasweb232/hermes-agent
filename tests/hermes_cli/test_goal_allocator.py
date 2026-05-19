@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from hermes_cli.goal_allocator import (
@@ -173,6 +175,45 @@ def test_record_worker_attempt_updates_health_and_attempt_store(tmp_path):
         assert health.cooldown_until == 160
         assert list_worker_attempts(db, plan.allocation_id)[0].attempt_id == attempt.attempt_id
         assert load_worker_health(db, "claude-code").timeout_count == 1
+    finally:
+        db.close()
+
+
+def test_record_worker_attempt_captures_runtime_failure_before_sidecars(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan(task_id="task_148", allocation_id="alloc_148")
+        save_allocation_plan(db, plan)
+        attempt = _attempt(
+            plan,
+            worker_id="claude-code",
+            route="worker-router claude-code",
+            status="empty_output",
+            stdout_excerpt="token=sk-abc123456789XYZ\n" + "verbose worker log\n" * 200,
+            validation_status="failed",
+            error_signature="claimed_done_no_files",
+            artifact_refs=["hermes:allocation:alloc_148:attempt_1"],
+        )
+
+        record_worker_attempt(db, plan, attempt, now=100)
+
+        records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+        assert len(records) == 1
+        payload = records[0]["payload_json"]
+        assert records[0]["task_id"] == "task_148"
+        assert payload["task_id"] == "task_148"
+        assert payload["worker_id"] == "claude-code"
+        assert payload["route"] == "worker-router claude-code"
+        assert payload["command_family"] == "worker-router"
+        assert payload["status"] == "empty_output"
+        assert payload["evidence_refs"] == ["hermes:allocation:alloc_148:attempt_1"]
+        assert payload["validation_mismatch"]["validation_status"] == "failed"
+        assert payload["validation_mismatch"]["error_signature"] == "claimed_done_no_files"
+        assert payload["requires_judge"] is True
+        assert payload["operator_approval_required"] is True
+        serialized = json.dumps(payload)
+        assert "sk-abc" not in serialized
+        assert len(payload["output_excerpt"]) < 900
     finally:
         db.close()
 

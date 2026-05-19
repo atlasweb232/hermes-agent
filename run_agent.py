@@ -3797,6 +3797,7 @@ class AIAgent:
             role=function_args.get("role"),
             parent_agent=self,
         )
+        self._capture_delegate_runtime_failures(function_args, delegate_result)
         try:
             from hermes_cli.completion_gate import (
                 append_gate_to_delegate_payload,
@@ -3822,10 +3823,72 @@ class AIAgent:
             )
             gate = run_completion_gate(repo_path=repo_path, config=config)
             self._last_completion_gate = gate
+            if gate.enabled and not gate.passed and gate.status != "skipped":
+                self._capture_delegate_runtime_failures(function_args, delegate_result, gate=gate)
             return append_gate_to_delegate_payload(delegate_result, gate)
         except Exception:
             logger.debug("completion gate after delegate_task failed", exc_info=True)
             return delegate_result
+
+    def _capture_delegate_runtime_failures(self, function_args: dict, delegate_result: str, gate: Any = None) -> None:
+        """Persist bounded failure records for delegate_task child outcomes."""
+        try:
+            from hermes_cli.runtime_lesson_capture import capture_delegated_worker_runtime_failure
+            from hermes_state import SessionDB
+
+            try:
+                payload = json.loads(delegate_result)
+            except Exception:
+                payload = {"raw_delegate_result": delegate_result}
+            if not isinstance(payload, dict):
+                return
+            results = payload.get("results")
+            if not isinstance(results, list):
+                if payload.get("error"):
+                    results = [payload]
+                else:
+                    return
+
+            db = getattr(self, "_session_db", None) or SessionDB()
+            task_id = str(getattr(self, "_current_task_id", None) or getattr(self, "session_id", None) or "delegate_task")
+            role = str(function_args.get("role") or function_args.get("acp_command") or "subagent")
+            gate_mismatch = {}
+            if gate is not None:
+                gate_dict = gate.to_dict() if hasattr(gate, "to_dict") else dict(gate)
+                gate_mismatch = {
+                    "validation_status": str(gate_dict.get("status") or "blocked"),
+                    "completion_gate": gate_dict,
+                }
+
+            for entry in results:
+                if not isinstance(entry, dict):
+                    continue
+                status = str(entry.get("status") or "").strip().lower()
+                summary = str(entry.get("summary") or "")
+                error = str(entry.get("error") or "")
+                worker_id = f"subagent-{entry.get('task_index', 'unknown')}"
+                route = f"delegate_task:{role}"
+                evidence_ref = f"hermes:delegate:{task_id}:{worker_id}"
+                mismatch = dict(gate_mismatch)
+                if entry.get("exit_reason"):
+                    mismatch.setdefault("exit_reason", str(entry.get("exit_reason")))
+                if not summary:
+                    mismatch.setdefault("summary", "empty")
+
+                capture_delegated_worker_runtime_failure(
+                    db,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                    route=route,
+                    status=status or ("failed" if error or not summary else "completed"),
+                    evidence_refs=[evidence_ref],
+                    validation_mismatch=mismatch,
+                    output_excerpt=summary,
+                    error_excerpt=error,
+                    session_id=getattr(self, "session_id", None),
+                )
+        except Exception:
+            logger.debug("delegate runtime failure capture failed", exc_info=True)
 
     def _apply_completion_gate_to_final_response(self, final_response: str) -> str:
         try:

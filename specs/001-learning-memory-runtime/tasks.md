@@ -358,7 +358,7 @@
 - [x] T131 [US8] Merge hydrated global hot-cache entries with local memory wiki/retrieval packets using strict token caps, source labels, evidence ids, and advisory wording so low-cost workers get the smallest useful context
 - [x] T131A [US8] Implement supervisor-side generic runtime failure capture for long/repeated command-family failures and evidence-mismatch substitutions, writing mandatory `supervisor_runtime_failure` memory records with judge/operator gates
 - [x] T131A1 [US8] Add supervisor runtime failure final-response gate and worker foreground timeout cap so failed/timed-out/empty worker calls are disclosed as degraded fallback instead of silently reported as successful worker completion
-- [ ] T131B [US8] Extend the same generic runtime failure capture contract to delegated agents/workers so worker hallucinations, false completions, and route substitutions are captured before curator/judge sidecars run
+- [x] T131B [US8] Extend the same generic runtime failure capture contract to delegated agents/workers so worker hallucinations, false completions, and route substitutions are captured before curator/judge sidecars run
 - [ ] T131C [US8] Add specialized curator/judge handling for `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
 
 ### Deferred Phase 11B Global Indexing And Sync Sidecars
@@ -398,7 +398,7 @@
 - [x] T145 [US9] Implement allocator decision logic that consults runtime memory and worker health, selects primary worker, enforces latency/retry budgets, skips unhealthy workers, tries ranked fallbacks, and pauses/schedules recovery instead of foreground sleeping on degradation
 - [x] T146 [US9] Wire allocator into the supervisor delegation path before direct fallback so Claude/Codex/DeepSeek/Cursor/Minimax can be reallocated under policy while final responses still disclose degraded worker evidence
 - [x] T147 [US9] Add allocator CLI/API observability: `hermes runtime allocations list/get --json` and `hermes runtime workers health --json`
-- [ ] T148 [US9] Extend generic runtime failure capture to delegated agents/workers so worker hallucinations, false completions, empty outputs, timeouts, and route substitutions are captured before curator/judge sidecars run
+- [x] T148 [US9] Extend generic runtime failure capture to delegated agents/workers so worker hallucinations, false completions, empty outputs, timeouts, and route substitutions are captured before curator/judge sidecars run
 - [ ] T149 [US9] Add specialized curator/judge handling for allocator and `supervisor_runtime_failure` records, producing advisory-only candidates until judge plus operator approve promotion or enforcement
 
 **Checkpoint**: `/goal` can continue serious work without trapping Hermes in one failed worker route; allocation attempts are bounded, observable, resumable, and separated from memory/policy enforcement.

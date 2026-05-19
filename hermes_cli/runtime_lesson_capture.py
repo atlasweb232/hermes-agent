@@ -21,9 +21,14 @@ _SECRET_PATTERNS = [
     re.compile(r"\b([A-Za-z0-9_]{6,}:[A-Za-z0-9_-]{20,})\b"),
     re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s]+"),
 ]
+_SAFE_HERMES_EVIDENCE_REF_RE = re.compile(
+    r"^hermes:(?:delegate|allocation|runtime-lesson):[A-Za-z0-9_.:-]{1,260}$"
+)
 
 WORKER_COMMAND_FAMILIES = {
     "worker-router",
+    "delegate_task",
+    "delegate-task",
     "claude",
     "codex",
     "deepseek",
@@ -70,6 +75,29 @@ class RuntimeFailureGate:
     last_successful_worker_family: str = ""
     failure_count: int = 0
     requires_disclosure: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DelegatedWorkerRuntimeFailure:
+    record_id: str
+    task_id: str
+    worker_id: str
+    route: str
+    command_family: str
+    status: str
+    evidence_refs: list[str] = field(default_factory=list)
+    validation_mismatch: dict[str, Any] = field(default_factory=dict)
+    output_excerpt: str = ""
+    error_excerpt: str = ""
+    session_id: Optional[str] = None
+    allocation_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    secret_safe: bool = True
+    requires_judge: bool = True
+    operator_approval_required: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -207,11 +235,22 @@ def _command_family(command: str) -> str:
     if not tokens:
         return "unknown"
     executable = tokens[0]
+    if executable in {"delegate_task", "delegate-task"}:
+        return "delegate_task"
     if executable in {"sudo", "env", "timeout", "time"} and len(tokens) > 1:
         executable = tokens[1]
     if executable == "hermes" and len(tokens) > 1:
         return "hermes"
     return executable
+
+
+def _route_family(route: str) -> str:
+    route_text = str(route or "").strip()
+    if not route_text:
+        return "unknown"
+    if route_text.startswith("delegate_task") or route_text.startswith("delegate-task"):
+        return "delegate_task"
+    return _worker_command_family(route_text) or _command_family(route_text)
 
 
 def _worker_command_family(command: str) -> str:
@@ -488,6 +527,162 @@ def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
         "record_id": lesson.record_id,
         "kind": lesson.kind,
         "claim": lesson.claim,
+    }
+
+
+def _clean_evidence_refs(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    cleaned: list[str] = []
+    for value in values:
+        raw = str(value or "").strip()
+        text = (
+            raw
+            if _SAFE_HERMES_EVIDENCE_REF_RE.fullmatch(raw)
+            else redact_sensitive_text(raw, max_chars=300).strip()
+        )
+        if text:
+            cleaned.append(text)
+    return cleaned[:20]
+
+
+def _should_capture_delegated_worker_failure(
+    *,
+    status: str,
+    validation_mismatch: Optional[dict[str, Any]],
+    route_substitution: bool,
+) -> bool:
+    normalized = str(status or "").strip().lower()
+    if normalized in {
+        "failed",
+        "failure",
+        "error",
+        "timeout",
+        "timed_out",
+        "empty_output",
+        "blocked",
+        "cancelled",
+        "interrupted",
+        "quota_exhausted",
+        "auth_failed",
+        "network_degraded",
+    }:
+        return True
+    if route_substitution:
+        return True
+    mismatch = validation_mismatch or {}
+    if mismatch:
+        validation_status = str(mismatch.get("validation_status") or "").strip().lower()
+        if validation_status and validation_status not in {"passed", "success", "ok"}:
+            return True
+        return True
+    return False
+
+
+def capture_delegated_worker_runtime_failure(
+    db: Any,
+    *,
+    task_id: str,
+    worker_id: str,
+    route: str,
+    status: str,
+    evidence_refs: Optional[list[str]] = None,
+    validation_mismatch: Optional[dict[str, Any]] = None,
+    output_excerpt: str = "",
+    error_excerpt: str = "",
+    session_id: Optional[str] = None,
+    allocation_id: Optional[str] = None,
+    attempt_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    expected_route: Optional[str] = None,
+) -> dict[str, Any]:
+    """Persist a structured delegated-worker runtime failure record.
+
+    The payload is intentionally bounded and redacted. Raw worker streams and
+    full logs must stay as external artifacts referenced by evidence URIs.
+    """
+    task = str(task_id or "").strip()
+    worker = str(worker_id or "").strip()
+    route_text = str(route or "").strip()
+    normalized_status = str(status or "unknown").strip().lower() or "unknown"
+    route_substitution = bool(expected_route and str(expected_route).strip() != route_text)
+    mismatch = dict(validation_mismatch or {})
+    if route_substitution:
+        mismatch.setdefault("expected_route", str(expected_route or "").strip())
+        mismatch.setdefault("actual_route", route_text)
+    if not _should_capture_delegated_worker_failure(
+        status=normalized_status,
+        validation_mismatch=mismatch,
+        route_substitution=route_substitution,
+    ):
+        return {"runtime_failure_captured": False, "reason": "no_failure"}
+
+    family = _route_family(route_text)
+    evidence = _clean_evidence_refs(evidence_refs or [])
+    if not evidence:
+        if allocation_id and attempt_id:
+            evidence = [f"hermes:allocation:{allocation_id}:{attempt_id}"]
+        elif task and worker:
+            evidence = [f"hermes:delegate:{task}:{worker}"]
+
+    claim_parts = [
+        task or "unknown-task",
+        worker or "unknown-worker",
+        route_text or "unknown-route",
+        normalized_status,
+        json.dumps(mismatch, sort_keys=True),
+        "|".join(evidence),
+    ]
+    record_id = _stable_id("memrec", "delegated_worker_runtime_failure:" + "|".join(claim_parts))
+    failure = DelegatedWorkerRuntimeFailure(
+        record_id=record_id,
+        task_id=task,
+        worker_id=worker,
+        route=redact_sensitive_text(route_text, max_chars=300),
+        command_family=family,
+        status=normalized_status,
+        evidence_refs=evidence,
+        validation_mismatch={
+            redact_sensitive_text(str(key), max_chars=120): redact_sensitive_text(str(value), max_chars=500)
+            for key, value in mismatch.items()
+        },
+        output_excerpt=redact_sensitive_text(output_excerpt, max_chars=800),
+        error_excerpt=redact_sensitive_text(error_excerpt, max_chars=800),
+        session_id=session_id,
+        allocation_id=allocation_id,
+        attempt_id=attempt_id,
+    )
+    payload = failure.to_dict()
+    payload.update(
+        {
+            "detector": "runtime_lesson_capture.delegated_worker_runtime_failure",
+            "failure_type": "delegated_worker_runtime_failure",
+            "route_substitution": route_substitution,
+        }
+    )
+    db.upsert_memory_record(
+        record_id=record_id,
+        kind="supervisor_runtime_failure",
+        title=f"Delegated worker runtime failure: {worker or family}",
+        body=(
+            "A delegated worker or allocator attempt failed, produced empty output, "
+            "timed out, substituted routes, or failed validation. Treat the result "
+            "as advisory-only until validated by supervisor evidence."
+        ),
+        payload_json=payload,
+        status="active",
+        score=0.9,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        task_id=task or None,
+        evidence_uri=evidence[0] if evidence else f"hermes:runtime-lesson:{record_id}",
+    )
+    return {
+        "runtime_failure_captured": True,
+        "record_id": record_id,
+        "kind": "delegated_worker_runtime_failure",
+        "status": normalized_status,
     }
 
 

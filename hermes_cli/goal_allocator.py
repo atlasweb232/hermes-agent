@@ -333,6 +333,7 @@ def record_worker_attempt(
     if attempt.allocation_id != plan.allocation_id:
         raise ValueError("attempt allocation_id does not match plan")
     save_worker_attempt(db, attempt)
+    _capture_worker_attempt_runtime_failure(db, plan, attempt)
     health = load_worker_health(db, attempt.worker_id) or WorkerHealth(worker_id=attempt.worker_id)
     health = update_worker_health_from_attempt(
         health,
@@ -342,6 +343,48 @@ def record_worker_attempt(
     )
     save_worker_health(db, health)
     return health
+
+
+def _capture_worker_attempt_runtime_failure(
+    db: Any,
+    plan: WorkerAllocationPlan,
+    attempt: WorkerAttemptResult,
+) -> None:
+    try:
+        from hermes_cli.runtime_lesson_capture import capture_delegated_worker_runtime_failure
+
+        validation_mismatch: Dict[str, Any] = {}
+        if attempt.validation_status == "failed" or (
+            attempt.status == "success"
+            and plan.validation_required
+            and attempt.validation_status != "passed"
+        ):
+            validation_mismatch["validation_status"] = attempt.validation_status
+        if attempt.error_signature:
+            validation_mismatch["error_signature"] = attempt.error_signature
+        if attempt.recovery_hint:
+            validation_mismatch["recovery_hint"] = attempt.recovery_hint
+
+        capture_delegated_worker_runtime_failure(
+            db,
+            task_id=plan.task_id,
+            worker_id=attempt.worker_id,
+            route=attempt.route,
+            status=attempt.status,
+            evidence_refs=attempt.artifact_refs,
+            validation_mismatch=validation_mismatch,
+            output_excerpt=attempt.stdout_excerpt,
+            error_excerpt=attempt.stderr_excerpt,
+            session_id=plan.session_id,
+            allocation_id=attempt.allocation_id,
+            attempt_id=attempt.attempt_id,
+            tenant_id=plan.tenant_id,
+            repo_id=plan.repo_id,
+        )
+    except Exception:
+        # Failure capture is advisory telemetry and must not block allocator
+        # state transitions or foreground goal turns.
+        return
 
 
 def _list_state_meta_prefix(db: Any, prefix: str) -> List[Dict[str, str]]:
