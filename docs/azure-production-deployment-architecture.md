@@ -36,6 +36,118 @@ soak, promote, and rollback gates.
 - SQLite remains local spool/fallback, not the shared production bus.
 - Production promotion requires operator approval.
 
+## Production Resource Targets
+
+The Azure production profile should be explicit about which managed service is
+used for each platform responsibility. The default target is managed Azure
+services first, self-hosted infrastructure only when a managed service cannot
+meet the requirement.
+
+| Responsibility | Preferred Azure Target | Alternative | Notes |
+| --- | --- | --- | --- |
+| Runtime cells | Azure Container Apps | AKS or VM Scale Sets | Container Apps is the first production target for horizontally scaled Hermes runtime/sidecar containers. |
+| Event bus | Azure Event Hubs with Kafka protocol | Redpanda on AKS or Kafka-compatible provider | Event Hubs is preferred for managed operations. Redpanda is used only when full Kafka semantics are required. |
+| Local spool | SQLite per runtime cell | Local disk volume | Always remains enabled as broker-unavailable fallback. |
+| Object storage | ADLS Gen2 / Azure Blob Storage | S3/GCS via external profile | Stores corpus bundles, wiki artifacts, deployment artifacts, benchmark outputs, and audit exports. |
+| State store | Azure Database for PostgreSQL Flexible Server | Cosmos DB | PostgreSQL is the default relational state target; Cosmos is only for document/event-heavy profiles. |
+| Secrets | Azure Key Vault | External secret manager | Stores provider keys, connector tokens, deployment tokens, and tenant secrets by reference only. |
+| Observability | Azure Monitor + Application Insights + Log Analytics | Hermes local observability only | Production should export metrics/logs/traces without raw transcripts or secrets. |
+| Public ingress | Azure Front Door | Application Gateway / Container Apps ingress | Front Door is preferred for global routing, TLS, WAF, and traffic split. |
+| Private network | VNet integration + private endpoints | Public locked-down ingress | Production profiles should prefer private access to Key Vault, storage, database, and bus. |
+| IaC output | Terraform first | Bicep optional | Hermes generates/validates artifacts and can apply only after explicit approval. |
+
+## Object Storage Layout
+
+Object storage is the durable artifact plane. It is not the runtime database.
+For Azure, use ADLS Gen2 or Blob Storage containers with lifecycle policies.
+
+Suggested containers:
+
+```text
+hermes-artifacts
+  /deployments/<env>/<run_id>/
+  /benchmarks/<env>/<run_id>/
+  /worker-artifacts/<tenant>/<job_id>/
+
+hermes-memory
+  /wiki/<scope>/<tenant_or_global>/...
+  /sync-deltas/<date>/...
+  /indexes/lexical/<version>/...
+  /indexes/vector/<version>/...
+  /indexes/graph/<version>/...
+
+hermes-corpus
+  /training-corpus/tenant_id=<id>/scope=<scope>/dataset_family=<family>/date=<date>/...
+
+hermes-audit
+  /deployment-runs/<run_id>/
+  /approval-records/<date>/
+  /redaction-reports/<date>/
+```
+
+Rules:
+
+- Never store raw secrets.
+- Avoid raw transcripts unless a tenant explicitly enables an audited retention
+  policy; default is compact redacted evidence only.
+- Store hashes, manifests, approval refs, and source refs with every exported
+  bundle.
+- Use lifecycle policies for logs/artifacts and longer retention for approval
+  and audit manifests.
+
+## State Store Layout
+
+PostgreSQL should hold durable control-plane state:
+
+- tenants
+- repos
+- runtime cells
+- connectors
+- jobs/task graph/allocation state
+- worker health
+- feature toggles
+- memory/wiki metadata
+- deployment profiles
+- deployment runs
+- approval records
+- cost ledgers
+
+SQLite remains per-runtime-cell spool/cache. It is not the production
+multi-tenant source of truth.
+
+## Event Bus Topology
+
+Production topics should be explicit:
+
+```text
+runtime.events
+learning.events
+memory.sync
+observability.events
+deployment.events
+deadletter.events
+```
+
+Consumer groups:
+
+```text
+curator-sidecars
+judge-sidecars
+wiki-indexers
+local-sync-sidecars
+observability-writers
+deployment-workers
+corpus-remittance-workers
+```
+
+Fallback:
+
+- If Event Hubs/Redpanda is unavailable, foreground runtime writes to SQLite
+  spool and returns.
+- A publish sidecar retries broker publish later.
+- Bad events go to dead-letter with bounded redacted payloads.
+- Replay must be idempotent using event ids and bundle hashes.
+
 ## Chat-Orchestrated Deployment
 
 Hermes chat may orchestrate:
@@ -134,13 +246,16 @@ Promotion gate:
 
 ## First Implementation Slice
 
-1. Deployment profile contract and DTOs.
+1. Deployment profile contract and DTOs with explicit Azure resource targets.
 2. Plan/preflight tests with fake Azure adapters.
-3. Approval-gated apply run model.
-4. Status and rollback DTOs.
-5. Event Hubs/Redpanda bus deployment helper templates.
-6. SQLite fallback/spool verification.
-7. Smoke/soak checklist output.
-8. CLI/API JSON surfaces.
+3. Terraform-first artifact generation with Bicep optional.
+4. Approval-gated apply run model.
+5. Status and rollback DTOs.
+6. Event Hubs/Redpanda bus deployment helper templates.
+7. Object storage, PostgreSQL/Cosmos, Key Vault, Azure Monitor, and ingress
+   planning outputs.
+8. SQLite fallback/spool verification.
+9. Smoke/soak checklist output.
+10. CLI/API JSON surfaces.
 
 No live Azure resources should be created by default tests.

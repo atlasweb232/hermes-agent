@@ -424,10 +424,12 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **FR-123**: Fine-tuning, model registry, model evaluation gates, serving, and rollout decisions MUST be owned by external MLOps infrastructure, not by Hermes runtime or sidecars.
 - **FR-124**: Runtime sidecars MAY create training candidates and approved corpus bundles but MUST NOT train, register, deploy, route to, or promote fine-tuned models directly.
 - **FR-125**: System MUST support Azure production deployment planning for Hermes platform infrastructure through a gated plan/preflight/apply/status/rollback workflow.
-- **FR-126**: Azure deployment planning MUST include runtime cells, sidecars, event bus backend, object/state storage, secrets, observability, communication connectors, network/DNS, quota, and cost estimate checks.
+- **FR-126**: Azure deployment planning MUST include runtime cells, sidecars, event bus backend, object storage, state store, secrets, observability, communication connectors, network/DNS, IaC artifacts, quota, and cost estimate checks.
 - **FR-127**: Hermes chat MAY orchestrate Azure deployment workflows, but MUST require explicit operator approval before creating paid resources, changing DNS, rotating secrets, enabling production traffic, deleting infrastructure, or promoting staging to production.
 - **FR-128**: Azure deployment helpers MUST keep SQLite as the default local spool/fallback and MUST NOT block foreground runtime when Azure Event Hubs, Kafka, Redpanda, storage, or sidecar infrastructure is unavailable.
 - **FR-129**: Azure production deployment MUST support staging first, production promotion only after smoke/soak gates pass, and rollback to the prior known-good deployment profile.
+- **FR-130**: Azure production profiles MUST explicitly classify object storage containers for artifacts, memory/wiki/index data, corpus remittance bundles, and audit records.
+- **FR-131**: Azure production profiles MUST prefer managed Azure services first: Container Apps for runtime cells, Event Hubs Kafka protocol for managed bus, ADLS Gen2 or Blob Storage for object storage, PostgreSQL Flexible Server for relational state, Key Vault for secrets, and Azure Monitor/Application Insights for observability, while allowing AKS/Redpanda/Cosmos alternatives by explicit profile.
 
 ### Key Entities
 
@@ -457,6 +459,8 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **Deployment Preflight Report**: Validation result for Azure login, subscription, quotas, resource providers, DNS, Key Vault, storage, network, container/runtime capacity, and optional bus availability.
 - **Deployment Apply Run**: Operator-approved execution record for Azure resource creation or update, with step status, artifacts, logs, and rollback refs.
 - **Deployment Promotion Gate**: Staging-to-production decision requiring smoke tests, soak metrics, health checks, cost/latency checks, and operator approval.
+- **Azure Object Storage Plane**: ADLS Gen2 or Blob Storage containers used for deployment artifacts, memory/wiki/index artifacts, corpus remittance bundles, benchmark outputs, and audit reports.
+- **Azure State Store Plane**: PostgreSQL or Cosmos-backed durable control-plane state for tenants, repos, jobs, allocations, memory metadata, deployment profiles, deployment runs, approvals, and cost ledgers.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Feature Toggle**: Runtime configuration switch that controls whether a platform capability can affect foreground behavior, sidecar behavior, observability, or enforcement.
 - **E2E Feature Test Case**: One executable feature-level scenario with required toggle state, workload fixture, expected artifacts, telemetry assertions, validation commands, and pass/fail classification.

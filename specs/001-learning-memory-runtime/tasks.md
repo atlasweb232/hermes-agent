@@ -682,22 +682,22 @@
 
 ## Phase 20: Azure Production Deployment Orchestration (Priority: P17)
 
-**Goal**: Add a production-safe Azure deployment workflow where Hermes chat can orchestrate plan, preflight, apply, status, smoke, soak, promote, and rollback while requiring operator approval before paid or dangerous changes.
+**Goal**: Add a production-deployment-ready Azure workflow where Hermes chat can orchestrate plan, preflight, IaC artifact generation, apply, status, smoke, soak, promote, and rollback while requiring operator approval before paid or dangerous changes.
 
-**Independent Test**: With fake Azure adapters and local templates only, produce a deployment plan, run preflight, block apply without approval, apply a staging plan with approval, emit smoke/soak checklists, refuse production promotion without evidence, and produce a rollback report. Verify no live Azure resources are created during default tests.
+**Independent Test**: With fake Azure adapters and local templates only, produce a deployment plan with explicit Azure resource classes, generate Terraform-first artifacts, run preflight, block apply without approval, apply a staging plan with approval, emit smoke/soak checklists, refuse production promotion without evidence, and produce a rollback report. Verify no live Azure resources are created during default tests.
 
 **Boundary**: This phase creates deployment orchestration contracts, DTOs, templates, CLI/API surfaces, and fake-adapter tests. It must not create live Azure resources by default. SQLite remains the default local bus/spool and Azure bus/storage failures must not block foreground runtime.
 
 ### Spec And Architecture Artifacts
 
 - [x] T290 [US17] Add `contracts/azure-production-deployment.md` defining Azure deployment profiles, plan/preflight/apply/status/promote/rollback outputs, approval gates, and non-goals
-- [x] T291 [US17] Add `docs/azure-production-deployment-architecture.md` covering local/dev, Azure staging, Azure production, chat orchestration, Event Hubs vs Redpanda choices, scalability, readiness gates, and first implementation slice
+- [x] T291 [US17] Add `docs/azure-production-deployment-architecture.md` covering local/dev, Azure staging, Azure production, chat orchestration, Event Hubs vs Redpanda choices, Azure object/state/secrets/observability resource targets, scalability, readiness gates, and first implementation slice
 - [ ] T292 [US17] Link Azure deployment orchestration from tenant platform, production evaluation harness, global memory wiki, runtime learning, and deployment docs
 
 ### Tests For Azure Deployment Orchestration
 
-- [ ] T293 [P] [US17] Add deployment profile schema tests for dev/staging/production, runtime-cell mode, bus backend, storage, Key Vault, observability, network/DNS, and approval requirements
-- [ ] T294 [P] [US17] Add plan/preflight tests with fake Azure adapters covering subscription visibility, quota, resource providers, Key Vault, storage, bus, DNS/network, required secret refs, cost estimate, and rollback path
+- [ ] T293 [P] [US17] Add deployment profile schema tests for dev/staging/production, runtime-cell mode, bus backend, ADLS/Blob object storage containers, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, network/DNS, IaC format, and approval requirements
+- [ ] T294 [P] [US17] Add plan/preflight tests with fake Azure adapters covering subscription visibility, quota, resource providers, Key Vault, object storage, state store, bus, observability workspace, DNS/network, required secret refs, cost estimate, IaC artifact refs, and rollback path
 - [ ] T295 [P] [US17] Add approval gate tests proving apply/promote/destroy/DNS/secret-rotation operations fail closed without explicit operator approval
 - [ ] T296 [P] [US17] Add bus deployment readiness tests for Event Hubs Kafka protocol and Redpanda/Kafka helper templates, broker health, topic verification, dead-letter/replay, lag metrics, TLS/SASL config shape, and SQLite spool fallback
 - [ ] T297 [P] [US17] Add smoke/soak/promotion tests proving staging must pass health, event bus, sidecar, memory retrieval, urgent alert, cost/latency, and no-foreground-blocking checks before production promotion
@@ -705,12 +705,12 @@
 
 ### Implementation For Azure Deployment Orchestration
 
-- [ ] T299 [US17] Implement Azure deployment profile DTOs and local profile loader with redacted JSON serialization
+- [ ] T299 [US17] Implement Azure deployment profile DTOs and local profile loader with explicit compute/bus/object-storage/state-store/secrets/observability/network/IaC sections and redacted JSON serialization
 - [ ] T300 [US17] Implement fake Azure adapter interfaces for plan/preflight tests without live Azure dependency
-- [ ] T301 [US17] Implement deployment plan builder with resource diff, cost estimate placeholder, required secret refs, risk list, smoke/soak plan, and rollback plan
-- [ ] T302 [US17] Implement preflight evaluator for Azure account/subscription/quota/provider/storage/Key Vault/bus/network/DNS checks using fake adapters by default
+- [ ] T301 [US17] Implement deployment plan builder with resource diff, Terraform-first artifact refs, cost estimate placeholder, required secret refs, risk list, smoke/soak plan, and rollback plan
+- [ ] T302 [US17] Implement preflight evaluator for Azure account/subscription/quota/provider/object-storage/state-store/Key Vault/bus/observability/network/DNS checks using fake adapters by default
 - [ ] T303 [US17] Implement approval-gated apply/promote/destroy decision helpers and immutable deployment run records
-- [ ] T304 [US17] Implement Event Hubs Kafka and Redpanda/Kafka deployment helper templates plus SQLite spool fallback configuration, without creating live resources by default
+- [ ] T304 [US17] Implement Event Hubs Kafka, Redpanda/Kafka, ADLS/Blob object storage, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, ingress/network, and SQLite spool fallback deployment helper templates, without creating live resources by default
 - [ ] T305 [US17] Implement smoke/soak checklist generator and production promotion gate evaluator
 - [ ] T306 [US17] Add CLI/API JSON surfaces for `hermes deploy plan/preflight/apply/status/smoke/soak/promote/rollback --target azure`
 - [ ] T307 [US17] Add E2E fixture proving chat/API can orchestrate Azure staging deployment flow with fake adapters, explicit approval, smoke/soak evidence, and blocked production promotion without approval
@@ -885,7 +885,7 @@
 2. Add deployment profile and fake Azure adapter tests.
 3. Add plan/preflight builders.
 4. Add approval-gated apply/promote/rollback run records.
-5. Add Event Hubs/Redpanda helper templates and SQLite fallback config.
+5. Add Event Hubs/Redpanda, object storage, state store, Key Vault, observability, ingress/network helper templates and SQLite fallback config.
 6. Add smoke/soak/promotion gate outputs.
 7. Add CLI/API JSON surfaces.
 8. Add E2E fake-adapter staging deployment fixture.

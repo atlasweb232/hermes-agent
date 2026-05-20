@@ -36,16 +36,27 @@ Profiles are versioned and explicit.
   "storage": {
     "object_store": "azure_blob|adls_gen2",
     "state_store": "sqlite|postgres|cosmos",
-    "key_vault": "kv-hermes-prod"
+    "key_vault": "kv-hermes-prod",
+    "containers": {
+      "artifacts": "hermes-artifacts",
+      "memory": "hermes-memory",
+      "corpus": "hermes-corpus",
+      "audit": "hermes-audit"
+    }
   },
   "observability": {
-    "backend": "hermes_local|azure_monitor",
+    "backend": "hermes_local|azure_monitor|application_insights",
     "log_retention_days": 30
   },
   "network": {
     "private_ingress": true,
     "public_gateway": "frontdoor|app_gateway|none",
     "dns_zone_ref": "dns-ref"
+  },
+  "iac": {
+    "format": "terraform|bicep",
+    "artifact_store": "azure_blob",
+    "apply_requires_approval": true
   },
   "approval": {
     "required_for_apply": true,
@@ -61,6 +72,7 @@ Profiles are versioned and explicit.
 
 - resources to create/update
 - resources not managed by Hermes
+- IaC artifacts to generate
 - estimated monthly cost range
 - required secrets and config refs
 - risk list
@@ -83,6 +95,8 @@ The plan must be read-only.
 - Key Vault access
 - object/state storage access
 - Event Hubs/Redpanda/Kafka choice
+- PostgreSQL/Cosmos connectivity plan when configured
+- Azure Monitor/Application Insights workspace plan when configured
 - DNS/network prerequisites
 - container/VM/AKS capacity
 - required secrets are referenced, not printed
@@ -102,6 +116,24 @@ executes only after explicit approval. It records:
 - sanitized logs
 - rollback refs
 - smoke-test refs
+
+Default tests and dry runs must generate or validate IaC artifacts only. Live
+apply is opt-in and approval-gated.
+
+## Required Production Resource Classes
+
+Azure production profiles must classify resources into these groups:
+
+- compute: Container Apps, AKS, or VM/VMSS runtime cells
+- bus: Event Hubs Kafka, Redpanda, Kafka, plus SQLite fallback spool
+- object storage: ADLS Gen2 or Blob Storage containers
+- state store: PostgreSQL Flexible Server or Cosmos DB
+- secrets: Azure Key Vault
+- observability: Azure Monitor, Application Insights, Log Analytics
+- ingress/network: Front Door, Application Gateway, Container Apps ingress,
+  VNet integration, private endpoints, DNS
+- artifacts: Terraform/Bicep outputs, deployment manifests, smoke reports,
+  rollback refs
 
 ## Production Promotion
 
