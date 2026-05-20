@@ -467,14 +467,14 @@
 
 ### Tests For Production Evaluation Harness
 
-- [ ] T178 [P] [US11] Add benchmark environment tests proving upstream and branch runs use separate `HERMES_HOME`, separate artifact roots, shared workload definitions, and no cross-contamination
-- [ ] T179 [P] [US11] Add telemetry schema tests for token/cost/latency/context/path attribution across supervisor, planner, worker, judge, curator, dreaming, progress summarizer, QA, deployment, memory retrieval, and Slack/dashboard analysis
-- [ ] T180 [P] [US11] Add production gate tests proving rollout is blocked when branch quality regresses, sidecars block foreground work, urgent alerts are missing, memory approval boundaries are violated, or cost exceeds thresholds
-- [ ] T181 [P] [US11] Add workload pack fixture tests for review, implementation, QA, deployment, long-running goal, fallback, stale worker, repeated failure, multi-repo decomposition, and hallucinated completion cases
+- [x] T178 [P] [US11] Add benchmark environment tests proving upstream and branch runs use separate `HERMES_HOME`, separate artifact roots, shared workload definitions, and no cross-contamination
+- [x] T179 [P] [US11] Add telemetry schema tests for token/cost/latency/context/path attribution across supervisor, planner, worker, judge, curator, dreaming, progress summarizer, QA, deployment, memory retrieval, and Slack/dashboard analysis
+- [x] T180 [P] [US11] Add production gate tests proving rollout is blocked when branch quality regresses, sidecars block foreground work, urgent alerts are missing, memory approval boundaries are violated, or cost exceeds thresholds
+- [x] T181 [P] [US11] Add workload pack fixture tests for review, implementation, QA, deployment, long-running goal, fallback, stale worker, repeated failure, multi-repo decomposition, and hallucinated completion cases
 
 ### Implementation For Production Evaluation Harness
 
-- [ ] T182 [US11] Implement benchmark workload dataclasses and JSON/YAML loader with repo refs, prompt, model/tool profile, expected artifacts, validation commands, and pass/fail rubric
+- [x] T182 [US11] Implement benchmark workload dataclasses and JSON/YAML loader with repo refs, prompt, model/tool profile, expected artifacts, validation commands, and pass/fail rubric
 - [ ] T183 [US11] Implement isolated environment runner that can invoke upstream Hermes and branch Hermes with separate homes, worktrees, env files, and artifact roots
 - [ ] T184 [US11] Implement telemetry collector for model usage, latency, cost estimates, context admitted, raw bytes stored, worker attempts, sidecar runs, judge decisions, memory hits, validation results, notifications, and operator interventions
 - [ ] T185 [US11] Implement comparison report generator with upstream-vs-branch quality/cost/latency/context/self-learning metrics and production gate status
