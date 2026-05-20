@@ -443,7 +443,7 @@
 - [x] T162 [US10] Implement health sidecar recovery actions: update worker health, mark stale lease/no-progress, emit recovery packet, request reassignment, pause allocation with retry-after, and publish learning events
 - [x] T163 [US10] Implement restart recovery loader for goals, task ledger, task graphs, allocations, worker health, hot memory, approved lessons, sidecar leases, and safe-to-resume decisions
 - [x] T164 [US10] Add CLI/API observability: `hermes runtime health check --once --json`, `hermes runtime task-graph list/get --json`, and `hermes runtime recovery status/run --json`
-- [ ] T165 [US10] Run controlled upstream-vs-branch smoke tests proving the branch avoids repeated failed worker loops, preserves foreground responsiveness, and resumes safe work after restart
+- [x] T165 [US10] Run controlled upstream-vs-branch smoke tests proving the branch avoids repeated failed worker loops, preserves foreground responsiveness, and resumes safe work after restart
 - [x] T171 [US10] Implement `SupervisorContextGate` helpers that accept only typed bounded worker packets and attach artifact refs instead of raw streams
 - [x] T172 [US10] Wire worker runtime wrappers and worker-router/delegation paths to emit mandatory progress events and artifact refs into the runtime event bus/task ledger
 - [x] T173 [US10] Implement progress summarizer sidecar that consumes worker progress events, uses the configured low-cost reasoning tier, emits compact checkpoints, and degrades to deterministic summaries when the model is unavailable

@@ -518,7 +518,6 @@ def run_worker_with_progress_events(
                     store_only=True,
                     metadata={"stream": stream_name},
                 )
-                artifact_refs.append(stream_ref)
         if not summary.strip():
             final_status = "degraded"
             degraded_reason = "empty_output"
@@ -1009,11 +1008,12 @@ def run_progress_summarizer_sidecar(
     artifact_refs: List[str] = []
     evidence_refs: List[str] = []
     for event in events:
+        if event.get("event_type") == "worker_stream_ref":
+            continue
         for ref in event.get("artifact_refs") or []:
             if ref not in artifact_refs:
                 artifact_refs.append(str(ref))
-        if event.get("event_type") != "worker_stream_ref":
-            evidence_refs.append(f"event://{event.get('event_id')}")
+        evidence_refs.append(f"event://{event.get('event_id')}")
     packet = {
         "packet_type": "worker_checkpoint",
         "task_id": task_id,
