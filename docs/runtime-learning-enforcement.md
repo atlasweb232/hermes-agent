@@ -335,8 +335,39 @@ Remaining validation:
 
 - Run an actual fresh `hermes chat`/worker task and verify the supervisor
   receives the hydrated advisory packet before attempting the old command loop.
-- Audit the SQLite bus queue: sidecar reported queued events, so consumer drain
-  behavior still needs `T128`.
+
+## SQLite Learning Bus Audit And Drain
+
+T128 added local-only audit and drain surfaces for the SQLite learning event
+bus before any Kafka/Redpanda work:
+
+```bash
+python3 -m hermes_cli.main memory bus audit --json
+python3 -m hermes_cli.main memory bus drain --consumer audit --drain-key smoke-1 --limit 1 --json
+```
+
+The audit output reports bounded metadata only. Samples include event ids,
+topics, tenant/repo/task scope, attempt and lease metadata, timestamps,
+`event_key_present`, `lease_expired`, `payload_redacted`, payload byte size,
+and payload key count. It does not emit `payload_json`, raw transcripts, raw
+logs, API keys, tokens, passwords, or payload values.
+
+Replay safety is explicit in the JSON:
+
+- expired `leased` rows are counted as replayable;
+- `consumed` and `dead` rows are counted as non-replayable;
+- rows with event idempotency keys are counted without exposing the key value;
+- `drain` records `(drain_key, event_id)` in SQLite so repeating the same
+  drain key returns `already_drained` metadata instead of leasing or acking the
+  same event again.
+
+Dedicated consumer sidecar conclusion: a dedicated local consumer sidecar is
+recommended before Kafka/Redpanda when durable queued backlog or replayable
+expired leases exist, or when multi-instance operation would otherwise depend
+on repeated manual drains. For single-node/dev with no queued or replayable
+backlog, manual CLI drain or a local sidecar remains sufficient. The same
+conclusion is exposed as `dedicated_consumer_sidecar_required` and
+`dedicated_consumer_sidecar_reason` in `memory bus audit --json`.
 
 ## VM Phase 11A Live Failure-Learn Smoke
 

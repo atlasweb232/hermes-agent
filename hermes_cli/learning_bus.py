@@ -109,6 +109,24 @@ def ensure_learning_bus_schema(db: SessionDB) -> None:
                 WHERE event_key IS NOT NULL
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hermes_learning_bus_drains (
+                drain_key TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                consumer TEXT NOT NULL,
+                ack INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL,
+                PRIMARY KEY (drain_key, event_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hermes_learning_bus_drains_event
+                ON hermes_learning_bus_drains(event_id, created_at)
+            """
+        )
 
     db._execute_write(_do)
 
@@ -256,6 +274,239 @@ def _eligible_topic_clause(topics: Optional[Iterable[str]], params: List[Any]) -
         return ""
     params.extend(topic_list)
     return f" AND topic IN ({', '.join(['?'] * len(topic_list))})"
+
+
+def _bounded_limit(limit: int, *, default: int = 50) -> int:
+    try:
+        parsed = int(limit)
+    except Exception:
+        parsed = default
+    return max(1, min(parsed, 500))
+
+
+def _event_audit_metadata(event: LearningBusEvent, *, now: Optional[float] = None) -> Dict[str, Any]:
+    payload_text = _json_dumps(event.payload_json)
+    lease_expired = (
+        event.status == "leased"
+        and event.leased_until is not None
+        and event.leased_until <= (_now() if now is None else now)
+    )
+    return {
+        "id": event.id,
+        "topic": event.topic,
+        "tenant_id": event.tenant_id,
+        "repo_id": event.repo_id,
+        "task_id": event.task_id,
+        "event_key_present": bool(event.event_key),
+        "attempts": event.attempts,
+        "max_attempts": event.max_attempts,
+        "lease_owner": event.lease_owner,
+        "lease_expired": bool(lease_expired),
+        "created_at": event.created_at,
+        "updated_at": event.updated_at,
+        "consumed_at": event.consumed_at,
+        "payload_redacted": True,
+        "payload_size_bytes": len(payload_text.encode("utf-8")),
+        "payload_key_count": len(event.payload_json) if isinstance(event.payload_json, dict) else 0,
+    }
+
+
+def _event_where(filters: Dict[str, Optional[str]], params: List[Any]) -> str:
+    clauses = []
+    for key in ("topic", "tenant_id", "repo_id"):
+        value = filters.get(key)
+        if value is not None:
+            clauses.append(f"{key} = ?")
+            params.append(value)
+    return f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+
+def audit_learning_bus(
+    db: SessionDB,
+    *,
+    topic: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    limit: int = 50,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Return redacted, JSON-serializable queue state for operator audits."""
+    ensure_learning_bus_schema(db)
+    current = _now() if now is None else now
+    filters = {"topic": topic, "tenant_id": tenant_id, "repo_id": repo_id}
+    count_params: List[Any] = []
+    where = _event_where(filters, count_params)
+    rows = db._conn.execute(
+        f"""
+        SELECT status, COUNT(*) AS count
+        FROM hermes_learning_events
+        {where}
+        GROUP BY status
+        """,
+        tuple(count_params),
+    ).fetchall()
+    status_counts = {status: 0 for status in ("queued", "leased", "consumed", "dead")}
+    status_counts.update({row["status"]: int(row["count"] or 0) for row in rows})
+
+    samples: Dict[str, List[Dict[str, Any]]] = {status: [] for status in status_counts}
+    sample_limit = _bounded_limit(limit)
+    for status in ("queued", "leased", "consumed", "dead"):
+        params: List[Any] = []
+        scoped_where = _event_where(filters, params)
+        status_clause = "status = ?"
+        if scoped_where:
+            scoped_where = f"{scoped_where} AND {status_clause}"
+        else:
+            scoped_where = f"WHERE {status_clause}"
+        params.append(status)
+        status_rows = db._conn.execute(
+            f"""
+            SELECT * FROM hermes_learning_events
+            {scoped_where}
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (*params, sample_limit),
+        ).fetchall()
+        samples[status] = [
+            _event_audit_metadata(_row_to_event(row), now=current) for row in status_rows
+        ]
+
+    replay_params: List[Any] = []
+    replay_where = _event_where(filters, replay_params)
+    if replay_where:
+        replay_where = f"{replay_where} AND status = 'leased' AND leased_until <= ?"
+    else:
+        replay_where = "WHERE status = 'leased' AND leased_until <= ?"
+    replay_params.append(current)
+    replayable_expired = db._conn.execute(
+        f"SELECT COUNT(*) AS count FROM hermes_learning_events {replay_where}",
+        tuple(replay_params),
+    ).fetchone()["count"]
+
+    key_params: List[Any] = []
+    key_where = _event_where(filters, key_params)
+    if key_where:
+        key_where = f"{key_where} AND event_key IS NOT NULL"
+    else:
+        key_where = "WHERE event_key IS NOT NULL"
+    idempotency_keys_present = db._conn.execute(
+        f"SELECT COUNT(*) AS count FROM hermes_learning_events {key_where}",
+        tuple(key_params),
+    ).fetchone()["count"]
+
+    queued_backlog = status_counts.get("queued", 0)
+    replayable_count = int(replayable_expired or 0)
+    sidecar_required = queued_backlog > 0 or replayable_count > 0
+    if sidecar_required:
+        reason = (
+            "queued backlog or replayable expired leases exist; repeated manual drain "
+            "or multi-instance operation should use a dedicated local consumer sidecar before Kafka/Redpanda"
+        )
+    else:
+        reason = (
+            "no queued backlog or replayable expired leases were found; single-node/dev "
+            "operation can remain manual CLI/local sidecar"
+        )
+
+    return {
+        "status": "ok",
+        "backend": "sqlite",
+        "filters": {key: value for key, value in filters.items() if value is not None},
+        "status_counts": status_counts,
+        "samples": samples,
+        "replay_safety": {
+            "replayable_expired_leases": replayable_count,
+            "non_replayable_consumed": status_counts.get("consumed", 0),
+            "non_replayable_dead": status_counts.get("dead", 0),
+            "idempotency_keys_present": int(idempotency_keys_present or 0),
+        },
+        "dedicated_consumer_sidecar_required": sidecar_required,
+        "dedicated_consumer_sidecar_reason": reason,
+    }
+
+
+def _drain_records_for_key(db: SessionDB, drain_key: str, *, now: Optional[float] = None) -> List[Dict[str, Any]]:
+    rows = db._conn.execute(
+        """
+        SELECT e.*
+        FROM hermes_learning_bus_drains d
+        JOIN hermes_learning_events e ON e.id = d.event_id
+        WHERE d.drain_key = ?
+        ORDER BY d.created_at ASC
+        """,
+        (drain_key,),
+    ).fetchall()
+    return [_event_audit_metadata(_row_to_event(row), now=now) for row in rows]
+
+
+def drain_learning_bus_batch(
+    db: SessionDB,
+    *,
+    consumer: str,
+    topics: Optional[Iterable[str]] = None,
+    limit: int = 10,
+    lease_seconds: float = 300.0,
+    drain_key: str,
+    ack: bool = True,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Lease one batch and optionally ack it, idempotently keyed by drain_key."""
+    ensure_learning_bus_schema(db)
+    key = str(drain_key or "").strip()
+    if not key:
+        raise ValueError("drain_key is required")
+    current = _now() if now is None else now
+    existing = _drain_records_for_key(db, key, now=current)
+    if existing:
+        return {
+            "status": "ok",
+            "consumer": consumer,
+            "drain_key": key,
+            "idempotent_replay": True,
+            "ack": bool(ack),
+            "drained_count": 0,
+            "already_drained_count": len(existing),
+            "events": [],
+            "already_drained": existing,
+        }
+
+    result = consume_learning_events(
+        db,
+        consumer=consumer,
+        topics=topics,
+        limit=_bounded_limit(limit, default=10),
+        lease_seconds=lease_seconds,
+        now=current,
+    )
+    drained: List[Dict[str, Any]] = []
+    for event in result.leased:
+        def _record(conn, *, event_id=event.id):
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO hermes_learning_bus_drains (
+                    drain_key, event_id, consumer, ack, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (key, event_id, consumer, 1 if ack else 0, current),
+            )
+
+        db._execute_write(_record)
+        final_event = mark_learning_event_consumed(db, event.id, now=current) if ack else get_learning_event(db, event.id)
+        drained.append(_event_audit_metadata(final_event or event, now=current))
+
+    return {
+        "status": "ok",
+        "consumer": consumer,
+        "drain_key": key,
+        "idempotent_replay": False,
+        "ack": bool(ack),
+        "drained_count": len(drained),
+        "already_drained_count": 0,
+        "events": drained,
+        "already_drained": [],
+        "dead_lettered": result.dead_lettered,
+    }
 
 
 def consume_learning_events(

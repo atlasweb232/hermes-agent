@@ -12956,6 +12956,20 @@ Examples:
     bus_consume.add_argument("--lease-seconds", type=float, default=300.0, help="Lease duration")
     bus_consume.add_argument("--ack", action="store_true", help="Immediately mark leased events consumed")
     bus_consume.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_audit = bus_sub.add_parser("audit", help="Audit learning bus queue safety")
+    bus_audit.add_argument("--topic", default="", help="Event topic filter")
+    bus_audit.add_argument("--tenant-id", default="", help="Tenant scope")
+    bus_audit.add_argument("--repo-id", default="", help="Repository scope")
+    bus_audit.add_argument("--limit", type=int, default=50, help="Maximum samples per status")
+    bus_audit.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_drain = bus_sub.add_parser("drain", help="Idempotently lease and ack one learning bus batch")
+    bus_drain.add_argument("--topic", action="append", default=[], help="Topic to drain; repeatable")
+    bus_drain.add_argument("--consumer", default="cli", help="Consumer name")
+    bus_drain.add_argument("--drain-key", required=True, help="Idempotency key for this drain run")
+    bus_drain.add_argument("--limit", type=int, default=10, help="Maximum events to drain")
+    bus_drain.add_argument("--lease-seconds", type=float, default=300.0, help="Lease duration")
+    bus_drain.add_argument("--no-ack", action="store_true", help="Lease without marking events consumed")
+    bus_drain.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     jobs_parser = memory_sub.add_parser(
         "jobs",
         help="Inspect background learning jobs",
@@ -13651,7 +13665,9 @@ Examples:
                             print(f"\n  dreaming proposals: {len(rows)}\n")
                 elif sub == "bus":
                     from hermes_cli.learning_bus import (
+                        audit_learning_bus,
                         consume_learning_events,
+                        drain_learning_bus_batch,
                         list_learning_events,
                         mark_learning_event_consumed,
                         publish_learning_event,
@@ -13693,6 +13709,45 @@ Examples:
                             print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
                         else:
                             print(f"\n  learning events leased: {len(result.leased)}\n")
+                    elif bus_cmd == "audit":
+                        result = audit_learning_bus(
+                            db,
+                            topic=getattr(args, "topic", "") or None,
+                            tenant_id=getattr(args, "tenant_id", "") or None,
+                            repo_id=getattr(args, "repo_id", "") or None,
+                            limit=getattr(args, "limit", 50),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            counts = result.get("status_counts", {})
+                            print(
+                                "\n  learning bus audit:"
+                                f" queued={counts.get('queued', 0)}"
+                                f" leased={counts.get('leased', 0)}"
+                                f" consumed={counts.get('consumed', 0)}"
+                                f" dead={counts.get('dead', 0)}\n"
+                            )
+                    elif bus_cmd == "drain":
+                        try:
+                            result = drain_learning_bus_batch(
+                                db,
+                                consumer=getattr(args, "consumer", "cli") or "cli",
+                                topics=getattr(args, "topic", []) or [],
+                                limit=getattr(args, "limit", 10),
+                                lease_seconds=getattr(args, "lease_seconds", 300.0),
+                                drain_key=getattr(args, "drain_key"),
+                                ack=not getattr(args, "no_ack", False),
+                            )
+                        except ValueError as exc:
+                            raise SystemExit(str(exc)) from exc
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  learning events drained: {result.get('drained_count', 0)}"
+                                f"  already drained: {result.get('already_drained_count', 0)}\n"
+                            )
                     else:
                         rows = list_learning_events(
                             db,
