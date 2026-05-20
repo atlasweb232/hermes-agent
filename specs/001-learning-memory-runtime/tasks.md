@@ -426,23 +426,23 @@
 
 ### Tests For Self-Healing Workflow Control Plane
 
-- [ ] T154 [P] [US10] Add task graph schema tests for task/node status, dependency ordering, concurrency cap, owned-path conflict rejection, read-only nodes, validation-gated completion, and supervisor-only subtask acceptance
-- [ ] T155 [P] [US10] Add health sidecar tests for stale lease, missing heartbeat, repeated timeout/empty-output failures, no-progress loop, worker cooldown, allocation pause, idempotent duplicate runs, and no foreground blocking
-- [ ] T156 [P] [US10] Add restart recovery tests for active goal reload, task graph reload, active allocation reload, worker cooldown preservation, unknown in-flight attempt handling, approved-memory-only hydration, and no default expensive LLM sidecar call
-- [ ] T157 [P] [US10] Add workflow-agnostic tests proving chat, `/goal`, dashboard/API task, and worker delegation paths share allocator/degradation/health/recovery behavior
+- [x] T154 [P] [US10] Add task graph schema tests for task/node status, dependency ordering, concurrency cap, owned-path conflict rejection, read-only nodes, validation-gated completion, and supervisor-only subtask acceptance
+- [x] T155 [P] [US10] Add health sidecar tests for stale lease, missing heartbeat, repeated timeout/empty-output failures, no-progress loop, worker cooldown, allocation pause, idempotent duplicate runs, and no foreground blocking
+- [x] T156 [P] [US10] Add restart recovery tests for active goal reload, task graph reload, active allocation reload, worker cooldown preservation, unknown in-flight attempt handling, approved-memory-only hydration, and no default expensive LLM sidecar call
+- [x] T157 [P] [US10] Add workflow-agnostic tests proving chat, `/goal`, dashboard/API task, and worker delegation paths share allocator/degradation/health/recovery behavior
 - [ ] T168 [P] [US10] Add supervisor context gate tests proving raw stdout/stderr, unbounded terminal transcripts, worker watch streams, and log tails are rejected from supervisor context unless represented as bounded typed packets
 - [ ] T169 [P] [US10] Add worker runtime wrapper tests proving start, heartbeat, stream-ref, checkpoint, degraded/blocked, validation, and final events are emitted even when the worker model is unavailable, times out, or returns empty output
 - [ ] T170 [P] [US10] Add cheap progress summarizer sidecar tests proving low-cost reasoning tier use, timeout/budget enforcement, no foreground blocking, no task completion authority, and no policy/memory approval authority
 
 ### Implementation For Self-Healing Workflow Control Plane
 
-- [ ] T158 [US10] Implement task graph and task node schemas with JSON serialization suitable for `SessionDB.state_meta` or supervisor task ledger storage
-- [ ] T159 [US10] Implement task graph state helpers for create/update/list/get, dependency readiness, concurrency checks, owned-path conflict detection, and validation-gated completion
-- [ ] T160 [US10] Wire task graph ready-node dispatch into the allocator so parallel subtasks receive bounded worker allocation without overlapping unsafe ownership
-- [ ] T161 [US10] Implement health sidecar scanner for task ledger, task graph, allocations, worker health, heartbeats, and degradation events with bounded leases, timeout, scan limit, and idempotent actions
-- [ ] T162 [US10] Implement health sidecar recovery actions: update worker health, mark stale lease/no-progress, emit recovery packet, request reassignment, pause allocation with retry-after, and publish learning events
-- [ ] T163 [US10] Implement restart recovery loader for goals, task ledger, task graphs, allocations, worker health, hot memory, approved lessons, sidecar leases, and safe-to-resume decisions
-- [ ] T164 [US10] Add CLI/API observability: `hermes runtime health check --once --json`, `hermes runtime task-graph list/get --json`, and `hermes runtime recovery status/run --json`
+- [x] T158 [US10] Implement task graph and task node schemas with JSON serialization suitable for `SessionDB.state_meta` or supervisor task ledger storage
+- [x] T159 [US10] Implement task graph state helpers for create/update/list/get, dependency readiness, concurrency checks, owned-path conflict detection, and validation-gated completion
+- [x] T160 [US10] Wire task graph ready-node dispatch into the allocator so parallel subtasks receive bounded worker allocation without overlapping unsafe ownership
+- [x] T161 [US10] Implement health sidecar scanner for task ledger, task graph, allocations, worker health, heartbeats, and degradation events with bounded leases, timeout, scan limit, and idempotent actions
+- [x] T162 [US10] Implement health sidecar recovery actions: update worker health, mark stale lease/no-progress, emit recovery packet, request reassignment, pause allocation with retry-after, and publish learning events
+- [x] T163 [US10] Implement restart recovery loader for goals, task ledger, task graphs, allocations, worker health, hot memory, approved lessons, sidecar leases, and safe-to-resume decisions
+- [x] T164 [US10] Add CLI/API observability: `hermes runtime health check --once --json`, `hermes runtime task-graph list/get --json`, and `hermes runtime recovery status/run --json`
 - [ ] T165 [US10] Run controlled upstream-vs-branch smoke tests proving the branch avoids repeated failed worker loops, preserves foreground responsiveness, and resumes safe work after restart
 - [ ] T171 [US10] Implement `SupervisorContextGate` helpers that accept only typed bounded worker packets and attach artifact refs instead of raw streams
 - [ ] T172 [US10] Wire worker runtime wrappers and worker-router/delegation paths to emit mandatory progress events and artifact refs into the runtime event bus/task ledger

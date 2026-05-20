@@ -11788,6 +11788,28 @@ Examples:
     runtime_workers_health = runtime_workers_sub.add_parser("health", help="List worker health records")
     runtime_workers_health.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_health = runtime_sub.add_parser("health", help="Run self-healing workflow health checks")
+    runtime_health_sub = runtime_health.add_subparsers(dest="runtime_health_command")
+    runtime_health_check = runtime_health_sub.add_parser("check", help="Run a bounded health sidecar scan")
+    runtime_health_check.add_argument("--once", action="store_true", help="Run one scan and exit")
+    runtime_health_check.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_task_graph = runtime_sub.add_parser("task-graph", help="Inspect supervisor task graphs")
+    runtime_task_graph_sub = runtime_task_graph.add_subparsers(dest="runtime_task_graph_command")
+    runtime_task_graph_list = runtime_task_graph_sub.add_parser("list", help="List task graphs")
+    runtime_task_graph_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_task_graph_get = runtime_task_graph_sub.add_parser("get", help="Get one task graph")
+    runtime_task_graph_get.add_argument("graph_id", help="Task graph id")
+    runtime_task_graph_get.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_recovery = runtime_sub.add_parser("recovery", help="Inspect and run restart recovery")
+    runtime_recovery_sub = runtime_recovery.add_subparsers(dest="runtime_recovery_command")
+    runtime_recovery_status = runtime_recovery_sub.add_parser("status", help="Show restart recovery status")
+    runtime_recovery_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_recovery_run = runtime_recovery_sub.add_parser("run", help="Run restart recovery once")
+    runtime_recovery_run.add_argument("--once", action="store_true", help="Run one recovery pass and exit")
+    runtime_recovery_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_features = runtime_sub.add_parser("features", help="Inspect and set local runtime feature toggles")
     runtime_features_sub = runtime_features.add_subparsers(dest="runtime_features_command")
     runtime_features_list = runtime_features_sub.add_parser("list", help="List known runtime feature definitions")
@@ -12107,6 +12129,46 @@ Examples:
             try:
                 if workers_cmd == "health":
                     _emit([record.to_dict() for record in list_worker_health_records(db)])
+            finally:
+                db.close()
+            return
+        if cmd == "health":
+            from hermes_cli.self_healing_workflow import run_health_check_once
+            from hermes_state import SessionDB
+
+            health_cmd = getattr(args, "runtime_health_command", None) or "check"
+            db = SessionDB()
+            try:
+                if health_cmd == "check":
+                    _emit(run_health_check_once(db))
+            finally:
+                db.close()
+            return
+        if cmd == "task-graph":
+            from hermes_cli.self_healing_workflow import get_task_graph, list_task_graphs
+            from hermes_state import SessionDB
+
+            graph_cmd = getattr(args, "runtime_task_graph_command", None) or "list"
+            db = SessionDB()
+            try:
+                if graph_cmd == "get":
+                    _emit(get_task_graph(db, getattr(args, "graph_id")).to_dict())
+                else:
+                    _emit([graph.to_dict() for graph in list_task_graphs(db)])
+            finally:
+                db.close()
+            return
+        if cmd == "recovery":
+            from hermes_cli.self_healing_workflow import recovery_status, run_restart_recovery
+            from hermes_state import SessionDB
+
+            recovery_cmd = getattr(args, "runtime_recovery_command", None) or "status"
+            db = SessionDB()
+            try:
+                if recovery_cmd == "run":
+                    _emit(run_restart_recovery(db))
+                else:
+                    _emit(recovery_status(db))
             finally:
                 db.close()
             return
