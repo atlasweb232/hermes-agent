@@ -737,6 +737,19 @@ DEFAULT_CONFIG = {
                 "skip_expensive_curator_on_exact": True,
                 "skip_expensive_curator_on_near": True,
             },
+            "sidecars": {
+                "global_indexer": {
+                    "enabled": False,
+                    "mode": "local",
+                    "max_batch": 100,
+                },
+                "local_sync": {
+                    "enabled": False,
+                    "mode": "local",
+                    "ttl_seconds": 3600,
+                    "max_batch": 100,
+                },
+            },
             "require_global_approval": True,
         },
         "discussion_memory_wiki": {

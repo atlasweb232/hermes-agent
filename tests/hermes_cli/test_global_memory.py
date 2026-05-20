@@ -1,3 +1,7 @@
+import json
+import sys
+from unittest.mock import patch
+
 import pytest
 
 from hermes_cli.global_memory import (
@@ -34,6 +38,11 @@ from hermes_cli.memory_graph import expand_graph
 from hermes_cli.memory_index import lexical_search
 from hermes_state import SessionDB
 
+from hermes_cli.global_memory_sidecars import (
+    run_global_indexer_sidecar,
+    run_local_sync_sidecar,
+)
+
 
 def _db(tmp_path):
     return SessionDB(db_path=tmp_path / "state.db")
@@ -67,6 +76,28 @@ def _proposal(**overrides):
     return data
 
 
+def _sidecar_config(*, index_enabled=True, sync_enabled=True, ttl_seconds=60):
+    return {
+        "supervisor": {
+            "global_memory_wiki": {
+                "sidecars": {
+                    "global_indexer": {
+                        "enabled": index_enabled,
+                        "mode": "local",
+                        "max_batch": 100,
+                    },
+                    "local_sync": {
+                        "enabled": sync_enabled,
+                        "mode": "local",
+                        "ttl_seconds": ttl_seconds,
+                        "max_batch": 100,
+                    },
+                }
+            }
+        }
+    }
+
+
 def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     from hermes_cli.config import load_config
 
@@ -82,6 +113,10 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     assert bus["backend"] == "sqlite"
     assert bus["topic_prefix"] == "hermes.memory"
     assert wiki["precuration"]["skip_expensive_curator_on_exact"] is True
+    assert wiki["sidecars"]["global_indexer"]["enabled"] is False
+    assert wiki["sidecars"]["global_indexer"]["mode"] == "local"
+    assert wiki["sidecars"]["local_sync"]["enabled"] is False
+    assert wiki["sidecars"]["local_sync"]["mode"] == "local"
     assert injection["enabled"] is True
     assert injection["token_budget"] == 600
 
@@ -1017,3 +1052,359 @@ def test_task_hydration_enforces_token_budget(tmp_path):
         assert [item["source"] for item in packet.advisory_items] == ["global_hot_cache"]
     finally:
         db.close()
+
+
+def test_global_indexer_sidecar_indexes_only_approved_shareable_metadata(tmp_path):
+    db = _db(tmp_path)
+    secret_value = "sk-live-secret-transcript"
+    try:
+        base = {
+            "approval_state": "approved",
+            "scope": "global",
+            "visibility": "global_candidate",
+            "sensitivity": "internal",
+            "claim_type": "command_repair_policy",
+            "failure_signature": "cmd:pytest:sqlite",
+            "normalized_text": "Use sqlite local metadata for approved global lesson indexing.",
+            "confidence": 0.9,
+            "cross_tenant_shareable": True,
+            "evidence_refs": ["global://evidence/index-ok"],
+        }
+        persist_global_lesson(db, {**base, "id": "idx-ok", "tool": "terminal"})
+        persist_global_lesson(db, {**base, "id": "idx-proposed", "approval_state": "proposed"})
+        persist_global_lesson(db, {**base, "id": "idx-private", "scope": "private"})
+        persist_global_lesson(db, {**base, "id": "idx-secret", "sensitivity": "secret", "normalized_text": f"Never sync {secret_value}."})
+        persist_global_lesson(db, {**base, "id": "idx-tenant-only", "cross_tenant_shareable": False})
+        persist_global_lesson(db, {**base, "id": "idx-retired", "retired_at": 1779000000.0})
+
+        result = run_global_indexer_sidecar(db, _sidecar_config(), once=True)
+        result_json = result.to_dict()
+        result_blob = repr(result_json)
+
+        assert result.status == "ok"
+        assert result.feature_enabled is True
+        assert result.scanned == 6
+        assert result.indexed == 1
+        assert result.skipped == 5
+        assert secret_value not in result_blob
+        skip_reasons = {item["id"]: item["reason"] for item in result_json["refs"]["skipped"]}
+        assert skip_reasons["idx-proposed"] == "not_approved_canonical"
+        assert skip_reasons["idx-private"] == "not_global_scope"
+        assert skip_reasons["idx-secret"] == "secret_sensitivity"
+        assert skip_reasons["idx-tenant-only"] == "not_cross_tenant_shareable"
+        assert skip_reasons["idx-retired"] == "retired_or_deleted"
+
+        rows = db._execute_write(
+            lambda conn: [dict(row) for row in conn.execute("SELECT * FROM hermes_global_lesson_index").fetchall()]
+        )
+        assert [row["lesson_id"] for row in rows] == ["idx-ok"]
+        storage_blob = repr(rows)
+        assert "sqlite local metadata" not in storage_blob
+        assert secret_value not in storage_blob
+        assert rows[0]["text_hash"]
+        assert rows[0]["lexical_terms_json"]
+        assert rows[0]["vector_stub_json"]
+
+        second = run_global_indexer_sidecar(db, _sidecar_config(), once=True)
+        count = db._execute_write(lambda conn: conn.execute("SELECT COUNT(*) FROM hermes_global_lesson_index").fetchone()[0])
+        assert second.indexed == 0
+        assert second.updated == 1
+        assert count == 1
+    finally:
+        db.close()
+
+
+def test_local_sync_sidecar_applies_relevant_deltas_idempotently(tmp_path):
+    db = _db(tmp_path)
+    raw_text = "Use direct Claude Code invocation after worker-router failures."
+    try:
+        common = {
+            "approval_state": "approved",
+            "scope": "global",
+            "visibility": "global_candidate",
+            "sensitivity": "internal",
+            "claim_type": "command_repair_policy",
+            "failure_signature": "cmd:worker-router:claude:parse-error",
+            "normalized_text": raw_text,
+            "confidence": 0.92,
+            "cross_tenant_shareable": True,
+            "tool": "terminal",
+            "task_type": "implementation",
+        }
+        persist_global_lesson(db, {**common, "id": "sync-ok"})
+        persist_global_lesson(db, {**common, "id": "sync-other-tool", "tool": "browser"})
+        persist_global_lesson(db, {**common, "id": "sync-empty-tool", "tool": ""})
+        run_global_indexer_sidecar(db, _sidecar_config(), once=True)
+
+        result = run_local_sync_sidecar(
+            db,
+            _sidecar_config(ttl_seconds=120),
+            once=True,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            tool="terminal",
+            task_type="implementation",
+        )
+
+        assert result.status == "ok"
+        assert result.feature_enabled is True
+        assert result.scanned == 3
+        assert result.synced == 1
+        assert result.skipped == 2
+        assert result.demoted == 0
+        assert result.removed == 0
+        assert raw_text not in repr(result.to_dict())
+        hits = retrieve_global_hot_cache_for_event(
+            db,
+            {
+                "event_id": "evt-sync",
+                "tenant_id": "atlas",
+                "repo_id": "hermes-agent",
+                "tool": "terminal",
+                "task_type": "implementation",
+                "failure_signature": "cmd:worker-router:claude:parse-error",
+            },
+        )
+        assert [hit["global_lesson_id"] for hit in hits] == ["sync-ok"]
+        sidecar_rows = db._execute_write(
+            lambda conn: [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT lesson_id, tenant_id, repo_id, tool, task_type, action, metadata_json
+                    FROM hermes_global_sync_deltas
+                    ORDER BY lesson_id
+                    """
+                ).fetchall()
+            ]
+        )
+        assert [row["lesson_id"] for row in sidecar_rows] == ["sync-ok"]
+        assert raw_text not in repr(sidecar_rows)
+
+        second = run_local_sync_sidecar(
+            db,
+            _sidecar_config(ttl_seconds=120),
+            once=True,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            tool="terminal",
+            task_type="implementation",
+        )
+        count = db._execute_write(lambda conn: conn.execute("SELECT COUNT(*) FROM hermes_global_hot_cache").fetchone()[0])
+        assert second.synced == 0
+        assert second.updated == 1
+        assert count == 1
+    finally:
+        db.close()
+
+
+def test_local_sync_sidecar_marks_orphaned_index_rows_removed(tmp_path):
+    db = _db(tmp_path)
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "sync-orphan-index",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:pytest:orphan",
+                "normalized_text": "Deleted global lessons should remove orphaned index rows.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+                "tool": "terminal",
+                "task_type": "implementation",
+            },
+        )
+        indexed = run_global_indexer_sidecar(db, _sidecar_config(), once=True)
+        assert indexed.indexed == 1
+
+        db._execute_write(lambda conn: conn.execute("DELETE FROM hermes_global_lessons WHERE id = ?", ("sync-orphan-index",)))
+
+        removed = run_local_sync_sidecar(
+            db,
+            _sidecar_config(ttl_seconds=120),
+            once=True,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            tool="terminal",
+            task_type="implementation",
+        )
+
+        assert removed.removed == 1
+        row = db._execute_write(
+            lambda conn: dict(
+                conn.execute(
+                    "SELECT deleted_at, retired_at FROM hermes_global_lesson_index WHERE lesson_id = ?",
+                    ("sync-orphan-index",),
+                ).fetchone()
+            )
+        )
+        assert row["deleted_at"] is not None
+    finally:
+        db.close()
+
+
+def test_local_sync_sidecar_demotes_expired_and_removes_retired_or_deleted(tmp_path):
+    db = _db(tmp_path)
+    try:
+        lesson = persist_global_lesson(
+            db,
+            {
+                "id": "sync-retire",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:pytest:ttl",
+                "normalized_text": "Demote expired cache rows and remove retired global lessons.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+                "tool": "terminal",
+                "task_type": "implementation",
+            },
+        )
+        event = {
+            "event_id": "evt-retire",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "tool": "terminal",
+            "task_type": "implementation",
+            "failure_signature": "cmd:pytest:ttl",
+        }
+        materialize_global_lesson_to_hot_cache(db, lesson.to_dict(), event, ttl_seconds=-1)
+        expired = run_local_sync_sidecar(db, _sidecar_config(ttl_seconds=120), once=True, tenant_id="atlas", repo_id="hermes-agent", tool="terminal")
+        assert expired.demoted == 1
+
+        run_global_indexer_sidecar(db, _sidecar_config(), once=True)
+        materialize_global_lesson_to_hot_cache(db, lesson.to_dict(), event, ttl_seconds=120)
+        persist_global_lesson(db, {**lesson.to_dict(), "retired_at": 1779000000.0})
+        removed = run_local_sync_sidecar(db, _sidecar_config(ttl_seconds=120), once=True, tenant_id="atlas", repo_id="hermes-agent", tool="terminal")
+
+        assert removed.removed >= 1
+        cache_count = db._execute_write(lambda conn: conn.execute("SELECT COUNT(*) FROM hermes_global_hot_cache WHERE global_lesson_id = 'sync-retire'").fetchone()[0])
+        index_count = db._execute_write(lambda conn: conn.execute("SELECT COUNT(*) FROM hermes_global_lesson_index WHERE lesson_id = 'sync-retire' AND deleted_at IS NULL").fetchone()[0])
+        assert cache_count == 0
+        assert index_count == 0
+    finally:
+        db.close()
+
+
+def test_sidecars_default_disabled_do_not_mutate_foreground_paths(tmp_path):
+    db = _db(tmp_path)
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "disabled-ok",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "normalized_text": "Disabled sidecars should not mutate local indexes.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+            },
+        )
+
+        index_result = run_global_indexer_sidecar(db, {"supervisor": {"global_memory_wiki": {}}}, once=True)
+        sync_result = run_local_sync_sidecar(db, {"supervisor": {"global_memory_wiki": {}}}, once=True, tenant_id="atlas")
+
+        assert index_result.status == "disabled"
+        assert index_result.feature_enabled is False
+        assert sync_result.status == "disabled"
+        assert sync_result.feature_enabled is False
+        tables = db._execute_write(
+            lambda conn: [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('hermes_global_lesson_index', 'hermes_global_sync_deltas')"
+                ).fetchall()
+            ]
+        )
+        assert tables == []
+    finally:
+        db.close()
+
+
+def test_global_index_and_memory_sync_cli_json_smoke(tmp_path, monkeypatch, capsys):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    import hermes_state
+    from hermes_cli.config import load_config, save_config
+
+    monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", home / "state.db")
+    cfg = load_config()
+    cfg["supervisor"]["global_memory_wiki"].setdefault("sidecars", {})
+    cfg["supervisor"]["global_memory_wiki"]["sidecars"]["global_indexer"] = {
+        "enabled": True,
+        "mode": "local",
+        "max_batch": 100,
+    }
+    cfg["supervisor"]["global_memory_wiki"]["sidecars"]["local_sync"] = {
+        "enabled": True,
+        "mode": "local",
+        "ttl_seconds": 120,
+        "max_batch": 100,
+    }
+    save_config(cfg)
+
+    db = SessionDB()
+    try:
+        persist_global_lesson(
+            db,
+            {
+                "id": "cli-sync-ok",
+                "approval_state": "approved",
+                "scope": "global",
+                "visibility": "global_candidate",
+                "sensitivity": "internal",
+                "claim_type": "command_repair_policy",
+                "failure_signature": "cmd:cli:json",
+                "normalized_text": "CLI sidecars index approved metadata and sync relevant cache rows.",
+                "confidence": 0.9,
+                "cross_tenant_shareable": True,
+                "tool": "terminal",
+                "task_type": "implementation",
+            },
+        )
+    finally:
+        db.close()
+
+    from hermes_cli import main as hermes_main
+
+    with patch.object(sys, "argv", ["hermes", "memory", "global", "index", "--once", "--json"]):
+        hermes_main.main()
+    indexed = json.loads(capsys.readouterr().out)
+    assert indexed["status"] == "ok"
+    assert indexed["indexed"] == 1
+
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "hermes",
+            "memory",
+            "sync",
+            "--once",
+            "--tenant-id",
+            "atlas",
+            "--repo-id",
+            "hermes-agent",
+            "--tool",
+            "terminal",
+            "--task-type",
+            "implementation",
+            "--json",
+        ],
+    ):
+        hermes_main.main()
+    synced = json.loads(capsys.readouterr().out)
+    assert synced["status"] == "ok"
+    assert synced["synced"] == 1
+    assert synced["demoted"] == 0
+    assert synced["removed"] == 0

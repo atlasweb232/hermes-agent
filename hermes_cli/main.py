@@ -12791,6 +12791,23 @@ Examples:
     global_value.add_argument("--escalation-count", type=int, default=0, help="Number of escalations")
     global_value.add_argument("--token-budget", type=int, default=800, help="Estimated token budget")
     global_value.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_index = global_sub.add_parser("index", help="Run explicit local global-lesson indexer once")
+    global_index.add_argument("--once", action="store_true", help="Run one non-blocking local sidecar pass")
+    global_index.add_argument("--limit", type=int, default=None, help="Maximum lessons to scan")
+    global_index.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    sync_parser = memory_sub.add_parser(
+        "sync",
+        help="Run explicit local global-memory sync once",
+        description="Pull approved shareable global lessons into the local warm/hot cache without foreground hooks.",
+    )
+    sync_parser.add_argument("--once", action="store_true", help="Run one non-blocking local sidecar pass")
+    sync_parser.add_argument("--tenant-id", default="", help="Tenant scope")
+    sync_parser.add_argument("--repo-id", default="", help="Repository scope")
+    sync_parser.add_argument("--tool", default="", help="Tool relevance filter")
+    sync_parser.add_argument("--task-type", default="", help="Task type relevance filter")
+    sync_parser.add_argument("--limit", type=int, default=None, help="Maximum indexed lessons to scan")
+    sync_parser.add_argument("--ttl-seconds", type=int, default=None, help="Warm/hot cache TTL override")
+    sync_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     learn_parser = memory_sub.add_parser(
         "learn",
         help="Run the background learning rollup",
@@ -13228,7 +13245,7 @@ Examples:
                 f"\n  Memory reset complete. New sessions will start with a blank slate."
             )
             print(f"  Files were in: {display_hermes_home()}/memories/\n")
-        elif sub in {"readiness", "packet", "global", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "jobs", "observe", "candidates"}:
+        elif sub in {"readiness", "packet", "global", "sync", "learn", "monitor", "sidecar", "reconcile", "judge-run", "wiki", "dream", "bus", "jobs", "observe", "candidates"}:
             from hermes_cli.config import load_config
             from hermes_cli.supervisor_memory import (
                 approve_meta_candidate,
@@ -13438,8 +13455,54 @@ Examples:
                                 f"  tokens≈{report.get('estimated_packet_tokens')}"
                                 f"  skipped_curator={report.get('skipped_curator_count')}\n"
                             )
+                    elif global_cmd == "index":
+                        from hermes_cli.global_memory_sidecars import run_global_indexer_sidecar
+
+                        result = run_global_indexer_sidecar(
+                            db,
+                            config,
+                            once=bool(getattr(args, "once", False)),
+                            limit=getattr(args, "limit", None),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                f"\n  global indexer: {result.status}"
+                                f"  scanned={result.scanned}"
+                                f"  indexed={result.indexed}"
+                                f"  updated={result.updated}"
+                                f"  skipped={result.skipped}"
+                                f"  removed={result.removed}\n"
+                            )
                     else:
-                        print("  Use: hermes memory global lesson|retrieve|profile|hydrate|value\n")
+                        print("  Use: hermes memory global lesson|retrieve|profile|hydrate|value|index\n")
+                elif sub == "sync":
+                    from hermes_cli.global_memory_sidecars import run_local_sync_sidecar
+
+                    result = run_local_sync_sidecar(
+                        db,
+                        config,
+                        once=bool(getattr(args, "once", False)),
+                        tenant_id=tenant_id,
+                        repo_id=repo_id,
+                        tool=getattr(args, "tool", "") or None,
+                        task_type=getattr(args, "task_type", "") or None,
+                        limit=getattr(args, "limit", None),
+                        ttl_seconds=getattr(args, "ttl_seconds", None),
+                    )
+                    if getattr(args, "json", False):
+                        print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                    else:
+                        print(
+                            f"\n  global sync: {result.status}"
+                            f"  scanned={result.scanned}"
+                            f"  synced={result.synced}"
+                            f"  updated={result.updated}"
+                            f"  skipped={result.skipped}"
+                            f"  demoted={result.demoted}"
+                            f"  removed={result.removed}\n"
+                        )
                 elif sub == "learn":
                     result = rollup_learning_candidates(
                         db,

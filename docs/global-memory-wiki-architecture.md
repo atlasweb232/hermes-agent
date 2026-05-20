@@ -825,6 +825,45 @@ Operators and dashboards can inspect the JSON packet through:
 hermes memory global profile --event-json '<event-json>' --top-k 3 --token-budget 240 --json
 ```
 
+## Explicit Local Sidecars
+
+T132-T134 add two one-shot sidecars after the Phase 11A VM value gate. They are
+disabled by default under `supervisor.global_memory_wiki.sidecars.*`, run only
+when explicitly invoked, and use SQLite/local filesystem state only in this
+slice. They do not install foreground hooks and they do not add production
+vector DB, graph DB, Kafka, or Redpanda dependencies.
+
+`global_indexer_sidecar` is exposed as:
+
+```bash
+hermes memory global index --once --json
+```
+
+It scans only `hermes_global_lessons` and writes local metadata rows to
+`hermes_global_lesson_index`. Eligible lessons must be approved/canonical/applied,
+global scope, not retired, not secret, and cross-tenant shareable. Proposed,
+private, tenant-only, secret, retired, and secret-like lessons are skipped with
+bounded id/reason refs. The index table stores hashes, simhashes, lexical terms,
+graph-ready keys, and a disabled vector stub. It does not store raw proposals,
+raw transcripts, provider logs, or secret values.
+
+`local_sync_sidecar` is exposed as:
+
+```bash
+hermes memory sync --once --json --tenant-id <tenant> --repo-id <repo> --tool <tool>
+```
+
+It reads approved active index rows, applies tenant/repo/tool/task filters, and
+materializes relevant lessons into the existing `hermes_global_hot_cache`.
+Sync deltas are recorded in local SQLite for idempotent replay accounting.
+Expired cache rows are demoted by TTL cleanup, while retired/deleted or no
+longer shareable lessons are removed from local cache/index state.
+
+Both JSON surfaces report `status`, `feature_enabled`, `scanned`, `indexed` or
+`synced`, `updated`, `skipped`, `demoted`, `removed`, `errors`, and bounded
+`refs`. Result refs intentionally contain ids and reasons only, never raw lesson
+text or secret-bearing payloads.
+
 ## Skill Pipeline Boundary
 
 The global memory wiki can provide evidence for skill candidates, but it does

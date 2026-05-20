@@ -663,6 +663,36 @@ feedback counters exceed positive/helped counters are score-demoted below
 positive matches and reported in `demoted`; preview does not delete, rewrite,
 or mutate the lesson.
 
+## Global Index And Sync Sidecars
+
+The approved global-memory sidecars are explicit operator/API calls, not
+foreground runtime hooks:
+
+```bash
+python3 -m hermes_cli.main memory global index --once --json
+python3 -m hermes_cli.main memory sync --once --tenant-id atlas --repo-id hermes-agent --tool terminal --json
+```
+
+They are disabled by default in config:
+
+- `supervisor.global_memory_wiki.sidecars.global_indexer.enabled: false`
+- `supervisor.global_memory_wiki.sidecars.local_sync.enabled: false`
+- `mode: local`, `max_batch`, and `ttl_seconds` keep this slice bounded to
+  SQLite/local state.
+
+The indexer reads only approved/canonical/applied global lessons that are
+cross-tenant shareable and not secret or retired. It writes metadata-only rows:
+text hashes, simhashes, lexical terms, graph-ready keys, and a disabled vector
+stub. It skips raw proposals, raw transcripts, private or tenant-only lessons,
+provider logs, and secret-looking values.
+
+The sync sidecar pulls relevant approved indexed lessons into the existing
+global hot cache for configured tenant/repo/tool/task filters. Repeated runs are
+idempotent, expired cache entries are demoted by TTL cleanup, and retired or
+deleted lessons are removed from local cache/index state. Metrics are returned
+as JSON fields: `scanned`, `indexed`, `synced`, `updated`, `skipped`,
+`demoted`, `removed`, and `errors`.
+
 ## Still Not Enforced
 
 The full memory-wiki compiler and dreaming/DGM loop are not part of this enforcement pass. They remain separate follow-up work after the task outcome capture and learning sidecar are proven with the branch-118 validation test.
