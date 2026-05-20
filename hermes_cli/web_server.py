@@ -1071,10 +1071,10 @@ def get_auxiliary_models():
 def get_model_roles():
     """Return supervisor sidecar model-role configuration."""
     try:
-        from hermes_cli.model_roles import list_model_roles, list_model_tiers
+        from hermes_cli.model_roles import list_model_roles, list_model_tiers, sidecar_role_mapping
 
         cfg = load_config()
-        return {"roles": list_model_roles(cfg), "tiers": list_model_tiers(cfg)}
+        return {"roles": list_model_roles(cfg), "tiers": list_model_tiers(cfg), "role_tiers": sidecar_role_mapping(cfg)}
     except Exception:
         _log.exception("GET /api/model/roles failed")
         raise HTTPException(status_code=500, detail="Failed to read model roles")
@@ -1084,9 +1084,10 @@ def get_model_roles():
 def get_model_tiers():
     """Return sidecar model tier configuration."""
     try:
-        from hermes_cli.model_roles import list_model_tiers
+        from hermes_cli.model_roles import list_model_tiers, sidecar_role_mapping
 
-        return {"tiers": list_model_tiers(load_config())}
+        cfg = load_config()
+        return {"tiers": list_model_tiers(cfg), "roles": sidecar_role_mapping(cfg)}
     except Exception:
         _log.exception("GET /api/model/tiers failed")
         raise HTTPException(status_code=500, detail="Failed to read model tiers")

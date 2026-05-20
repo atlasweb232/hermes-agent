@@ -10900,8 +10900,8 @@ Examples:
     config_tier = config_subparsers.add_parser("tier", help="Configure a named sidecar model tier")
     config_tier_sub = config_tier.add_subparsers(dest="config_tier_command")
     config_tier_set = config_tier_sub.add_parser("set", help="Set a sidecar model tier")
-    config_tier_set.add_argument("tier", help="Tier name, e.g. low_cost_reasoning")
-    config_tier_set.add_argument("--provider", help="Provider, e.g. deepseek, minimax, codex, ollama")
+    config_tier_set.add_argument("tier", help="Tier name, e.g. cheap_reasoning")
+    config_tier_set.add_argument("--provider", help="Provider, e.g. cerebras, deepseek, codex, ollama")
     config_tier_set.add_argument("--model", help="Model name, e.g. deepseek-reasoner")
     config_tier_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
     config_tier_set.add_argument("--timeout", type=float, help="Tier request timeout in seconds")
@@ -10919,16 +10919,22 @@ Examples:
             "curator",
             "learning_judge",
             "goal_judge",
+            "progress_summarizer",
+            "classifier",
+            "extraction",
             "discussion_capture",
             "claim_extractor",
             "wiki_compiler",
             "dreaming",
             "citation_validator",
+            "policy_review",
+            "code_review_judge",
+            "training_corpus_review",
         ],
     )
     config_role_set.add_argument("--provider", help="Provider, e.g. codex, custom, ollama")
     config_role_set.add_argument("--model", help="Model name, e.g. codex")
-    config_role_set.add_argument("--tier", help="Model tier, e.g. low_cost_reasoning, balanced_reasoning, strong_reasoning")
+    config_role_set.add_argument("--tier", help="Model tier, e.g. cheap_reasoning, strong_reasoning, code_critical")
     config_role_set.add_argument("--base-url", dest="base_url", help="OpenAI-compatible or Ollama base URL")
     config_role_set.add_argument("--timeout", type=float, help="Role request timeout in seconds")
     config_role_set.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)

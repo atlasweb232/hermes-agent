@@ -1,9 +1,10 @@
 """Named model-role configuration for supervisor sidecars.
 
-These roles are operationally distinct even when they all use the Codex
-provider. The curator proposes, judges approve/reject, and workers execute.
-This module centralizes the config paths so CLI, backend, and docs do not
-drift.
+These roles are operationally distinct. Programmatic sidecars do not call a
+model, cheap sidecars perform bounded extraction/confirmation, strong sidecars
+judge or curate only when confidence or approval policy requires it, and Codex
+is reserved for code-critical review. This module centralizes the config paths
+so CLI, backend, and docs do not drift.
 """
 
 from __future__ import annotations
@@ -15,52 +16,70 @@ from typing import Any, Dict, Iterable, Optional
 DEFAULT_SIDECAR_MODEL_TIERS: Dict[str, Dict[str, Any]] = {
     "programmatic": {
         "description": "No LLM call; deterministic/indexing work only.",
-        "provider": "",
-        "model": "",
-        "base_url": "",
+        "provider": "none",
+        "model": "none",
         "allow_llm": False,
         "timeout_seconds": 60,
     },
-    "low_cost_reasoning": {
-        "description": "Cheap hosted reasoning for bounded capture and extraction sidecars.",
-        "provider": "deepseek",
-        "model": "deepseek-reasoner",
-        "base_url": "https://api.deepseek.com",
+    "cheap_reasoning": {
+        "description": "Cheap reasoning for bounded confirmation and extraction sidecars.",
+        "provider": "cerebras",
+        "model": "gpt-oss-120b",
         "allow_llm": True,
-        "timeout_seconds": 180,
-    },
-    "balanced_reasoning": {
-        "description": "Moderate-cost reasoning for synthesis sidecars.",
-        "provider": "codex",
-        "model": "codex",
-        "base_url": "",
-        "allow_llm": True,
-        "timeout_seconds": 300,
+        "timeout_seconds": 60,
+        "max_tokens": 2048,
     },
     "strong_reasoning": {
         "description": "Strong reasoning for judges, approval gates, and high-impact curation.",
+        "provider": "deepseek",
+        "model": "deepseek-reasoner",
+        "allow_llm": True,
+        "timeout_seconds": 180,
+        "max_tokens": 4096,
+    },
+    "code_critical": {
+        "description": "Codex tier reserved for code-critical review and review judges.",
         "provider": "codex",
         "model": "codex",
-        "base_url": "",
         "allow_llm": True,
         "timeout_seconds": 300,
     },
 }
 
+TIER_ALIASES = {
+    "low_cost_reasoning": "cheap_reasoning",
+    "balanced_reasoning": "strong_reasoning",
+}
+
 
 ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "progress_summarizer": {
+        "path": ("sidecar_roles", "progress_summarizer"),
+        "description": "Summarizes worker progress into compact checkpoints.",
+        "tier": "cheap_reasoning",
+        "defaults": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
+    },
+    "classifier": {
+        "path": ("sidecar_roles", "classifier"),
+        "description": "Classifies task and event metadata programmatically.",
+        "tier": "programmatic",
+        "defaults": {"enabled": True, "tier": "programmatic", "timeout_seconds": 60},
+    },
+    "extraction": {
+        "path": ("sidecar_roles", "extraction"),
+        "description": "Extracts bounded facts or fields from already-scoped inputs.",
+        "tier": "cheap_reasoning",
+        "defaults": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
+    },
     "curator": {
         "path": ("supervisor", "curator"),
         "description": "Offline learning curator that synthesizes advisory candidates from evidence.",
         "tier": "strong_reasoning",
         "defaults": {
             "enabled": True,
-            "provider": "codex",
-            "model": "codex",
-            "base_url": "",
             "mode": "advisory",
             "approval_required": True,
-            "timeout_seconds": 300,
+            "timeout_seconds": 180,
         },
     },
     "learning_judge": {
@@ -69,10 +88,7 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "tier": "strong_reasoning",
         "defaults": {
             "enabled": True,
-            "provider": "codex",
-            "model": "codex",
-            "base_url": "",
-            "timeout_seconds": 300,
+            "timeout_seconds": 180,
             "fail_closed": True,
             "allow_enforcement_approval": False,
         },
@@ -83,11 +99,8 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "tier": "strong_reasoning",
         "defaults": {
             "enabled": True,
-            "provider": "codex",
-            "model": "codex",
-            "base_url": "",
             "api_key": "",
-            "timeout": 300,
+            "timeout": 180,
             "max_tokens": 4096,
             "extra_body": {},
         },
@@ -95,20 +108,20 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "discussion_capture": {
         "path": ("supervisor", "sidecar_models", "discussion_capture"),
         "description": "Summarizes conversations into discussion memory candidates.",
-        "tier": "low_cost_reasoning",
-        "defaults": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 120},
+        "tier": "cheap_reasoning",
+        "defaults": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
     },
     "claim_extractor": {
         "path": ("supervisor", "sidecar_models", "claim_extractor"),
         "description": "Extracts scoped claims, assumptions, decisions, and open questions from discussion summaries.",
-        "tier": "low_cost_reasoning",
-        "defaults": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 300},
+        "tier": "cheap_reasoning",
+        "defaults": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
     },
     "wiki_compiler": {
         "path": ("supervisor", "sidecar_models", "wiki_compiler"),
         "description": "Compiles approved discussion claims into durable wiki pages and index payloads.",
-        "tier": "balanced_reasoning",
-        "defaults": {"enabled": True, "tier": "balanced_reasoning", "timeout_seconds": 300},
+        "tier": "strong_reasoning",
+        "defaults": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
     },
     "dreaming": {
         "path": ("supervisor", "sidecar_models", "dreaming"),
@@ -126,7 +139,25 @@ ROLE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "path": ("supervisor", "sidecar_models", "citation_validator"),
         "description": "Deterministic-first citation/evidence validator with optional LLM classification.",
         "tier": "low_cost_reasoning",
-        "defaults": {"enabled": True, "mode": "deterministic_first", "tier": "low_cost_reasoning", "timeout_seconds": 120},
+        "defaults": {"enabled": True, "mode": "deterministic_first", "tier": "cheap_reasoning", "timeout_seconds": 60},
+    },
+    "policy_review": {
+        "path": ("sidecar_roles", "policy_review"),
+        "description": "Reviews proposed advisory policies before operator approval.",
+        "tier": "strong_reasoning",
+        "defaults": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
+    },
+    "code_review_judge": {
+        "path": ("sidecar_roles", "code_review_judge"),
+        "description": "Reviews code-critical findings with the reserved Codex tier.",
+        "tier": "code_critical",
+        "defaults": {"enabled": True, "tier": "code_critical", "timeout_seconds": 300},
+    },
+    "training_corpus_review": {
+        "path": ("sidecar_roles", "training_corpus_review"),
+        "description": "Reviews approved training corpus export candidates.",
+        "tier": "strong_reasoning",
+        "defaults": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
     },
 }
 
@@ -154,35 +185,64 @@ def _get_role_container(config: Dict[str, Any], role: str, *, create: bool = Fal
     return current if isinstance(current, dict) else {}
 
 
+def _canonical_tier_name(tier: str) -> str:
+    return TIER_ALIASES.get(str(tier), str(tier))
+
+
+def _merge_tier(tiers: Dict[str, Dict[str, Any]], name: str, value: Dict[str, Any]) -> None:
+    canonical = _canonical_tier_name(name)
+    tier = tiers.setdefault(canonical, {})
+    tier.update(value)
+
+
 def list_model_tiers(config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     tiers = deepcopy(DEFAULT_SIDECAR_MODEL_TIERS)
     configured = config.get("supervisor", {}).get("sidecar_model_tiers", {})
     if isinstance(configured, dict):
         for name, value in configured.items():
             if isinstance(value, dict):
-                tier = tiers.setdefault(str(name), {})
-                tier.update(value)
+                _merge_tier(tiers, str(name), value)
+    configured = config.get("sidecar_tiers", {})
+    if isinstance(configured, dict):
+        for name, value in configured.items():
+            if isinstance(value, dict):
+                _merge_tier(tiers, str(name), value)
+    for alias, canonical in TIER_ALIASES.items():
+        if canonical in tiers:
+            tiers[alias] = deepcopy(tiers[canonical])
     return tiers
 
 
 def get_model_tier(config: Dict[str, Any], tier: str) -> Dict[str, Any]:
     tiers = list_model_tiers(config)
-    if tier not in tiers:
+    tier_name = _canonical_tier_name(tier)
+    if tier_name not in tiers:
         raise ValueError(f"unknown model tier: {tier}")
-    result = deepcopy(tiers[tier])
-    result["tier"] = tier
+    result = deepcopy(tiers[tier_name])
+    result["tier"] = tier_name
     return result
 
 
 def get_model_role(config: Dict[str, Any], role: str) -> Dict[str, Any]:
     definition = ROLE_DEFINITIONS[role]
     role_config = _get_role_container(config, role, create=False)
+    top_level_roles = config.get("sidecar_roles", {})
+    top_level_role_tier = None
+    if isinstance(top_level_roles, dict):
+        value = top_level_roles.get(role)
+        if isinstance(value, str):
+            top_level_role_tier = value
+        elif isinstance(value, dict):
+            role_config = {**role_config, **value}
+            top_level_role_tier = value.get("tier")
     tier_name = str(
-        role_config.get("tier")
+        top_level_role_tier
+        or role_config.get("tier")
         or definition.get("tier")
         or definition.get("defaults", {}).get("tier")
-        or "balanced_reasoning"
+        or "strong_reasoning"
     )
+    tier_name = _canonical_tier_name(tier_name)
     tier_config = get_model_tier(config, tier_name)
     data = {
         key: value
@@ -253,13 +313,11 @@ def update_model_tier(
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     tier_name = str(tier)
+    tier_name = _canonical_tier_name(tier_name)
     get_model_tier(config, tier_name)
-    supervisor = config.setdefault("supervisor", {})
-    if not isinstance(supervisor, dict):
-        raise ValueError("invalid config shape at supervisor")
-    tiers = supervisor.setdefault("sidecar_model_tiers", {})
+    tiers = config.setdefault("sidecar_tiers", {})
     if not isinstance(tiers, dict):
-        raise ValueError("invalid config shape at supervisor.sidecar_model_tiers")
+        raise ValueError("invalid config shape at sidecar_tiers")
     container = tiers.setdefault(tier_name, {})
     if not isinstance(container, dict):
         container = {}
@@ -281,6 +339,94 @@ def update_model_tier(
             if value is not None:
                 container[str(key)] = value
     return get_model_tier(config, tier_name)
+
+
+def sidecar_role_mapping(config: Dict[str, Any]) -> Dict[str, str]:
+    return {role: get_model_role(config, role)["tier"] for role in role_names()}
+
+
+def plan_sidecar_route(
+    config: Dict[str, Any],
+    role: str,
+    *,
+    retrieval_result: str = "miss",
+    confidence: Optional[float] = None,
+    promotion_requested: bool = False,
+    enforcement_requested: bool = False,
+) -> Dict[str, Any]:
+    """Return the model tier policy decision for one sidecar role.
+
+    The policy is deliberately conservative: exact persisted lesson matches stay
+    programmatic, high-confidence non-promotion paths avoid strong models, and
+    promotion/enforcement always requires judge plus operator approval.
+    """
+    retrieval = str(retrieval_result or "miss").lower()
+    needs_approval = bool(promotion_requested or enforcement_requested)
+    if retrieval in {"exact", "exact_persisted_lesson", "exact_hit"}:
+        tier_name = "programmatic"
+        reason = "exact_persisted_lesson_match"
+        call_llm = False
+    elif needs_approval:
+        tier_name = "strong_reasoning"
+        reason = "promotion_or_enforcement_requested"
+        call_llm = True
+    elif confidence is not None and float(confidence) >= 0.75 and role in {"curator", "learning_judge", "policy_review"}:
+        tier_name = "programmatic"
+        reason = "high_confidence_no_promotion"
+        call_llm = False
+    elif confidence is not None and float(confidence) < 0.75 and role in {"curator", "learning_judge", "policy_review"}:
+        tier_name = "strong_reasoning"
+        reason = "low_confidence_requires_strong_judge"
+        call_llm = True
+    else:
+        role_info = get_model_role(config, role)
+        tier_name = role_info["tier"]
+        tier = get_model_tier(config, tier_name)
+        call_llm = bool(tier.get("allow_llm", True))
+        reason = "role_default"
+    tier = get_model_tier(config, tier_name)
+    return {
+        "role": role,
+        "tier": tier["tier"],
+        "provider": tier.get("provider", ""),
+        "model": tier.get("model", ""),
+        "call_llm": call_llm,
+        "reason": reason,
+        "requires_judge": needs_approval,
+        "requires_operator": needs_approval,
+        "enforcement_allowed": False,
+    }
+
+
+_OPERATOR_CONTROL_ACTIONS = {
+    "approve_export_bundle",
+    "enable_realtime_provider",
+    "promote_low_end_eval_finding",
+}
+
+
+def evaluate_operator_control(
+    action: str,
+    *,
+    judge_approved: bool = False,
+    operator_approved: bool = False,
+) -> Dict[str, Any]:
+    action_name = str(action)
+    if action_name not in _OPERATOR_CONTROL_ACTIONS:
+        raise ValueError(f"unknown operator control action: {action}")
+    missing = []
+    if not judge_approved:
+        missing.append("judge_approval")
+    if not operator_approved:
+        missing.append("operator_approval")
+    return {
+        "action": action_name,
+        "allowed": not missing,
+        "mode": "advisory",
+        "requires": ["judge_approval", "operator_approval"],
+        "missing": missing,
+        "enforcement_allowed": False,
+    }
 
 
 def validate_roles(roles: Iterable[str]) -> list[str]:

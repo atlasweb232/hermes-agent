@@ -23,28 +23,27 @@ The curator role is configured under:
 supervisor:
   curator:
     enabled: true
-    provider: ollama
-    model: gemma2:2b
-    base_url: http://127.0.0.1:11434
+    provider: deepseek
+    model: deepseek-reasoner
     mode: advisory
     approval_required: true
-    timeout_seconds: 120
+    timeout_seconds: 180
     max_records: 10
     min_score: 0.5
 ```
 
 Initial supported runtime adapter:
 
-- `ollama` via `POST /api/generate`
 - `codex` via non-interactive `codex exec`
+- `deepseek` through the configured provider adapter
+- `ollama` via `POST /api/generate`
 
 Framework placeholders:
 
 - `custom` / OpenAI-compatible endpoint
-- `deepseek`
-- Cerebras `gpt-oss-120b` via OpenAI-compatible `base_url`
+- Cerebras `gpt-oss-120b` as the default cheap sidecar tier
 
-Codex runs as an external advisory worker:
+Codex can run as an external advisory worker for code-critical review:
 
 ```bash
 codex exec --skip-git-repo-check --sandbox read-only \
@@ -54,9 +53,6 @@ codex exec --skip-git-repo-check --sandbox read-only \
 The prompt is passed on stdin. The final response is read from the temp file so
 Codex event output does not contaminate the candidate text.
 
-DeepSeek should be configured through the OpenAI-compatible `custom` provider
-unless a dedicated worker adapter is added.
-
 ## CLI Surface
 
 The architecture target is API-first. CLI commands are thin local wrappers for
@@ -64,7 +60,7 @@ operator smoke tests and should call the same service functions as the backend.
 
 ```bash
 hermes curator config
-hermes curator model --provider ollama --model gemma2:2b --base-url http://127.0.0.1:11434
+hermes curator model --provider deepseek --model deepseek-reasoner
 hermes curator test
 hermes curator policy-run
 ```
@@ -72,9 +68,8 @@ hermes curator policy-run
 Raw config still works:
 
 ```bash
-hermes config set supervisor.curator.provider ollama
-hermes config set supervisor.curator.model gemma2:2b
-hermes config set supervisor.curator.base_url http://127.0.0.1:11434
+hermes config set supervisor.curator.provider deepseek
+hermes config set supervisor.curator.model deepseek-reasoner
 ```
 
 ## API Surface
@@ -809,9 +804,10 @@ The CLI surface is:
 
 - `hermes memory judge-run --json`
 
-The default config uses `supervisor.learning_judge.provider: codex` and
-`supervisor.learning_judge.model: codex`. This keeps curation/judging separate
-from the primary chat model. Judge approval remains advisory: config writes or
+The default config uses `supervisor.learning_judge.provider: deepseek` and
+`supervisor.learning_judge.model: deepseek-reasoner`. This keeps
+curation/judging separate from the primary chat model and reserves Codex for
+`code_critical` review. Judge approval remains advisory: config writes or
 active enforcement require a later operator-approved policy path. The default
 `allow_enforcement_approval: false` prevents judge output alone from applying
 runtime policy.
@@ -1080,9 +1076,9 @@ One-off failure fixes do not scale. Hermes needs reusable machinery:
 - approval keeps policy changes auditable
 - enforcement uses data, not raw LLM prose
 
-This lets small local models like Ollama `gemma2:2b` do cheap background
-curation while stronger providers such as Codex or Cerebras GPT-OSS can be used
-for higher-quality policy synthesis when configured.
+This lets programmatic retrieval and cheap confirmation absorb routine work
+while stronger reasoning providers handle low-confidence curation, judge
+decisions, and approval gates.
 
 ## Memory Wiki And Dreaming Roadmap
 
@@ -1249,40 +1245,35 @@ the role inherits from its configured tier.
 Recommended model-role split:
 
 ```yaml
-supervisor:
-  sidecar_model_tiers:
-    programmatic:
-      provider: ""
-      model: ""
-      allow_llm: false
-    low_cost_reasoning:
-      provider: deepseek
-      model: deepseek-reasoner
-      base_url: https://api.deepseek.com
-    balanced_reasoning:
-      provider: codex
-      model: codex
-    strong_reasoning:
-      provider: codex
-      model: codex
-  sidecar_models:
-    discussion_capture:
-      tier: low_cost_reasoning
-    claim_extractor:
-      tier: low_cost_reasoning
-    wiki_compiler:
-      tier: balanced_reasoning
-    dreaming:
-      tier: strong_reasoning
-    citation_validator:
-      mode: deterministic_first
-      tier: low_cost_reasoning
-    indexer:
-      mode: programmatic
-      embedding_provider: openai
-      embedding_model: text-embedding-3-large
-    sync:
-      mode: programmatic
+sidecar_tiers:
+  programmatic:
+    provider: none
+    model: none
+  cheap_reasoning:
+    provider: cerebras
+    model: gpt-oss-120b
+    timeout_seconds: 60
+    max_tokens: 2048
+  strong_reasoning:
+    provider: deepseek
+    model: deepseek-reasoner
+    timeout_seconds: 180
+    max_tokens: 4096
+  code_critical:
+    provider: codex
+    model: codex
+    timeout_seconds: 300
+
+sidecar_roles:
+  progress_summarizer: cheap_reasoning
+  classifier: programmatic
+  extraction: cheap_reasoning
+  curator: strong_reasoning
+  learning_judge: strong_reasoning
+  dreaming: strong_reasoning
+  policy_review: strong_reasoning
+  code_review_judge: code_critical
+  training_corpus_review: strong_reasoning
 ```
 
 Role boundaries:
@@ -1298,10 +1289,12 @@ Role boundaries:
 - The same model family can be reused, but the same invocation cannot both
   generate and approve a memory/wiki/policy/training artifact.
 - Tier defaults are operator policy, not architectural truth. Operators can set
-  `low_cost_reasoning` to DeepSeek, MiniMax, Ollama, or any hosted
-  OpenAI-compatible provider without changing sidecar code.
-- Judges and approval gates should default to `strong_reasoning` unless a
-  cheaper model has demonstrated low false-approval risk on local evals.
+  `cheap_reasoning` to Cerebras, DeepSeek, Ollama, or another validated provider
+  without changing sidecar code.
+- Judges and approval gates default to `strong_reasoning`; code-critical review
+  uses `code_critical` so Codex is not consumed as the default cheap sidecar.
+- Provider credentials stay in secret stores. Sidecar config stores provider
+  and model names only.
 
 Scope and sharing defaults:
 
@@ -1356,9 +1349,9 @@ supervisor:
     interval_seconds: 3600
     run_on_start: false
     allow_llm: true
-    provider: codex
-    model: codex
-    timeout_seconds: 300
+    provider: deepseek
+    model: deepseek-reasoner
+    timeout_seconds: 180
     max_proposals_per_run: 10
     evidence_window: 100
     allow_cross_tenant: false
@@ -1685,9 +1678,9 @@ supervisor:
     interval_seconds: 3600
     run_on_start: false
     allow_llm: true
-    provider: codex
-    model: codex
-    timeout_seconds: 300
+    provider: deepseek
+    model: deepseek-reasoner
+    timeout_seconds: 180
     allow_cross_tenant: false
     allow_policy_proposals: true
     require_judge: true
@@ -1755,14 +1748,15 @@ Required metrics:
 
 The supervisor should use cheaper models for bounded worker execution and keep
 strong reasoning models for judge/curator/approval roles. A typical deployment
-is:
+topology is:
 
 ```text
-supervisor: Codex / strong reasoning
-curator: Codex / strong reasoning, or configured reasoning tier
-learning_judge: Codex / strong reasoning
-worker: MiniMax, DeepSeek, Claude Code, or other lower-cost model
-sidecars: low_cost_reasoning where safe, programmatic where possible
+foreground supervisor: primary configured chat model
+retrieval and classifiers: programmatic
+cheap worker / extraction: cheap_reasoning
+curator and learning_judge: strong_reasoning
+code_review_judge: code_critical
+operator: explicit approval in CLI/API/dashboard workflow
 ```
 
 Production runtime surfaces still needed:
@@ -1777,9 +1771,18 @@ Production runtime surfaces still needed:
   approval refs, redaction report, and reproducible hashes
 
 Low-end model findings are evidence, not authority. They may become memory
-candidates or advisory policies only through the normal curator -> judge ->
-operator chain. They must not directly mutate routing, prompts, tool config,
-global wiki records, training exports, or enforcement policies.
+candidates or advisory policies only through the normal cheap worker -> strong
+judge/curator -> operator chain. They must not directly mutate routing,
+prompts, tool config, global wiki records, training exports, realtime provider
+settings, or enforcement policies.
+
+Operator controls are dual-gated and advisory-only in this phase:
+
+- export bundle approval requires judge approval plus operator approval
+- realtime provider enablement requires judge approval plus operator approval
+- low-end eval findings may become advisory policy candidates only after judge
+  approval plus operator approval
+- every control reports `enforcement_allowed: false`
 
 Production sidecars should also avoid duplicate work across the global memory
 layer. Before local curator/dreaming spends model tokens on a failure, the local

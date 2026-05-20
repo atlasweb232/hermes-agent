@@ -634,9 +634,9 @@ DEFAULT_CONFIG = {
         },
         "learning_judge": {
             "enabled": True,
-            "provider": "codex",
-            "model": "codex",
-            "timeout_seconds": 300,
+            "provider": "deepseek",
+            "model": "deepseek-reasoner",
+            "timeout_seconds": 180,
             "max_candidates": 10,
             "min_confidence": 0.75,
             "fail_closed": True,
@@ -652,49 +652,47 @@ DEFAULT_CONFIG = {
         "sidecar_model_tiers": {
             "programmatic": {
                 "description": "No model call; deterministic parsing, indexing, and sync only.",
-                "provider": "",
-                "model": "",
-                "base_url": "",
+                "provider": "none",
+                "model": "none",
                 "allow_llm": False,
                 "timeout_seconds": 60,
             },
-            "low_cost_reasoning": {
-                "description": "Cheap hosted reasoning tier for bounded capture/extraction sidecars.",
-                "provider": "deepseek",
-                "model": "deepseek-reasoner",
-                "base_url": "https://api.deepseek.com",
+            "cheap_reasoning": {
+                "description": "Cheap reasoning tier for bounded confirmation/extraction sidecars.",
+                "provider": "cerebras",
+                "model": "gpt-oss-120b",
                 "allow_llm": True,
-                "timeout_seconds": 180,
-            },
-            "balanced_reasoning": {
-                "description": "Moderate-cost reasoning tier for compilation and synthesis sidecars.",
-                "provider": "codex",
-                "model": "codex",
-                "base_url": "",
-                "allow_llm": True,
-                "timeout_seconds": 300,
+                "timeout_seconds": 60,
+                "max_tokens": 2048,
             },
             "strong_reasoning": {
                 "description": "Strong reasoning tier for judges, approval gates, and high-impact curation.",
+                "provider": "deepseek",
+                "model": "deepseek-reasoner",
+                "allow_llm": True,
+                "timeout_seconds": 180,
+                "max_tokens": 4096,
+            },
+            "code_critical": {
+                "description": "Codex tier reserved for code-critical review and review judges.",
                 "provider": "codex",
                 "model": "codex",
-                "base_url": "",
                 "allow_llm": True,
                 "timeout_seconds": 300,
             },
         },
         "sidecar_models": {
-            "discussion_capture": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 120},
-            "claim_extractor": {"enabled": True, "tier": "low_cost_reasoning", "timeout_seconds": 300},
+            "discussion_capture": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
+            "claim_extractor": {"enabled": True, "tier": "cheap_reasoning", "timeout_seconds": 60},
             "citation_validator": {
                 "enabled": True,
                 "mode": "deterministic_first",
-                "tier": "low_cost_reasoning",
-                "timeout_seconds": 120,
+                "tier": "cheap_reasoning",
+                "timeout_seconds": 60,
             },
-            "wiki_compiler": {"enabled": True, "tier": "balanced_reasoning", "timeout_seconds": 300},
-            "dreaming": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 300},
-            "global_dreaming": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 300},
+            "wiki_compiler": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
+            "dreaming": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
+            "global_dreaming": {"enabled": True, "tier": "strong_reasoning", "timeout_seconds": 180},
         },
         "global_memory_wiki": {
             "enabled": False,
@@ -977,12 +975,11 @@ DEFAULT_CONFIG = {
         # deterministic validator and approval step promote it.
         "curator": {
             "enabled": True,
-            "provider": "ollama",
-            "model": "gemma2:2b",
-            "base_url": "http://127.0.0.1:11434",
+            "provider": "deepseek",
+            "model": "deepseek-reasoner",
             "mode": "advisory",
             "approval_required": True,
-            "timeout_seconds": 120,
+            "timeout_seconds": 180,
             "max_records": 10,
             "min_score": 0.5,
         },
@@ -1407,11 +1404,11 @@ DEFAULT_CONFIG = {
         # synthesizes candidates cannot approve task completion.
         "goal_judge": {
             "enabled": True,
-            "provider": "codex",
-            "model": "codex",
+            "provider": "deepseek",
+            "model": "deepseek-reasoner",
             "base_url": "",
             "api_key": "",
-            "timeout": 300,
+            "timeout": 180,
             "max_tokens": 4096,
             "extra_body": {},
         },
@@ -1584,6 +1581,41 @@ DEFAULT_CONFIG = {
         "mistral": {
             "model": "voxtral-mini-latest",  # voxtral-mini-latest, voxtral-mini-2602
         },
+    },
+
+    "sidecar_tiers": {
+        "programmatic": {
+            "provider": "none",
+            "model": "none",
+        },
+        "cheap_reasoning": {
+            "provider": "cerebras",
+            "model": "gpt-oss-120b",
+            "timeout_seconds": 60,
+            "max_tokens": 2048,
+        },
+        "strong_reasoning": {
+            "provider": "deepseek",
+            "model": "deepseek-reasoner",
+            "timeout_seconds": 180,
+            "max_tokens": 4096,
+        },
+        "code_critical": {
+            "provider": "codex",
+            "model": "codex",
+            "timeout_seconds": 300,
+        },
+    },
+    "sidecar_roles": {
+        "progress_summarizer": "cheap_reasoning",
+        "classifier": "programmatic",
+        "extraction": "cheap_reasoning",
+        "curator": "strong_reasoning",
+        "learning_judge": "strong_reasoning",
+        "dreaming": "strong_reasoning",
+        "policy_review": "strong_reasoning",
+        "code_review_judge": "code_critical",
+        "training_corpus_review": "strong_reasoning",
     },
 
     "voice": {
@@ -5702,14 +5734,16 @@ def config_command(args):
             print("active tiers: " + ", ".join(sorted(tiers)))
         print()
         print("set with: hermes config role set curator --provider codex --model codex")
-        print("or:       hermes config role set claim_extractor --tier low_cost_reasoning")
+        print("or:       hermes config role set claim_extractor --tier cheap_reasoning")
 
     elif subcmd == "tiers":
-        from hermes_cli.model_roles import list_model_tiers
+        from hermes_cli.model_roles import list_model_tiers, sidecar_role_mapping
 
-        tiers_by_name = list_model_tiers(load_config())
+        cfg = load_config()
+        tiers_by_name = list_model_tiers(cfg)
+        role_mapping = sidecar_role_mapping(cfg)
         if getattr(args, "json", False):
-            print(json.dumps({"tiers": tiers_by_name}, indent=2, ensure_ascii=False))
+            print(json.dumps({"tiers": tiers_by_name, "roles": role_mapping}, indent=2, ensure_ascii=False))
             return
         print("model tiers:")
         for name, cfg in tiers_by_name.items():
@@ -5720,7 +5754,7 @@ def config_command(args):
             print(f"    allow_llm: {cfg.get('allow_llm')}")
             print(f"    timeout:   {cfg.get('timeout_seconds', '')}")
         print()
-        print("set with: hermes config tier set low_cost_reasoning --provider deepseek --model deepseek-reasoner")
+        print("set with: hermes config tier set cheap_reasoning --provider cerebras --model gpt-oss-120b")
 
     elif subcmd == "tier":
         tier_cmd = getattr(args, "config_tier_command", None)

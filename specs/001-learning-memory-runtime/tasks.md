@@ -336,8 +336,8 @@
 - [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend
 - [ ] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
 - [ ] T112 [US8] Implement training corpus bundle writer with JSONL first, Parquet optional, manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility
-- [ ] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
-- [ ] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
+- [x] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
+- [x] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
 - [x] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
 - [x] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
@@ -350,7 +350,7 @@
 - [x] T124 [US8] Add CLI/API surfaces for operator testing: `hermes memory global lesson add/list/get`, `hermes memory global retrieve --event-json`, and JSON output suitable for backend/dashboard invocation
 - [x] T125 [US8] Update VM smoke to persist the Claude router repair lesson in the real global memory backend, restart Hermes, run a fresh retrieval/pre-curation check, and then run a live Hermes task to verify the stored lesson is found before the old failure loop repeats
 - [x] T125A [US8] Run VM persisted-memory smoke through CLI add/retrieve/hydrate and curator pre-curation, proving durable global lesson retrieval suppresses expensive curator recuration before live-chat validation
-- [ ] T126 [US8] Implement low-cost model routing budget policy: programmatic retrieval first, cheap model for lightweight confirmation/extraction only, strong model for judge/curator only when confidence is low or promotion/enforcement is requested
+- [x] T126 [US8] Implement low-cost model routing budget policy: programmatic retrieval first, cheap model for lightweight confirmation/extraction only, strong model for judge/curator only when confidence is low or promotion/enforcement is requested
 - [x] T127 [US8] Add minimal JSON observability for cost/value before frontend work: per-task memory hits, token estimate, skipped curator count, repeated-error count, worker model, outcome, and whether memory helped/ignored/hurt
 - [ ] T128 [US8] Audit SQLite learning/global bus queues before Kafka/Redpanda work: list queued/leased/consumed/dead events, drain one batch idempotently, verify replay safety, and document whether a dedicated consumer sidecar is required
 - [x] T129 [US8] Implement local hot-cache table/helpers for approved global lessons with compact text, signatures, confidence, TTL, last_used_at, reuse stats, source global lesson id, and tenant/repo/sensitivity gates

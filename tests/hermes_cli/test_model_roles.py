@@ -87,11 +87,12 @@ def test_sidecar_roles_resolve_through_model_tiers(_isolate_hermes_home):
     compiler = get_model_role(cfg, "wiki_compiler")
     dreaming = get_model_role(cfg, "dreaming")
 
-    assert {"programmatic", "low_cost_reasoning", "balanced_reasoning", "strong_reasoning"} <= set(tiers)
-    assert capture["tier"] == "low_cost_reasoning"
-    assert capture["config"]["provider"] == tiers["low_cost_reasoning"]["provider"]
-    assert extractor["config"]["model"] == "deepseek-reasoner"
-    assert compiler["tier"] == "balanced_reasoning"
+    assert {"programmatic", "cheap_reasoning", "strong_reasoning", "code_critical"} <= set(tiers)
+    assert {"low_cost_reasoning", "balanced_reasoning"} <= set(tiers)
+    assert capture["tier"] == "cheap_reasoning"
+    assert capture["config"]["provider"] == tiers["cheap_reasoning"]["provider"]
+    assert extractor["config"]["model"] == "gpt-oss-120b"
+    assert compiler["tier"] == "strong_reasoning"
     assert dreaming["tier"] == "strong_reasoning"
 
 
@@ -109,7 +110,7 @@ def test_role_specific_provider_override_beats_tier(_isolate_hermes_home):
     )
 
     role = get_model_role(cfg, "claim_extractor")
-    assert role["tier"] == "low_cost_reasoning"
+    assert role["tier"] == "cheap_reasoning"
     assert role["config"]["provider"] == "minimax"
     assert role["config"]["model"] == "MiniMax-M2"
 
@@ -139,8 +140,8 @@ def test_config_role_cli_sets_sidecar_tier(_isolate_hermes_home, capsys):
     role = get_model_role(load_config(), "wiki_compiler")
 
     assert output["ok"] is True
-    assert output["role"]["tier"] == "low_cost_reasoning"
-    assert role["config"]["provider"] == "deepseek"
+    assert output["role"]["tier"] == "cheap_reasoning"
+    assert role["config"]["provider"] == "cerebras"
 
 
 def test_config_tier_cli_updates_low_cost_provider(_isolate_hermes_home, capsys):

@@ -45,8 +45,8 @@ Deployment:
 Smoke results:
 
 - Fast-forward deploy and editable reinstall succeeded.
-- `hermes config tiers --json` returned `programmatic`,
-  `low_cost_reasoning`, `balanced_reasoning`, and `strong_reasoning`.
+- `hermes config tiers --json` returned the then-current `programmatic`,
+  `low_cost_reasoning`, `balanced_reasoning`, and `strong_reasoning` names.
 - `hermes config roles --json` returned curator, learning judge, goal judge,
   discussion sidecars, dreaming, and citation validator role config.
 - `hermes memory monitor --json` reported `healthy`, with `ready_packets=14`,
@@ -206,6 +206,8 @@ Budget rule:
 - Near persisted lesson hit: cheap confirmation only if needed.
 - Strong model: only for promotion, enforcement, contradiction, low confidence,
   or explicit operator request.
+- Codex is reserved for code-critical review and is not the default cheap
+  sidecar tier.
 
 Shortest low-overhead runtime path:
 
@@ -218,6 +220,67 @@ task metadata
   -> compact advisory packet
   -> cheap worker
 ```
+
+## Phase 11 Sidecar Tier Policy
+
+Sidecar model selection is explicit in config and visible through JSON:
+
+```bash
+hermes config tiers --json
+GET /api/model/tiers
+GET /api/model/roles
+```
+
+Preferred top-level config shape:
+
+```yaml
+sidecar_tiers:
+  programmatic:
+    provider: none
+    model: none
+  cheap_reasoning:
+    provider: cerebras
+    model: gpt-oss-120b
+    timeout_seconds: 60
+    max_tokens: 2048
+  strong_reasoning:
+    provider: deepseek
+    model: deepseek-reasoner
+    timeout_seconds: 180
+    max_tokens: 4096
+  code_critical:
+    provider: codex
+    model: codex
+    timeout_seconds: 300
+
+sidecar_roles:
+  progress_summarizer: cheap_reasoning
+  classifier: programmatic
+  extraction: cheap_reasoning
+  curator: strong_reasoning
+  learning_judge: strong_reasoning
+  dreaming: strong_reasoning
+  policy_review: strong_reasoning
+  code_review_judge: code_critical
+  training_corpus_review: strong_reasoning
+```
+
+Only provider and model names belong in sidecar config. Provider credentials
+remain in the normal secret stores, never in `config.yaml`, docs, tests, or
+logs. Existing `supervisor.sidecar_model_tiers` values are still read for
+compatibility, but top-level `sidecar_tiers` wins.
+
+The production routing policy is:
+
+1. Programmatic retrieval runs first.
+2. Exact persisted lesson matches suppress curator, judge, dreaming, and all
+   other LLM-backed sidecars.
+3. Near matches may use the cheap tier for bounded confirmation/extraction.
+4. High-confidence non-promotion paths avoid the strong tier.
+5. Low confidence, contradiction, promotion, or enforcement requests escalate
+   to the strong judge/curator path.
+6. Promotion and enforcement requests require both judge and operator approval;
+   this slice records advisory approval only and does not enable enforcement.
 
 ## VM Phase 11A Persisted Lesson Smoke
 
