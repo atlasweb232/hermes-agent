@@ -172,6 +172,12 @@ See [contracts/azure-production-deployment.md](./contracts/azure-production-depl
 
 This phase adds a production-safe Azure deployment workflow for Hermes platform infrastructure. Hermes chat can orchestrate deployment planning, preflight, apply, status, smoke, promote, and rollback, but paid or dangerous operations require explicit operator approval. The default path remains local/SQLite; Azure Event Hubs Kafka protocol, Redpanda/Kafka, storage, Key Vault, runtime cells, sidecars, and observability are introduced through staged deployment profiles and smoke/soak gates.
 
+## Phase 21: Platform Hardening And Gap Closure
+
+See [contracts/platform-hardening.md](./contracts/platform-hardening.md) and [../../docs/platform-hardening-gap-review.md](../../docs/platform-hardening-gap-review.md).
+
+This phase closes the cross-cutting risks left after the memory, sidecar, dreaming, tenant, skill, MLOps, and Azure deployment work. It adds a shared approval ledger, effective runtime profile resolver, canonical bus envelope, sidecar budget governor, full context-gate coverage, memory quality lifecycle, dreaming backlog control, and Azure production hardening gates.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
@@ -184,3 +190,4 @@ This phase adds a production-safe Azure deployment workflow for Hermes platform 
 | Proposal-only dreaming | Required to capture long-horizon improvement ideas without letting speculative synthesis mutate runtime | Letting dreaming write skills, config, goals, or policy directly would create unsafe autonomous drift |
 | Corpus remittance for external MLOps | Required to improve cheaper coding models without allowing live runtime sidecars to train, register, or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
 | Gated Azure deployment orchestration | Required to let Hermes chat assist production rollout without blindly creating paid resources or mutating production traffic | Raw one-click deployment would be unsafe for cost, DNS, secrets, tenant data, and rollback correctness |
+| Cross-cutting hardening phase | Required because approval, config, budget, bus, context, memory quality, and deployment hardening span many subsystems | Leaving each subsystem to solve these independently would create loopholes and inconsistent production behavior |

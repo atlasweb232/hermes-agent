@@ -315,7 +315,7 @@
 - [x] T101 [P] [US8] Add observability UI/API tests for historical jobs, active jobs, tenant/repo/date filters, worker status, blocker reason, completion status, line-item drilldown, and scoped Ask analysis
 - [ ] T102 [P] [US8] Add realtime voice config/transport tests for OpenAI `gpt-realtime-2`, MiniMax `speech-2.8`, and xAI/Grok provider selection, fallback reporting, and no secret leakage
 - [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving backend config selection, broker health checks, topic verification, idempotent publish/consume/replay/dead-letter behavior, lag metrics, TLS/SASL config-shape validation without secrets, SQLite spool fallback when the broker is unavailable, and no foreground blocking
-- [ ] T104 [P] [US8] Add training corpus export tests for JSONL/Parquet bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters
+- [ ] T104 [P] [US8] Reconcile legacy training corpus export tests with Phase 19 MLOps corpus remittance, proving JSONL/Parquet-compatible bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters use the same safety boundary and do not create a second export path
 - [x] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
 - [x] T105A [P] [US8] Add global pre-curation dedupe tests proving an exact approved global lesson suppresses local expensive curation, a near match creates only lightweight confirmation, and a miss allows local curation
 - [x] T105B [P] [US8] Add global lesson reuse metric tests for `global_lesson_hit`, `global_lesson_near_hit`, `global_lesson_used`, `global_lesson_helped`, `global_lesson_ignored`, and `global_lesson_hurt`
@@ -335,7 +335,7 @@
 - [ ] T109 [US8] Implement realtime voice transport behind the existing `voice.realtime` config, with provider adapters for OpenAI realtime first and MiniMax/xAI-compatible extension points
 - [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend, including Docker Compose staging template, optional Kubernetes/Helm or Terraform handoff docs, health/check CLI, dead-letter/replay tooling, SQLite-to-broker publish sidecar, broker-unavailable fallback to SQLite spool, and a staging soak-test checklist
 - [x] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
-- [ ] T112 [US8] Implement training corpus bundle writer with JSONL first, Parquet optional, manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility
+- [ ] T112 [US8] Reuse or adapt the Phase 19 MLOps corpus bundle writer for legacy/wiki training corpus exports with JSONL first, Parquet-compatible manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility, avoiding duplicate corpus writer semantics
 - [x] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [x] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [x] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
@@ -717,6 +717,44 @@
 
 **Checkpoint**: Hermes can safely orchestrate Azure deployment workflows through gated artifacts while keeping live production resource creation, DNS changes, secret rotation, traffic promotion, and rollback under explicit operator control.
 
+## Phase 21: Platform Hardening And Gap Closure (Priority: P18)
+
+**Goal**: Close cross-cutting production loopholes that span memory, sidecars, dreaming, tenant runtime, workers, event bus, MLOps corpus, and Azure deployment.
+
+**Independent Test**: Run a hardening suite that attempts approval replay, mismatched feature/deployment config, duplicate/replayed bus events, sidecar over-budget execution, raw worker stream injection, stale/harmful memory retrieval, dreaming proposal flood, and unsafe Azure production apply. Verify every case fails closed without blocking foreground runtime.
+
+**Boundary**: This phase must not add new autonomous behavior. It adds shared deterministic gates, ledgers, effective-state views, budget checks, and lifecycle controls.
+
+### Spec And Architecture Artifacts
+
+- [x] T308 [US18] Add `contracts/platform-hardening.md` covering shared approval ledger, effective runtime profile, canonical bus envelope, sidecar budget governor, context-gate coverage, memory quality lifecycle, dreaming backlog control, and Azure production hardening
+- [x] T309 [US18] Add `docs/platform-hardening-gap-review.md` summarizing closed gaps, remaining gaps, and mitigation principles
+
+### Tests For Platform Hardening
+
+- [ ] T310 [P] [US18] Add shared approval ledger tests for memory promotion, dreaming conversion, deployment apply/promote/destroy, corpus remittance, policy enforcement, and protected CI/CD actions, proving approvals are actor/role/tenant/action/target-hash bound, expiring, non-replayable, and audit-linked
+- [ ] T311 [P] [US18] Add effective runtime profile tests proving feature toggles, sidecar tiers, tenant/repo policy, toolset profile, deployment profile, worker health, budgets, and memory retrieval mode merge into one explainable read-only view
+- [ ] T312 [P] [US18] Add canonical bus envelope/redrive tests for SQLite and Kafka-compatible paths, proving event id, idempotency key, partition key, redaction state, replay attempt, dead-letter reason, and consumer idempotency semantics
+- [ ] T313 [P] [US18] Add sidecar budget governor tests proving LLM-backed sidecars are denied or degraded when tenant/task/day/token/cost budgets are exceeded while exact-memory-hit programmatic paths still run
+- [ ] T314 [P] [US18] Add worker-path context gate integration tests proving Claude, Codex, DeepSeek, browser/TinyFish, and generic worker wrappers cannot stream raw stdout/stderr/watch/log tails into supervisor context
+- [ ] T315 [P] [US18] Add memory quality lifecycle tests for stale suppression, confidence decay, harmful/ignored feedback demotion, retirement, compaction, and audit history preservation
+- [ ] T316 [P] [US18] Add dreaming backlog control tests for tenant quota, proposal-type quota, risk quota, duplicate suppression, max-age archival, and operator-visible backlog summary
+- [ ] T317 [P] [US18] Add Azure hardening gate tests proving live production apply/promote is blocked unless managed identity, RBAC, private endpoints, VNet integration, ingress, diagnostics, storage lifecycle policy, Key Vault access, rollback artifacts, and explicit approval are valid
+
+### Implementation For Platform Hardening
+
+- [ ] T318 [US18] Implement shared approval ledger DTOs/state helpers/CLI or API JSON inspection surface with redacted immutable approval records
+- [ ] T319 [US18] Implement effective runtime profile resolver and JSON surface for task dispatch and deployment preflight
+- [ ] T320 [US18] Implement canonical bus envelope helpers and idempotent redrive/dead-letter DTOs used by SQLite and Kafka-compatible adapters
+- [ ] T321 [US18] Implement sidecar budget governor integrated with sidecar role routing before LLM-backed sidecar calls
+- [ ] T322 [US18] Implement worker-path context gate audit helpers and wrapper compliance checks for all configured worker families
+- [ ] T323 [US18] Implement memory quality lifecycle compaction/demotion helpers and safe operator/status output
+- [ ] T324 [US18] Implement dreaming backlog controls and observability summaries
+- [ ] T325 [US18] Implement Azure production hardening evaluator and wire it into deployment preflight/promotion gates
+- [ ] T326 [US18] Add E2E hardening fixture proving all hardening gates fail closed and foreground runtime remains non-blocking
+
+**Checkpoint**: Production hardening gates are shared, deterministic, observable, and fail closed without adding hidden loops or foreground drag.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -751,7 +789,7 @@
 - Tenant registry, repo registration, connector registration, and toolset profile schemas can be developed in parallel after Phase 16 architecture lands.
 - Skill metadata, retrieval, packet building, feedback, and SkillClaw adapter tests can be developed in parallel after Phase 17 architecture lands.
 - Dreaming proposal-type validators, local/global input builders, dashboard DTOs, and conversion-gate tests can be developed in parallel after Phase 18 architecture lands.
-- MLOps corpus schemas, local bundle writer, registry metadata, and deployment gate tests can be developed in parallel after Phase 19 architecture lands.
+- MLOps corpus schemas, local bundle writer, external training hints, and remittance receipt tests can be developed in parallel after Phase 19 architecture lands.
 
 ## Implementation Strategy
 
@@ -889,3 +927,15 @@
 6. Add smoke/soak/promotion gate outputs.
 7. Add CLI/API JSON surfaces.
 8. Add E2E fake-adapter staging deployment fixture.
+
+### Phase 21 Order
+
+1. Add shared approval ledger.
+2. Add effective runtime profile resolver.
+3. Add canonical bus envelope/redrive helpers.
+4. Add sidecar budget governor.
+5. Add worker-path context gate compliance checks.
+6. Add memory quality lifecycle compaction/demotion.
+7. Add dreaming backlog controls.
+8. Add Azure production hardening evaluator.
+9. Add integrated hardening E2E fixture.

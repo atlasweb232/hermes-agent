@@ -430,6 +430,14 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **FR-129**: Azure production deployment MUST support staging first, production promotion only after smoke/soak gates pass, and rollback to the prior known-good deployment profile.
 - **FR-130**: Azure production profiles MUST explicitly classify object storage containers for artifacts, memory/wiki/index data, corpus remittance bundles, and audit records.
 - **FR-131**: Azure production profiles MUST prefer managed Azure services first: Container Apps for runtime cells, Event Hubs Kafka protocol for managed bus, ADLS Gen2 or Blob Storage for object storage, PostgreSQL Flexible Server for relational state, Key Vault for secrets, and Azure Monitor/Application Insights for observability, while allowing AKS/Redpanda/Cosmos alternatives by explicit profile.
+- **FR-132**: System MUST provide a shared approval ledger for memory promotion, dreaming conversion, deployment apply/promote/destroy, corpus remittance, policy enforcement, and protected CI/CD operations.
+- **FR-133**: System MUST provide an effective runtime profile resolver that explains the combined state of feature toggles, sidecar tiers, tenant policy, deployment profile, worker health, budgets, toolsets, and memory retrieval mode before task dispatch or deployment.
+- **FR-134**: Runtime event buses MUST use one canonical event envelope with event id, idempotency key, partition key, redaction state, replay attempt, and dead-letter reason across SQLite, Event Hubs, Redpanda, and Kafka paths.
+- **FR-135**: LLM-backed sidecars MUST pass a sidecar budget governor before execution, with per-tenant, per-task, per-day, role-tier, token, and cost checks.
+- **FR-136**: All worker execution paths MUST be covered by the supervisor context gate so raw worker streams cannot enter supervisor model context.
+- **FR-137**: Approved memory MUST support quality lifecycle operations including confidence decay, stale suppression, retirement, compaction, and preserved audit history.
+- **FR-138**: Dreaming proposal creation MUST enforce quota, dedupe, age, and backlog controls by tenant, proposal type, and risk.
+- **FR-139**: Azure live deployment hardening MUST explicitly validate managed identity, RBAC, private endpoints, VNet integration, ingress mode, diagnostics, storage lifecycle policy, Key Vault access model, and rollback artifacts before production apply or promotion.
 
 ### Key Entities
 
@@ -461,6 +469,10 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **Deployment Promotion Gate**: Staging-to-production decision requiring smoke tests, soak metrics, health checks, cost/latency checks, and operator approval.
 - **Azure Object Storage Plane**: ADLS Gen2 or Blob Storage containers used for deployment artifacts, memory/wiki/index artifacts, corpus remittance bundles, benchmark outputs, and audit reports.
 - **Azure State Store Plane**: PostgreSQL or Cosmos-backed durable control-plane state for tenants, repos, jobs, allocations, memory metadata, deployment profiles, deployment runs, approvals, and cost ledgers.
+- **Shared Approval Ledger Entry**: Durable authorization record binding actor, role, tenant, action, target ref, target hash, expiry, approval channel, replay policy, and audit refs.
+- **Effective Runtime Profile**: Read-only merged view of runtime feature toggles, sidecar roles, tenant/repo policy, deployment profile, toolsets, budgets, memory mode, and worker health.
+- **Canonical Event Envelope**: Cross-backend bus message wrapper carrying event identity, idempotency, partitioning, redaction, replay, and dead-letter metadata.
+- **Sidecar Budget Decision**: Deterministic allow/deny/degrade decision made before an LLM-backed sidecar call.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Feature Toggle**: Runtime configuration switch that controls whether a platform capability can affect foreground behavior, sidecar behavior, observability, or enforcement.
 - **E2E Feature Test Case**: One executable feature-level scenario with required toggle state, workload fixture, expected artifacts, telemetry assertions, validation commands, and pass/fail classification.
