@@ -579,11 +579,11 @@
 
 ### Tests For Skill Retrieval And Injection
 
-- [ ] T236 [P] [US14] Add skill metadata schema tests for id, version, scope, tenant/repo/toolset/worker/task metadata, approval state, safety state, content hash, source refs, validation refs, usage stats, and retirement state
-- [ ] T237 [P] [US14] Add skill retrieval tests proving tenant/repo/toolset/worker-role/safety/approval hard filters run before semantic ranking
-- [ ] T238 [P] [US14] Add bounded skill packet tests proving supervisor, planner, worker, QA, browser, and deployment contexts receive only relevant skill summaries or refs
-- [ ] T239 [P] [US14] Add disabled-skill-feature tests proving skill retrieval/injection can be turned off without breaking baseline memory retrieval or delegation
-- [ ] T240 [P] [US14] Add cross-tenant skill isolation tests proving tenant-private skills never appear in other tenant packets
+- [x] T236 [P] [US14] Add skill metadata schema tests for id, version, scope, tenant/repo/toolset/worker/task metadata, approval state, safety state, content hash, source refs, validation refs, usage stats, and retirement state
+- [x] T237 [P] [US14] Add skill retrieval tests proving tenant/repo/toolset/worker-role/safety/approval hard filters run before semantic ranking
+- [x] T238 [P] [US14] Add bounded skill packet tests proving supervisor, planner, worker, QA, browser, and deployment contexts receive only relevant skill summaries or refs
+- [x] T239 [P] [US14] Add disabled-skill-feature tests proving skill retrieval/injection can be turned off without breaking baseline memory retrieval or delegation
+- [x] T240 [P] [US14] Add cross-tenant skill isolation tests proving tenant-private skills never appear in other tenant packets
 
 ### Tests For Skill Evolution And SkillClaw
 
@@ -595,10 +595,10 @@
 
 ### Implementation For Skill Pipeline
 
-- [ ] T246 [US14] Implement skill metadata DTOs/state helpers and local registry adapter
-- [ ] T247 [US14] Implement skill retrieval query builder using existing task classifier metadata
-- [ ] T248 [US14] Implement skill scorer with hard filters, lexical/semantic hooks, scope penalties, confidence, recency, and usage feedback
-- [ ] T249 [US14] Implement bounded skill packet builder for supervisor/planner/worker/QA/browser/deployment roles
+- [x] T246 [US14] Implement skill metadata DTOs/state helpers and local registry adapter
+- [x] T247 [US14] Implement skill retrieval query builder using existing task classifier metadata
+- [x] T248 [US14] Implement skill scorer with hard filters, lexical/semantic hooks, scope penalties, confidence, recency, and usage feedback
+- [x] T249 [US14] Implement bounded skill packet builder for supervisor/planner/worker/QA/browser/deployment roles
 - [ ] T250 [US14] Add skill refs to supervisor task packets, planner packets, worker delegation packets, validation reports, and session summaries
 - [ ] T251 [US14] Implement skill outcome feedback recording and confidence/demotion helpers
 - [ ] T252 [US14] Implement skill candidate creation from approved memory/wiki records
