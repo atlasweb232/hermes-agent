@@ -655,7 +655,7 @@
 
 - [x] T272 [US16] Add `docs/lesser-model-mlops-architecture.md` defining Hermes-owned failure/repair corpus collection, curation, remittance, external MLOps handoff, destination storage layout, and external training/evaluation responsibilities
 - [x] T273 [US16] Add MLOps corpus remittance contract covering failure/repair records, preference pairs, destination metadata, external training hints, remittance receipts, and storage layouts
-- [ ] T274 [US16] Link MLOps architecture from training corpus, global memory wiki, benchmark harness, sidecar model-tier, and tenant platform docs
+- [x] T274 [US16] Link MLOps architecture from training corpus, global memory wiki, benchmark harness, sidecar model-tier, and tenant platform docs
 
 ### Tests For Training Corpus MLOps
 

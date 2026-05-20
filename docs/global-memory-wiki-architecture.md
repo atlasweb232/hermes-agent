@@ -779,6 +779,15 @@ This keeps the global wiki useful for both runtime improvement and future
 training-corpus construction while preventing noisy, speculative, or
 tenant-inappropriate memories from spreading across devices.
 
+Training-corpus construction is governed by
+[`lesser-model-mlops-architecture.md`](lesser-model-mlops-architecture.md)
+and the
+[`MLOps corpus remittance contract`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+The wiki may supply only approved, redacted, shareable evidence for Hermes
+corpus bundles. Hermes collects, curates, exports, validates, and remits those
+bundles; external MLOps owns fine-tuning, model registry, evaluation gates,
+serving, and rollout.
+
 ## Skill Pipeline Boundary
 
 The global memory wiki can provide evidence for skill candidates, but it does

@@ -435,6 +435,16 @@ The platform must maintain separation between:
 - training corpus records
 - enforcement policies
 
+Training corpus records are scoped by the MLOps corpus boundary in
+[`lesser-model-mlops-architecture.md`](lesser-model-mlops-architecture.md)
+and
+[`mlops-corpus-remittance.md`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+Tenant runtime cells may produce only approved, redacted, shareable records for
+Hermes corpus bundles and remittance receipts. External MLOps owns fine-tuning,
+model registry, evaluation gates, serving, and rollout; tenant onboarding does
+not grant Hermes authority to train, register, deploy, promote, or route to
+fine-tuned models.
+
 ## Admin Dashboard
 
 Global admin dashboard views:

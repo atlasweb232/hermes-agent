@@ -199,6 +199,15 @@ Deferred until the above passes:
 - Global indexer and local sync sidecars until local hot-cache hydration proves
   value.
 
+Training corpus export follows the MLOps remittance boundary in
+[`lesser-model-mlops-architecture.md`](lesser-model-mlops-architecture.md)
+and
+[`specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+The runtime only collects, curates, exports, validates, and remits approved
+corpus bundles. External MLOps owns fine-tuning, model registry entries,
+evaluation gates, serving, and rollout, and corpus receipts do not change
+runtime routes or enforcement policy.
+
 Budget rule:
 
 - Exact persisted lesson hit: programmatic only; no curator, judge, dreaming, or

@@ -43,6 +43,15 @@ Framework placeholders:
 - `custom` / OpenAI-compatible endpoint
 - Cerebras `gpt-oss-120b` as the default cheap sidecar tier
 
+Sidecar findings that are useful for lesser-model improvement feed the corpus
+path defined in
+[`lesser-model-mlops-architecture.md`](lesser-model-mlops-architecture.md)
+and
+[`mlops-corpus-remittance.md`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+Sidecars may collect evidence, curate candidates, validate repairs, and help
+export approved corpus bundles, but they remain advisory. External MLOps owns
+fine-tuning, model registry, evaluation gates, serving, and rollout.
+
 Codex can run as an external advisory worker for code-critical review:
 
 ```bash

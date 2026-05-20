@@ -14,6 +14,19 @@ to configured storage. Hermes does not own training execution, model registry,
 model serving, or rollout decisions. Those belong to external MLOps
 infrastructure.
 
+The concrete remittance schema is
+[`specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+Related runtime boundaries are documented in
+[`runtime-learning-enforcement.md`](runtime-learning-enforcement.md),
+[`global-memory-wiki-architecture.md`](global-memory-wiki-architecture.md),
+[`production-evaluation-harness-architecture.md`](production-evaluation-harness-architecture.md),
+[`curator-policy-framework-architecture.md`](curator-policy-framework-architecture.md),
+and
+[`tenant-platform-architecture.md`](tenant-platform-architecture.md).
+Those documents may feed approved, redacted evidence into this corpus path, but
+they must not turn corpus remittance into runtime enforcement, training jobs,
+model registry writes, serving changes, or rollout decisions.
+
 ## Target Loop
 
 ```text

@@ -106,6 +106,15 @@ and the
 contract for proposal schema, local/global evidence filtering, and validator
 outputs.
 
+MLOps corpus checks should reference
+[`lesser-model-mlops-architecture.md`](lesser-model-mlops-architecture.md)
+and
+[`mlops-corpus-remittance.md`](../specs/001-learning-memory-runtime/contracts/mlops-corpus-remittance.md).
+The harness may validate corpus bundle quality, redaction, approval provenance,
+remittance receipts, and external training hints. It must not treat a remitted
+bundle as a Hermes-owned fine-tune job, model registry entry, deployment gate,
+serving change, or rollout decision.
+
 ## Multi-Agent And QA Toolsets
 
 Long-horizon workloads should include agent clusters, not only single worker
