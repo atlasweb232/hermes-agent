@@ -56,6 +56,13 @@ meet the requirement.
 | Private network | VNet integration + private endpoints | Public locked-down ingress | Production profiles should prefer private access to Key Vault, storage, database, and bus. |
 | IaC output | Terraform first | Bicep optional | Hermes generates/validates artifacts and can apply only after explicit approval. |
 
+The first Terraform scaffold lives at
+[`infra/azure/terraform/hermes-platform/`](../infra/azure/terraform/hermes-platform/).
+It creates the managed Azure baseline for Container Apps, Event Hubs, ADLS/Blob
+containers, Key Vault, Log Analytics, Application Insights, and optional
+PostgreSQL. It is validated as Terraform but must still be invoked through the
+Phase 20 plan/preflight/approval workflow before any production apply.
+
 ## Object Storage Layout
 
 Object storage is the durable artifact plane. It is not the runtime database.

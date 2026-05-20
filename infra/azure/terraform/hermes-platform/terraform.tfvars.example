@@ -1,0 +1,27 @@
+name_prefix         = "hermes"
+environment         = "staging"
+location            = "eastus"
+resource_group_name = "rg-hermes-staging"
+tenant_id           = "00000000-0000-0000-0000-000000000000"
+
+runtime_image = "ghcr.io/example/hermes-runtime:latest"
+sidecar_image = "ghcr.io/example/hermes-sidecar:latest"
+
+runtime_min_replicas = 1
+runtime_max_replicas = 5
+sidecar_min_replicas = 1
+sidecar_max_replicas = 10
+
+eventhub_sku               = "Standard"
+eventhub_capacity          = 1
+eventhub_partition_count   = 2
+eventhub_message_retention = 1
+
+enable_postgres = false
+# postgres_admin_password = "set via TF_VAR_postgres_admin_password, not this file"
+
+container_ingress_external_enabled = false
+
+tags = {
+  owner = "platform"
+}
