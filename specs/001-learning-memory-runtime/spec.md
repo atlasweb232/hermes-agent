@@ -415,6 +415,14 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **FR-114**: Dreaming proposals MUST include proposal type, scope, evidence refs, risk level, expected benefit, affected feature ids, approval path, forbidden direct actions, and suggested validation.
 - **FR-115**: Dreaming proposal conversion MUST route through deterministic validation, judge review, and operator or tenant-admin approval before becoming approved memory, wiki update, skill candidate, test task, policy candidate, goal, or training corpus candidate.
 - **FR-116**: Dashboard/API observability MUST expose dreaming proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history.
+- **FR-117**: System MUST support a separate MLOps training corpus loop for lesser-model failure/repair records, distinct from runtime memory and prompt retrieval.
+- **FR-118**: Training corpus records for lesser-model improvement MUST include task packet summary, lesser-model attempt summary, failure classification, failure evidence refs, teacher/strong-model diagnosis, corrected output refs, validation evidence, distilled lesson, forbidden future behavior, redaction state, and approval provenance.
+- **FR-119**: System MUST support SFT message records and preference-pair records for validated failure/repair examples.
+- **FR-120**: Training corpus storage MUST support local JSONL/manifests first and Delta Lake or Iceberg-compatible production layouts later.
+- **FR-121**: Fine-tuning jobs MUST be tracked outside live runtime with base model, method, corpus refs, hyperparameter refs, artifact refs, eval refs, and approval state.
+- **FR-122**: Fine-tuned lesser models MUST enter a model registry with base model, adapter/weights refs, tokenizer refs, training manifest, eval report, redaction report, approval record, deployment status, and rollback target.
+- **FR-123**: Fine-tuned models MUST pass held-out Hermes benchmarks, safety checks, tenant-boundary checks, false-completion checks, tool-misuse checks, and cost/latency gates before staged deployment as worker models.
+- **FR-124**: Runtime sidecars MAY create training candidates but MUST NOT train, register, deploy, or promote fine-tuned models directly.
 
 ### Key Entities
 
@@ -434,6 +442,11 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **Memory Graph Node**: Typed node representing tenant, repo, machine, tool, worker, provider, model, task type, signature, memory, wiki claim, proposal, or policy.
 - **Memory Graph Edge**: Typed relationship explaining where memory applies, what it avoids, what it recommends, and what evidence produced it.
 - **Training Corpus Record**: Sanitized, scoped, evidence-backed export derived from wiki claims or approved memory, never raw transcripts. For migration work, it preserves source/target repo refs, before/after commit refs, Spec Kit refs, failure/repair labels, validation evidence, and drift-evaluation anchors.
+- **Failure Repair Training Record**: Approved training item that pairs a lesser-model failure with stronger-model diagnosis, corrected output, validation evidence, and distilled future behavior.
+- **Preference Training Pair**: Training item with one prompt, a validated chosen response, and a rejected lesser-model response that failed validation or policy.
+- **Fine-Tune Job**: Offline MLOps job that trains an adapter or model from approved corpus refs and writes artifacts plus evaluation reports.
+- **Model Registry Entry**: Versioned record for a fine-tuned model or adapter, including base model, artifacts, tokenizer, training manifest, eval report, approval state, rollout status, and rollback target.
+- **Model Deployment Gate**: Evaluation report deciding whether a fine-tuned model may enter canary or production worker routing.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Feature Toggle**: Runtime configuration switch that controls whether a platform capability can affect foreground behavior, sidecar behavior, observability, or enforcement.
 - **E2E Feature Test Case**: One executable feature-level scenario with required toggle state, workload fixture, expected artifacts, telemetry assertions, validation commands, and pass/fail classification.

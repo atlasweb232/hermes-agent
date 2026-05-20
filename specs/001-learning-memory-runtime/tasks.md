@@ -643,6 +643,43 @@
 
 **Checkpoint**: Dreaming can generate valuable improvement work while remaining isolated, reviewable, tenant-scoped, and non-authoritative.
 
+## Phase 19: Lesser-Model Training Corpus And MLOps Loop (Priority: P16)
+
+**Goal**: Create an offline MLOps loop where lesser-model failures and stronger-model rectifications become approved training corpus records for fine-tuning smaller coding models such as Gemma-class workers.
+
+**Independent Test**: Export approved failure/repair and preference-pair records into a reproducible local JSONL bundle with manifest, redaction report, approval provenance, and model-training metadata. Verify no raw transcript, secret, or unapproved tenant data is exported, then produce a model-registry candidate record that remains undeployed until evaluation gates pass.
+
+**Boundary**: Runtime sidecars may create training candidates, but they must not train, register, deploy, or promote models. Fine-tuning runs only in the offline MLOps pipeline.
+
+### Spec And Architecture Artifacts
+
+- [x] T272 [US16] Add `docs/lesser-model-mlops-architecture.md` defining failure/repair corpus, SFT and preference data shapes, LoRA/QLoRA/fine-tune stages, Delta/Iceberg storage layout, model registry, evaluation gate, and staged deployment
+- [ ] T273 [US16] Add MLOps training corpus contract covering failure/repair records, preference pairs, fine-tune job metadata, model registry metadata, deployment gate reports, and storage layouts
+- [ ] T274 [US16] Link MLOps architecture from training corpus, global memory wiki, benchmark harness, sidecar model-tier, and tenant platform docs
+
+### Tests For Training Corpus MLOps
+
+- [ ] T275 [P] [US16] Add failure/repair training record schema tests covering lesser-model attempt summary, failure classification, evidence refs, strong-model diagnosis, correction refs, validation refs, distilled lesson, forbidden behavior, redaction, and approval provenance
+- [ ] T276 [P] [US16] Add SFT message record tests and preference-pair tests for chosen validated repair vs rejected lesser-model failure
+- [ ] T277 [P] [US16] Add local JSONL bundle tests for stable manifest, hashes, redaction report, approval provenance, dataset-family filters, tenant/shareability boundaries, and no raw transcript/secret export
+- [ ] T278 [P] [US16] Add Delta/Iceberg layout metadata tests using local fake paths only, proving partition fields and schema versions are stable without requiring production services
+- [ ] T279 [P] [US16] Add fine-tune job metadata tests for base model, training method, corpus refs, hyperparameter refs, artifact refs, eval refs, and approval state
+- [ ] T280 [P] [US16] Add model registry tests for base model, adapter/weights refs, tokenizer refs, training manifest, eval report, redaction report, approval record, rollout status, and rollback target
+- [ ] T281 [P] [US16] Add deployment gate tests proving a fine-tuned model cannot become a worker tier until held-out benchmarks, safety, tenant-boundary, false-completion, tool-misuse, and cost/latency gates pass
+
+### Implementation For Training Corpus MLOps
+
+- [ ] T282 [US16] Implement MLOps training corpus DTOs for failure/repair records, SFT records, preference pairs, manifests, redaction reports, and approval provenance
+- [ ] T283 [US16] Implement local JSONL bundle writer with deterministic ordering, stable hashes, schema version, and reproducibility metadata
+- [ ] T284 [US16] Implement Delta/Iceberg-compatible layout planner without adding production storage dependencies
+- [ ] T285 [US16] Implement fine-tune job metadata builder for SFT, DPO/ORPO, LoRA, QLoRA, and full fine-tune methods
+- [ ] T286 [US16] Implement model registry metadata writer for local/dev registry records
+- [ ] T287 [US16] Implement deployment gate evaluator for model promotion decisions and canary eligibility
+- [ ] T288 [US16] Add CLI/API-compatible surfaces for `hermes mlops corpus export`, `hermes mlops finetune plan`, `hermes mlops registry add/status`, and `hermes mlops gate evaluate --json`
+- [ ] T289 [US16] Add E2E fixture proving a Gemma-class lesser-model failure plus Codex/strong-model rectification can produce approved local training records but cannot deploy a model without gate approval
+
+**Checkpoint**: Hermes can create high-quality offline training data for cheaper coding models while keeping runtime memory, training, registry, and deployment gates separate.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -661,6 +698,7 @@
 - User Story 13 depends on supervisor packets, observability, memory scope, feature toggles, and E2E smoke enough to safely expose the platform to multiple tenants.
 - User Story 14 depends on task classifier metadata, tenant scope, memory retrieval, feature toggles, and worker packet boundaries so skills can be injected safely.
 - User Story 15 depends on existing dreaming storage, tenant/global scope, skill candidates, feature toggles, and observability so proposals can be reviewed without runtime mutation.
+- User Story 16 depends on approved memory/wiki/training provenance, benchmark gates, and sidecar model-tier telemetry so offline fine-tuning data can be built safely.
 
 ## Parallel Opportunities
 
@@ -676,6 +714,7 @@
 - Tenant registry, repo registration, connector registration, and toolset profile schemas can be developed in parallel after Phase 16 architecture lands.
 - Skill metadata, retrieval, packet building, feedback, and SkillClaw adapter tests can be developed in parallel after Phase 17 architecture lands.
 - Dreaming proposal-type validators, local/global input builders, dashboard DTOs, and conversion-gate tests can be developed in parallel after Phase 18 architecture lands.
+- MLOps corpus schemas, local bundle writer, registry metadata, and deployment gate tests can be developed in parallel after Phase 19 architecture lands.
 
 ## Implementation Strategy
 
@@ -791,3 +830,14 @@
 5. Add dashboard/API proposal review DTOs.
 6. Add CLI/API proposal list/convert/status surfaces.
 7. Add E2E fixture for skill repair and CI/CD hardening proposals.
+
+### Phase 19 Order
+
+1. Add MLOps training corpus contract.
+2. Add failure/repair, SFT, and preference-pair schemas.
+3. Add local JSONL bundle writer with manifest/redaction/approval metadata.
+4. Add Delta/Iceberg-compatible layout planner.
+5. Add fine-tune job metadata and model registry metadata.
+6. Add deployment gate evaluator.
+7. Add CLI/API surfaces.
+8. Add E2E fixture for lesser-model failure -> strong-model repair -> training record -> blocked deployment until gate pass.
