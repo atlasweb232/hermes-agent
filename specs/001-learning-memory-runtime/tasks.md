@@ -338,7 +338,7 @@
 - [ ] T112 [US8] Implement training corpus bundle writer with JSONL first, Parquet optional, manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility
 - [x] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [x] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
-- [ ] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
+- [x] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
 - [x] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
 - [x] T117 [US8] Implement `should_curate_locally(event)` with local hot/warm lookup, approved global exact/near matching, scope/sensitivity gates, and deterministic skip/confirm/curate decisions before any expensive local curator call
 - [x] T118 [US8] Implement global lesson reuse counters and feedback updates so globally approved lessons gain confidence when they help, decay when ignored or harmful, and never import private local evidence without approval

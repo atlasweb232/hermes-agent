@@ -441,6 +441,107 @@ This path is programmatic. It calls persisted retrieval, pre-curation, and
 hydration, but it does not call curator, judge, dreaming, or any other
 LLM-backed sidecar on exact approved lesson hits.
 
+## Phase 11 T115 Deterministic VM/Local Smoke
+
+T115 validation completed on branch `132-learning-memory-runtime` at HEAD
+`b7cb99dc` before this documentation update. The run used isolated
+`HERMES_HOME` and artifact roots under `/tmp`, ran no destructive commands,
+stored no provider secrets or raw transcripts, and kept enforcement disabled
+and advisory-only throughout.
+
+This was an Azure VM/local deterministic fixture smoke, not a live
+provider/Azure benchmark. Live Azure smoke remained skipped because
+`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_VM_NAME`, and explicit
+live-smoke opt-in were missing.
+
+Selected model tiers:
+
+- `programmatic`: provider `none`, model `none`, `allow_llm=false`, timeout
+  60s.
+- `cheap_reasoning`: provider `cerebras`, model `gpt-oss-120b`,
+  `allow_llm=true`, timeout 60s, `max_tokens=2048`.
+- `strong_reasoning`: provider `deepseek`, model `deepseek-reasoner`,
+  `allow_llm=true`, timeout 180s, `max_tokens=4096`.
+- `code_critical`: provider `codex`, model `codex`, `allow_llm=true`, timeout
+  300s.
+
+Role mapping:
+
+- `classifier` -> `programmatic`
+- `extraction` -> `cheap_reasoning`
+- `progress_summarizer` -> `cheap_reasoning`
+- `curator` -> `strong_reasoning`
+- `learning_judge` -> `strong_reasoning`
+- `dreaming` -> `strong_reasoning`
+- `policy_review` -> `strong_reasoning`
+- `code_review_judge` -> `code_critical`
+- `training_corpus_review` -> `strong_reasoning`
+
+Smoke sequence and outcomes:
+
+- `python3 -m hermes_cli.main config tiers --json` exited 0 in 568.02 ms and
+  confirmed the tier and role routing above.
+- `runtime features status --tenant-id t115-tenant --repo-id hermes-agent --json`
+  exited 0 in 932.49 ms.
+- Baseline `runtime task init` without a memory packet exited 0 in 737.22 ms.
+- A deterministic approved global lesson fixture was added with
+  `memory global lesson add`, exiting 0 in 729.6 ms.
+- Exact `memory global retrieve` exited 0 in 726.26 ms and returned
+  `lesson_count=1`.
+- Exact `memory global hydrate` exited 0 in 726.24 ms and returned
+  `global_lessons=1`, `estimated_tokens=33`. The LLM sidecar was skipped
+  because the exact persisted lesson match used the programmatic no-LLM path.
+- Memory-assisted `runtime task init` exited 0 in 941.2 ms.
+- `memory sidecar --once --json` exited 0 in 733.86 ms.
+- `hermes curator status` exited 0 in 534.91 ms.
+- `memory judge-run --json` exited 0 in 740.68 ms.
+- `memory dream status --json` exited 0 in 724.41 ms.
+- `runtime e2e run --suite runtime.local_smoke ... --json` first returned
+  `skipped` with default feature gates. After scoped overrides for
+  `t115-tenant`/`hermes-agent` enabled `runtime.health_sidecar`,
+  `runtime.restart_recovery`, `runtime.task_graph`, and
+  `runtime.benchmark_harness` with `enforcement_allowed=false`, the same suite
+  exited 0 in 748.3 ms with status `passed` and all four cases passed.
+- `runtime smoke compare --no-upstream --json` exited 0 in 1941.74 ms with
+  status `passed`, `repeated_failed_loop_result=passed`,
+  `foreground_elapsed_seconds=0.042714085`, and
+  `expensive_sidecar_called=false`.
+- Deterministic fixture `runtime benchmark run --execution-mode fixture
+  --urgent-dry-run --json` exited 0 in 728.17 ms.
+- `runtime benchmark report --run-id ... --json` exited 0 in 731.37 ms. The
+  deterministic production gate allowed the fixture run.
+- `runtime benchmark azure-smoke --json` exited 0 with status `skipped` for
+  the live Azure blockers listed above; deterministic fixture status was
+  `passed`.
+- `runtime costs status --json` exited 0 with `run_count=1`,
+  `total_estimated_cost_usd=0.038`, `total_prompt_tokens=189`,
+  `total_completion_tokens=198`, and production gate `allowed=true`.
+
+Deterministic benchmark metrics:
+
+- Quality: upstream `success_rate=1.0`, `validation_pass_rate=1.0`,
+  `false_completion_rate=1.0`, `repeated_error_rate=2.0`; branch
+  `success_rate=1.0`, `validation_pass_rate=1.0`,
+  `false_completion_rate=0.0`, `repeated_error_rate=0.0`.
+- Cost: upstream `estimated_cost_usd=0.02`; branch
+  `estimated_cost_usd=0.018`; `cost_per_success_ratio=0.90`.
+- Latency: upstream `avg_latency_ms=1000.0`; branch `avg_latency_ms=900.0`;
+  `foreground_latency_ratio=0.90`; branch `sidecar_wall_ms=40.0`.
+- Self-learning: upstream `memory_hit_rate=0.0`; branch
+  `memory_hit_rate=1.0`, `memory_helpful=1`, `memory_harmful=0`,
+  `sidecar_cost_usd=0.002`, `sidecar_blocked_foreground=false`,
+  `urgent_alerts_expected=0`, and `urgent_alerts_sent=0`.
+
+Result:
+
+- No regressions were observed in the deterministic fixture.
+- The branch reduced repeated errors and false completions in the fixture while
+  preserving success and validation pass rates.
+- Sidecars did not block foreground work, and exact persisted memory hits used
+  the programmatic path instead of an LLM sidecar.
+- Live provider/Azure results are not claimed here; they remain blocked until
+  the required Azure config and explicit live-smoke opt-in are present.
+
 ## Enforced Today
 
 The active enforcement path is DB-backed and task-event driven:
