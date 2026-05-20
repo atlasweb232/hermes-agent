@@ -16,6 +16,7 @@ from hermes_cli.goal_allocator import (
     list_worker_health_records,
     allocation_status_payload,
     record_worker_attempt,
+    resume_allocation_status_payload,
     save_allocation_plan,
     save_worker_health,
     save_worker_attempt,
@@ -143,6 +144,52 @@ def test_worker_attempts_persist_and_status_payload_explains_next_decision(tmp_p
         assert payload["attempts"][0]["worker_id"] == "claude-code"
         assert payload["decision"]["action"] == "dispatch"
         assert payload["decision"]["worker_id"] == "codex"
+    finally:
+        db.close()
+
+
+def test_resume_allocation_status_payload_recovers_state_and_skips_unhealthy_primary(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan(allocation_id="alloc_resume_1")
+        save_allocation_plan(db, plan)
+        save_worker_health(
+            db,
+            WorkerHealth(
+                worker_id="claude-code",
+                provider="anthropic",
+                cooldown_until=500,
+                failure_count=1,
+                last_error_signature="timeout",
+            ),
+        )
+
+        payload = resume_allocation_status_payload(db, "session_1", "task_1", now=100)
+
+        assert payload["recovered"] is True
+        assert payload["state_key"] == "allocation:session_1:task_1"
+        assert payload["recovered_from"] == "SessionDB.state_meta"
+        assert payload["session_id"] == "session_1"
+        assert payload["task_id"] == "task_1"
+        assert payload["allocation_id"] == "alloc_resume_1"
+        assert payload["plan"]["allocation_id"] == "alloc_resume_1"
+        assert payload["worker_health"]["claude-code"]["cooldown_until"] == 500
+        assert payload["decision"]["action"] == "dispatch"
+        assert payload["decision"]["worker_id"] == "codex"
+        assert payload["decision"]["skipped_workers"] == [
+            {
+                "worker_id": "claude-code",
+                "unavailable_until": 500,
+                "retry_after_seconds": 400,
+            }
+        ]
+
+        resumed_after_cooldown = resume_allocation_status_payload(db, "session_1", "task_1", now=501)
+
+        assert resumed_after_cooldown["recovered"] is True
+        assert resumed_after_cooldown["decision"]["action"] == "dispatch"
+        assert resumed_after_cooldown["decision"]["worker_id"] == "claude-code"
+        assert resumed_after_cooldown["decision"]["skipped_workers"] == []
     finally:
         db.close()
 

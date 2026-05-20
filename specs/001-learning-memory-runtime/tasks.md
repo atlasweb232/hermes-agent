@@ -388,7 +388,7 @@
 
 - [x] T139 [P] [US9] Add schema tests for `WorkerAllocationPlan`, `WorkerAttemptResult`, and `WorkerHealth`, including invalid status, missing budget, missing validation requirement, and unsafe fallback eligibility
 - [x] T140 [P] [US9] Add allocator decision tests for ranked fallback, repeated-route suppression, worker cooldown, all-workers-unhealthy pause, and no foreground sleep on network degradation
-- [ ] T141 [P] [US9] Add `/goal resume` tests proving allocation state is recovered from `allocation:<session_id>:<task_id>` and unhealthy workers are skipped until cooldown expires
+- [x] T141 [P] [US9] Add `/goal resume` tests proving allocation state is recovered from `allocation:<session_id>:<task_id>` and unhealthy workers are skipped until cooldown expires
 - [x] T142 [P] [US9] Add observability tests for active allocations, worker health, attempt history, consumed latency budget, fallback reason, retry-after, and goal/session linkage
 
 ### Implementation For Goal-Based Allocation

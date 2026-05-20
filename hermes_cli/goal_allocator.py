@@ -278,6 +278,7 @@ class AllocationDecision:
     retry_after_seconds: float = 0.0
     remaining_latency_budget_seconds: float = 0.0
     attempts_used: int = 0
+    skipped_workers: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -470,6 +471,40 @@ def allocation_status_payload(
     }
 
 
+def resume_allocation_status_payload(
+    db: Any,
+    session_id: str,
+    task_id: str,
+    *,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    state_key = _allocation_key(session_id, task_id)
+    plan = load_allocation_plan(db, session_id, task_id)
+    if plan is None:
+        return {
+            "recovered": False,
+            "state_key": state_key,
+            "recovered_from": None,
+            "session_id": session_id,
+            "task_id": task_id,
+            "allocation_id": None,
+            "status": "missing",
+        }
+
+    payload = allocation_status_payload(db, plan, now=now)
+    payload.update(
+        {
+            "recovered": True,
+            "state_key": state_key,
+            "recovered_from": "SessionDB.state_meta",
+            "session_id": plan.session_id,
+            "task_id": plan.task_id,
+            "allocation_id": plan.allocation_id,
+        }
+    )
+    return payload
+
+
 def load_allocation_runtime_advisory_packet(
     db: Any,
     plan: WorkerAllocationPlan,
@@ -583,6 +618,7 @@ def choose_next_worker(
         )
 
     skipped_until: List[float] = []
+    skipped_workers: List[Dict[str, Any]] = []
     for worker_id in plan.worker_order:
         worker_attempts = [attempt for attempt in attempts_for_plan if attempt.worker_id == worker_id]
         degraded_attempts = [attempt for attempt in worker_attempts if attempt.status in DEGRADED_STATUSES]
@@ -593,7 +629,15 @@ def choose_next_worker(
 
         health = health_by_worker.get(worker_id)
         if health and not health.is_available(timestamp):
-            skipped_until.append(health.unavailable_until())
+            unavailable_until = health.unavailable_until()
+            skipped_until.append(unavailable_until)
+            skipped_workers.append(
+                {
+                    "worker_id": worker_id,
+                    "unavailable_until": unavailable_until,
+                    "retry_after_seconds": max(0.0, unavailable_until - timestamp),
+                }
+            )
             continue
 
         return AllocationDecision(
@@ -602,6 +646,7 @@ def choose_next_worker(
             reason="worker selected",
             remaining_latency_budget_seconds=remaining,
             attempts_used=attempts_used,
+            skipped_workers=skipped_workers,
         )
 
     retry_after = plan.retry_after_seconds
@@ -614,4 +659,5 @@ def choose_next_worker(
         retry_after_seconds=retry_after,
         remaining_latency_budget_seconds=remaining,
         attempts_used=attempts_used,
+        skipped_workers=skipped_workers,
     )
