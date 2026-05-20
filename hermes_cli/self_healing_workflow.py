@@ -39,6 +39,36 @@ NODE_STATUSES = {"ready", "assigned", "running", "blocked", "needs_status", "rev
 ACTIVE_NODE_STATUSES = {"assigned", "running"}
 DONE_NODE_STATUSES = {"validated", "completed"}
 STATE_VERSION = "2026.05.task-graph.v1"
+WORKER_PROGRESS_EVENT_TYPES = {
+    "worker_started",
+    "worker_heartbeat",
+    "worker_stream_ref",
+    "worker_progress_checkpoint",
+    "worker_blocked",
+    "worker_degraded",
+    "worker_validation",
+    "worker_final",
+}
+SUPERVISOR_CONTEXT_PACKET_TYPES = {
+    "worker_checkpoint",
+    "worker_blocked",
+    "worker_validation",
+    "worker_final",
+    "allocation_decision",
+    "recovery_packet",
+}
+RAW_CONTEXT_MARKERS = {
+    "raw stdout",
+    "raw stderr",
+    "terminal transcript",
+    "full terminal transcript",
+    "worker watch stream",
+    "watch stream",
+    "raw log tail",
+    "log tail",
+    "unbounded tool output",
+}
+RAW_REF_PREFIXES = ("stdout://", "stderr://", "terminal://raw", "watch://", "logtail://")
 
 
 def _now() -> float:
@@ -62,6 +92,16 @@ def _json_loads(raw: Any, default: Any) -> Any:
         return json.loads(raw)
     except Exception:
         return default
+
+
+def _bounded_text(value: Any, max_chars: int) -> str:
+    text = str(value or "").strip()
+    limit = max(1, int(max_chars))
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _clean_str_list(values: Optional[Iterable[Any]], *, field_name: str) -> List[str]:
@@ -250,12 +290,288 @@ class RecoveryAction:
         return cls(**dict(data))
 
 
+@dataclass
+class SupervisorContextGateResult:
+    accepted: bool
+    reason: str
+    context_packet: Optional[Dict[str, Any]] = None
+    artifact_refs: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class WorkerProgressEvent:
+    event_id: str
+    event_type: str
+    task_id: str
+    allocation_id: str
+    attempt_id: str
+    worker_id: str
+    repo_id: str
+    branch: str
+    created_at: float
+    artifact_refs: List[str] = field(default_factory=list)
+    store_only: bool = False
+    status: str = "running"
+    summary: str = ""
+    evidence_refs: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.event_type not in WORKER_PROGRESS_EVENT_TYPES:
+            raise ValueError(f"invalid worker progress event type: {self.event_type}")
+        for field_name in ("task_id", "allocation_id", "attempt_id", "worker_id", "repo_id", "branch"):
+            if not str(getattr(self, field_name, "")).strip():
+                raise ValueError(f"{field_name} is required")
+        self.artifact_refs = _clean_str_list(self.artifact_refs, field_name="artifact_refs")
+        self.evidence_refs = _clean_str_list(self.evidence_refs, field_name="evidence_refs")
+        self.summary = _bounded_text(self.summary, 1000)
+        if self.event_type == "worker_stream_ref":
+            self.store_only = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkerProgressEvent":
+        return cls(**dict(data))
+
+
+class SupervisorContextGate:
+    """Admit only bounded typed packets into supervisor model context."""
+
+    def __init__(self, *, max_chars: int = 2000, max_evidence_refs: int = 12) -> None:
+        self.max_chars = max(1, int(max_chars))
+        self.max_evidence_refs = max(0, int(max_evidence_refs))
+
+    def admit(self, packet: Dict[str, Any]) -> SupervisorContextGateResult:
+        if not isinstance(packet, dict):
+            return SupervisorContextGateResult(False, "packet_not_dict")
+        if packet.get("store_only") is True or packet.get("event_type") == "worker_stream_ref":
+            return SupervisorContextGateResult(False, "store_only_raw_stream")
+        packet_type = str(packet.get("packet_type") or "").strip()
+        if packet_type not in SUPERVISOR_CONTEXT_PACKET_TYPES:
+            return SupervisorContextGateResult(False, "unsupported_packet_type")
+        summary = str(packet.get("summary") or "")
+        refs = _clean_str_list(packet.get("evidence_refs") or [], field_name="evidence_refs")
+        artifact_refs = _clean_str_list(packet.get("artifact_refs") or [], field_name="artifact_refs")
+        lowered = summary.lower()
+        if any(marker in lowered for marker in RAW_CONTEXT_MARKERS):
+            return SupervisorContextGateResult(False, "raw_or_unbounded_content")
+        if any(ref.startswith(RAW_REF_PREFIXES) for ref in refs):
+            return SupervisorContextGateResult(False, "raw_ref_requires_artifact_ref")
+        if len(refs) > self.max_evidence_refs:
+            return SupervisorContextGateResult(False, "too_many_evidence_refs")
+        bounded_summary = _bounded_text(summary, self.max_chars)
+        context_packet = {
+            "packet_type": packet_type,
+            "task_id": packet.get("task_id"),
+            "allocation_id": packet.get("allocation_id"),
+            "attempt_id": packet.get("attempt_id"),
+            "worker_id": packet.get("worker_id"),
+            "repo_id": packet.get("repo_id"),
+            "branch": packet.get("branch"),
+            "summary": bounded_summary,
+            "status": packet.get("status") or "unknown",
+            "decision_needed": packet.get("decision_needed"),
+            "evidence_refs": refs,
+            "artifact_refs": artifact_refs,
+            "max_chars": self.max_chars,
+            "max_evidence_refs": self.max_evidence_refs,
+            "created_at": packet.get("created_at") or _now(),
+        }
+        return SupervisorContextGateResult(True, "accepted", context_packet, artifact_refs)
+
+
 def _graph_key(graph_id: str) -> str:
     return f"task_graph:{graph_id}"
 
 
 def _recovery_action_key(identity: str) -> str:
     return f"runtime_recovery_action:{identity}"
+
+
+def _worker_progress_event_key(created_at: float, event_id: str) -> str:
+    return f"worker_progress_event:{created_at:020.6f}:{event_id}"
+
+
+def _sidecar_checkpoint_key(run_id: str) -> str:
+    return f"worker_progress_checkpoint:{run_id}"
+
+
+def emit_worker_progress_event(
+    db: SessionDB,
+    *,
+    event_type: str,
+    task_id: str,
+    allocation_id: str,
+    attempt_id: str,
+    worker_id: str,
+    repo_id: str,
+    branch: str,
+    created_at: Optional[float] = None,
+    artifact_refs: Optional[List[str]] = None,
+    store_only: bool = False,
+    status: str = "running",
+    summary: str = "",
+    evidence_refs: Optional[List[str]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    event = WorkerProgressEvent(
+        event_id=_new_id("evt"),
+        event_type=event_type,
+        task_id=task_id,
+        allocation_id=allocation_id,
+        attempt_id=attempt_id,
+        worker_id=worker_id,
+        repo_id=repo_id,
+        branch=branch,
+        created_at=_now() if created_at is None else float(created_at),
+        artifact_refs=artifact_refs or [],
+        store_only=bool(store_only),
+        status=status,
+        summary=summary,
+        evidence_refs=evidence_refs or [],
+        metadata=metadata or {},
+    )
+    payload = event.to_dict()
+    db.set_meta(_worker_progress_event_key(event.created_at, event.event_id), _json_dumps(payload))
+    return payload
+
+
+def list_worker_progress_events(
+    db: SessionDB,
+    *,
+    task_id: Optional[str] = None,
+    allocation_id: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    for row in _list_state_meta_prefix(db, "worker_progress_event:"):
+        payload = _json_loads(row["value"], {})
+        if not isinstance(payload, dict):
+            continue
+        if task_id and payload.get("task_id") != task_id:
+            continue
+        if allocation_id and payload.get("allocation_id") != allocation_id:
+            continue
+        if worker_id and payload.get("worker_id") != worker_id:
+            continue
+        events.append(payload)
+    events.sort(key=lambda item: (float(item.get("created_at") or 0), str(item.get("event_id") or "")))
+    return events[-max(1, int(limit)) :]
+
+
+def run_worker_with_progress_events(
+    db: SessionDB,
+    *,
+    task_id: str,
+    allocation_id: str,
+    attempt_id: str,
+    worker_id: str,
+    repo_id: str,
+    branch: str,
+    worker_run: Callable[[], Any],
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    current = _now() if now is None else float(now)
+    common = {
+        "task_id": task_id,
+        "allocation_id": allocation_id,
+        "attempt_id": attempt_id,
+        "worker_id": worker_id,
+        "repo_id": repo_id,
+        "branch": branch,
+    }
+
+    def emit(event_type: str, offset: float, **kwargs: Any) -> Dict[str, Any]:
+        return emit_worker_progress_event(db, event_type=event_type, created_at=current + offset, **common, **kwargs)
+
+    emit("worker_started", 0.0, status="started", summary="worker attempt started")
+    emit("worker_heartbeat", 0.001, status="running", summary="worker heartbeat recorded")
+    final_status = "completed"
+    summary = ""
+    artifact_refs: List[str] = []
+    evidence_refs: List[str] = []
+    validation_refs: List[str] = []
+    degraded_reason = ""
+    try:
+        raw_result = worker_run()
+        result = raw_result if isinstance(raw_result, dict) else {"status": "completed", "summary": str(raw_result or "")}
+        final_status = str(result.get("status") or "completed")
+        summary = str(result.get("summary") or result.get("output") or "")
+        artifact_refs = _clean_str_list(result.get("artifact_refs") or [], field_name="artifact_refs")
+        evidence_refs = _clean_str_list(result.get("evidence_refs") or [], field_name="evidence_refs")
+        validation_refs = _clean_str_list(result.get("validation_refs") or [], field_name="validation_refs")
+        for key, stream_name in (("stdout_ref", "stdout"), ("stderr_ref", "stderr"), ("stream_ref", "stream")):
+            if result.get(key):
+                stream_ref = str(result[key])
+                emit(
+                    "worker_stream_ref",
+                    0.002,
+                    status="store_only",
+                    summary=f"{stream_name} stored by reference",
+                    artifact_refs=[stream_ref],
+                    store_only=True,
+                    metadata={"stream": stream_name},
+                )
+                artifact_refs.append(stream_ref)
+        if not summary.strip():
+            final_status = "degraded"
+            degraded_reason = "empty_output"
+    except TimeoutError as exc:
+        final_status = "degraded"
+        degraded_reason = "timeout"
+        summary = str(exc) or "worker timed out"
+    except Exception as exc:
+        final_status = "degraded"
+        message = str(exc) or exc.__class__.__name__
+        degraded_reason = "model_unavailable" if "unavailable" in message.lower() else "worker_error"
+        summary = message
+
+    if final_status == "degraded":
+        emit(
+            "worker_degraded",
+            0.003,
+            status="degraded",
+            summary=degraded_reason or summary,
+            artifact_refs=artifact_refs,
+            evidence_refs=evidence_refs,
+            metadata={"reason": degraded_reason},
+        )
+    else:
+        emit(
+            "worker_progress_checkpoint",
+            0.003,
+            status=final_status,
+            summary=summary,
+            artifact_refs=artifact_refs,
+            evidence_refs=evidence_refs,
+        )
+        if final_status == "blocked":
+            emit("worker_blocked", 0.004, status="blocked", summary=summary, artifact_refs=artifact_refs, evidence_refs=evidence_refs)
+        if validation_refs:
+            emit(
+                "worker_validation",
+                0.005,
+                status="validated",
+                summary="worker validation refs recorded",
+                artifact_refs=artifact_refs,
+                evidence_refs=validation_refs,
+            )
+    final_event = emit(
+        "worker_final",
+        0.006,
+        status=final_status,
+        summary=summary or degraded_reason or final_status,
+        artifact_refs=artifact_refs,
+        evidence_refs=evidence_refs + validation_refs,
+        metadata={"degraded_reason": degraded_reason} if degraded_reason else {},
+    )
+    return {"status": final_status, "summary": summary, "final_event": final_event}
 
 
 def create_task_graph(db: SessionDB, graph: TaskGraph, nodes: Optional[List[TaskNode]] = None) -> TaskGraph:
@@ -626,6 +942,166 @@ def run_health_check_once(
     run["finished_at"] = current
     db.set_meta("runtime_health_last_run", _json_dumps(run))
     return run
+
+
+def _deterministic_progress_summary(events: List[Dict[str, Any]], max_chars: int) -> str:
+    if not events:
+        return "No worker progress events recorded."
+    counts: Dict[str, int] = {}
+    refs: List[str] = []
+    statuses: List[str] = []
+    for event in events:
+        event_type = str(event.get("event_type") or "unknown")
+        counts[event_type] = counts.get(event_type, 0) + 1
+        status = str(event.get("status") or "").strip()
+        if status:
+            statuses.append(status)
+        for ref in event.get("artifact_refs") or []:
+            if ref not in refs:
+                refs.append(str(ref))
+    pieces = [f"{sum(counts.values())} progress events"]
+    pieces.extend(f"{key}={counts[key]}" for key in sorted(counts))
+    if statuses:
+        pieces.append(f"latest_status={statuses[-1]}")
+    if refs:
+        pieces.append(f"refs={', '.join(refs[:3])}")
+    return _bounded_text("; ".join(pieces), max_chars)
+
+
+def run_progress_summarizer_sidecar(
+    db: SessionDB,
+    *,
+    task_id: str,
+    allocation_id: Optional[str] = None,
+    low_cost_summarizer: Optional[Callable[[List[Dict[str, Any]], Dict[str, Any]], str]] = None,
+    foreground_blocking_callback: Optional[Callable[[], Any]] = None,
+    max_chars: int = 2000,
+    max_events: int = 50,
+    timeout_seconds: float = 2.0,
+    budget_tokens: int = 512,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    del foreground_blocking_callback  # Sidecar work never calls foreground callbacks.
+    current = _now() if now is None else float(now)
+    events = list_worker_progress_events(db, task_id=task_id, allocation_id=allocation_id, limit=max_events)
+    budget = {
+        "tier": "low_cost_reasoning",
+        "max_chars": max(1, int(max_chars)),
+        "max_events": max(1, int(max_events)),
+        "timeout_seconds": float(timeout_seconds),
+        "budget_tokens": int(budget_tokens),
+    }
+    status = "completed"
+    fallback = None
+    try:
+        if low_cost_summarizer is None:
+            raise RuntimeError("low-cost summarizer unavailable")
+        started = _now()
+        summary = _bounded_text(low_cost_summarizer(events, budget), budget["max_chars"])
+        if _now() - started > float(timeout_seconds):
+            raise TimeoutError("low-cost summarizer exceeded timeout")
+        if not summary:
+            raise RuntimeError("low-cost summarizer returned empty output")
+    except Exception:
+        status = "degraded"
+        fallback = "deterministic"
+        summary = _deterministic_progress_summary(events, budget["max_chars"])
+    artifact_refs: List[str] = []
+    evidence_refs: List[str] = []
+    for event in events:
+        for ref in event.get("artifact_refs") or []:
+            if ref not in artifact_refs:
+                artifact_refs.append(str(ref))
+        if event.get("event_type") != "worker_stream_ref":
+            evidence_refs.append(f"event://{event.get('event_id')}")
+    packet = {
+        "packet_type": "worker_checkpoint",
+        "task_id": task_id,
+        "allocation_id": allocation_id,
+        "summary": summary,
+        "status": "in_progress",
+        "decision_needed": None,
+        "evidence_refs": evidence_refs[:12],
+        "artifact_refs": artifact_refs[:12],
+        "created_at": current,
+        "metadata": {
+            "tier": "low_cost_reasoning",
+            "timeout_seconds": float(timeout_seconds),
+            "budget_tokens": int(budget_tokens),
+            "fallback": fallback,
+        },
+    }
+    gate_result = SupervisorContextGate(max_chars=budget["max_chars"], max_evidence_refs=12).admit(packet)
+    run = {
+        "run_id": _new_id("progress_sidecar"),
+        "status": status,
+        "fallback": fallback,
+        "tier": "low_cost_reasoning",
+        "timeout_seconds": float(timeout_seconds),
+        "budget_tokens": int(budget_tokens),
+        "events_scanned": len(events),
+        "packet": packet,
+        "supervisor_context": gate_result.to_dict(),
+        "authorities": {
+            "complete_tasks": False,
+            "approve_memory": False,
+            "enforce_policy": False,
+            "mutate_routing": False,
+            "change_config": False,
+        },
+        "created_at": current,
+    }
+    db.set_meta(_sidecar_checkpoint_key(run["run_id"]), _json_dumps(run))
+    return run
+
+
+def project_worker_progress_for_delivery(
+    db: SessionDB,
+    *,
+    task_id: Optional[str] = None,
+    allocation_id: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    channel: str = "api",
+    limit: int = 100,
+) -> Dict[str, Any]:
+    events = list_worker_progress_events(db, task_id=task_id, allocation_id=allocation_id, worker_id=worker_id, limit=limit)
+    gate = SupervisorContextGate()
+    context_packets: List[Dict[str, Any]] = []
+    for event in events:
+        event_type = event.get("event_type")
+        if event_type == "worker_progress_checkpoint":
+            packet_type = "worker_checkpoint"
+        elif event_type in {"worker_blocked", "worker_validation", "worker_final"}:
+            packet_type = str(event_type).replace("worker_", "worker_", 1)
+        else:
+            continue
+        candidate = {
+            "packet_type": packet_type,
+            "task_id": event.get("task_id"),
+            "allocation_id": event.get("allocation_id"),
+            "attempt_id": event.get("attempt_id"),
+            "worker_id": event.get("worker_id"),
+            "repo_id": event.get("repo_id"),
+            "branch": event.get("branch"),
+            "summary": event.get("summary"),
+            "status": event.get("status"),
+            "evidence_refs": [f"event://{event.get('event_id')}"] + list(event.get("evidence_refs") or []),
+            "artifact_refs": event.get("artifact_refs") or [],
+            "created_at": event.get("created_at"),
+        }
+        result = gate.admit(candidate)
+        if result.accepted and result.context_packet:
+            context_packets.append(result.context_packet)
+    return {
+        "source": "worker_progress_events",
+        "channel": channel,
+        "task_id": task_id,
+        "allocation_id": allocation_id,
+        "worker_id": worker_id,
+        "events": events,
+        "supervisor_context_appended": False,
+        "supervisor_context_packets": context_packets,
+    }
 
 
 def record_runtime_lease(db: SessionDB, *, lease_id: str, owner: str, expires_at: float, status: str = "active") -> Dict[str, Any]:

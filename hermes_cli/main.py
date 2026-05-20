@@ -11810,6 +11810,23 @@ Examples:
     runtime_recovery_run.add_argument("--once", action="store_true", help="Run one recovery pass and exit")
     runtime_recovery_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_worker_progress = runtime_sub.add_parser("worker-progress", help="Inspect worker progress event refs")
+    runtime_worker_progress_sub = runtime_worker_progress.add_subparsers(dest="runtime_worker_progress_command")
+    runtime_worker_progress_list = runtime_worker_progress_sub.add_parser("list", help="List worker progress events for delivery")
+    runtime_worker_progress_list.add_argument("--task-id", default="")
+    runtime_worker_progress_list.add_argument("--allocation-id", default="")
+    runtime_worker_progress_list.add_argument("--worker", default="")
+    runtime_worker_progress_list.add_argument("--channel", default="api")
+    runtime_worker_progress_list.add_argument("--limit", type=int, default=100)
+    runtime_worker_progress_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_worker_progress_context = runtime_worker_progress_sub.add_parser("context", help="Show context-gated worker progress packets")
+    runtime_worker_progress_context.add_argument("--task-id", default="")
+    runtime_worker_progress_context.add_argument("--allocation-id", default="")
+    runtime_worker_progress_context.add_argument("--worker", default="")
+    runtime_worker_progress_context.add_argument("--channel", default="api")
+    runtime_worker_progress_context.add_argument("--limit", type=int, default=100)
+    runtime_worker_progress_context.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_features = runtime_sub.add_parser("features", help="Inspect and set local runtime feature toggles")
     runtime_features_sub = runtime_features.add_subparsers(dest="runtime_features_command")
     runtime_features_list = runtime_features_sub.add_parser("list", help="List known runtime feature definitions")
@@ -12169,6 +12186,35 @@ Examples:
                     _emit(run_restart_recovery(db))
                 else:
                     _emit(recovery_status(db))
+            finally:
+                db.close()
+            return
+        if cmd == "worker-progress":
+            from hermes_cli.self_healing_workflow import project_worker_progress_for_delivery
+            from hermes_state import SessionDB
+
+            progress_cmd = getattr(args, "runtime_worker_progress_command", None) or "list"
+            db = SessionDB()
+            try:
+                payload = project_worker_progress_for_delivery(
+                    db,
+                    task_id=getattr(args, "task_id", "") or None,
+                    allocation_id=getattr(args, "allocation_id", "") or None,
+                    worker_id=getattr(args, "worker", "") or None,
+                    channel=getattr(args, "channel", "api") or "api",
+                    limit=getattr(args, "limit", 100),
+                )
+                if progress_cmd == "context":
+                    payload = {
+                        "source": payload["source"],
+                        "channel": payload["channel"],
+                        "task_id": payload["task_id"],
+                        "allocation_id": payload["allocation_id"],
+                        "worker_id": payload["worker_id"],
+                        "supervisor_context_appended": payload["supervisor_context_appended"],
+                        "supervisor_context_packets": payload["supervisor_context_packets"],
+                    }
+                _emit(payload)
             finally:
                 db.close()
             return

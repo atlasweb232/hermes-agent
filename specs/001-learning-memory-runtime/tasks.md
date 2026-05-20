@@ -430,9 +430,9 @@
 - [x] T155 [P] [US10] Add health sidecar tests for stale lease, missing heartbeat, repeated timeout/empty-output failures, no-progress loop, worker cooldown, allocation pause, idempotent duplicate runs, and no foreground blocking
 - [x] T156 [P] [US10] Add restart recovery tests for active goal reload, task graph reload, active allocation reload, worker cooldown preservation, unknown in-flight attempt handling, approved-memory-only hydration, and no default expensive LLM sidecar call
 - [x] T157 [P] [US10] Add workflow-agnostic tests proving chat, `/goal`, dashboard/API task, and worker delegation paths share allocator/degradation/health/recovery behavior
-- [ ] T168 [P] [US10] Add supervisor context gate tests proving raw stdout/stderr, unbounded terminal transcripts, worker watch streams, and log tails are rejected from supervisor context unless represented as bounded typed packets
-- [ ] T169 [P] [US10] Add worker runtime wrapper tests proving start, heartbeat, stream-ref, checkpoint, degraded/blocked, validation, and final events are emitted even when the worker model is unavailable, times out, or returns empty output
-- [ ] T170 [P] [US10] Add cheap progress summarizer sidecar tests proving low-cost reasoning tier use, timeout/budget enforcement, no foreground blocking, no task completion authority, and no policy/memory approval authority
+- [x] T168 [P] [US10] Add supervisor context gate tests proving raw stdout/stderr, unbounded terminal transcripts, worker watch streams, and log tails are rejected from supervisor context unless represented as bounded typed packets
+- [x] T169 [P] [US10] Add worker runtime wrapper tests proving start, heartbeat, stream-ref, checkpoint, degraded/blocked, validation, and final events are emitted even when the worker model is unavailable, times out, or returns empty output
+- [x] T170 [P] [US10] Add cheap progress summarizer sidecar tests proving low-cost reasoning tier use, timeout/budget enforcement, no foreground blocking, no task completion authority, and no policy/memory approval authority
 
 ### Implementation For Self-Healing Workflow Control Plane
 
@@ -444,10 +444,10 @@
 - [x] T163 [US10] Implement restart recovery loader for goals, task ledger, task graphs, allocations, worker health, hot memory, approved lessons, sidecar leases, and safe-to-resume decisions
 - [x] T164 [US10] Add CLI/API observability: `hermes runtime health check --once --json`, `hermes runtime task-graph list/get --json`, and `hermes runtime recovery status/run --json`
 - [ ] T165 [US10] Run controlled upstream-vs-branch smoke tests proving the branch avoids repeated failed worker loops, preserves foreground responsiveness, and resumes safe work after restart
-- [ ] T171 [US10] Implement `SupervisorContextGate` helpers that accept only typed bounded worker packets and attach artifact refs instead of raw streams
-- [ ] T172 [US10] Wire worker runtime wrappers and worker-router/delegation paths to emit mandatory progress events and artifact refs into the runtime event bus/task ledger
-- [ ] T173 [US10] Implement progress summarizer sidecar that consumes worker progress events, uses the configured low-cost reasoning tier, emits compact checkpoints, and degrades to deterministic summaries when the model is unavailable
-- [ ] T174 [US10] Update Slack/dashboard/API observability to stream worker progress from event/log refs while keeping supervisor model context limited to accepted context-gate packets
+- [x] T171 [US10] Implement `SupervisorContextGate` helpers that accept only typed bounded worker packets and attach artifact refs instead of raw streams
+- [x] T172 [US10] Wire worker runtime wrappers and worker-router/delegation paths to emit mandatory progress events and artifact refs into the runtime event bus/task ledger
+- [x] T173 [US10] Implement progress summarizer sidecar that consumes worker progress events, uses the configured low-cost reasoning tier, emits compact checkpoints, and degrades to deterministic summaries when the model is unavailable
+- [x] T174 [US10] Update Slack/dashboard/API observability to stream worker progress from event/log refs while keeping supervisor model context limited to accepted context-gate packets
 
 **Checkpoint**: Long-running workflows can run as supervisor-owned task graphs, recover from worker/platform degradation out of band, and restart from durable state without retrying unsafe routes or blocking foreground work.
 

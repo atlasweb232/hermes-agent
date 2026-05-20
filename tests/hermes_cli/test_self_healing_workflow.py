@@ -15,16 +15,21 @@ from hermes_cli.goal_allocator import (
     save_worker_health,
 )
 from hermes_cli.self_healing_workflow import (
+    SupervisorContextGate,
     TaskGraph,
     TaskNode,
     complete_task_graph,
     create_task_graph,
     dispatch_ready_nodes,
     get_task_graph,
+    list_worker_progress_events,
     list_recovery_actions,
     list_task_graphs,
+    project_worker_progress_for_delivery,
     recovery_status,
     record_runtime_lease,
+    run_progress_summarizer_sidecar,
+    run_worker_with_progress_events,
     run_health_check_once,
     run_restart_recovery,
     update_task_node,
@@ -310,6 +315,242 @@ def test_workflow_sources_share_allocator_health_and_recovery_vocabulary(tmp_pat
         assert all(action["action"] in {"request_status", "request_reassignment", "emit_recovery_packet", "mark_node_blocked", "set_worker_cooldown", "pause_allocation"} for action in health["actions"])
     finally:
         db.close()
+
+
+def test_supervisor_context_gate_rejects_raw_streams_and_accepts_bounded_typed_packets():
+    gate = SupervisorContextGate(max_chars=80, max_evidence_refs=2)
+
+    raw_cases = [
+        {"event_type": "worker_stream_ref", "stream": "stdout", "summary": "raw stdout\n" * 20, "store_only": True},
+        {"packet_type": "worker_checkpoint", "summary": "$ pytest\nfull terminal transcript\n" * 20, "evidence_refs": ["terminal://raw"]},
+        {"packet_type": "worker_checkpoint", "summary": "worker watch stream chunk", "evidence_refs": ["watch://worker/1"]},
+        {"packet_type": "worker_checkpoint", "summary": "raw log tail", "evidence_refs": ["logtail://agent.log"]},
+        {"summary": "untyped worker prose says probably done"},
+        {"packet_type": "curator_proposal", "summary": "dreamed next task"},
+    ]
+    for packet in raw_cases:
+        result = gate.admit(packet)
+        assert result.accepted is False
+        assert result.context_packet is None
+
+    accepted = gate.admit(
+        {
+            "packet_type": "worker_checkpoint",
+            "task_id": "task_a",
+            "summary": "Implemented helper and ran focused tests.",
+            "status": "in_progress",
+            "evidence_refs": ["log://worker/1", "test://pytest"],
+            "artifact_refs": ["artifact://stdout/1"],
+        }
+    )
+    assert accepted.accepted is True
+    assert accepted.context_packet["packet_type"] == "worker_checkpoint"
+    assert accepted.context_packet["artifact_refs"] == ["artifact://stdout/1"]
+
+    oversized = gate.admit(
+        {
+            "packet_type": "worker_checkpoint",
+            "task_id": "task_a",
+            "summary": "bounded summary " * 20,
+            "status": "in_progress",
+            "evidence_refs": ["log://1", "log://2"],
+        }
+    )
+    assert oversized.accepted is True
+    assert oversized.context_packet["summary"].endswith("...")
+    assert len(oversized.context_packet["summary"]) <= 80
+
+    too_many_refs = gate.admit(
+        {
+            "packet_type": "worker_checkpoint",
+            "summary": "ok",
+            "evidence_refs": ["log://1", "log://2", "log://3"],
+        }
+    )
+    assert too_many_refs.accepted is False
+
+
+def test_worker_runtime_wrapper_emits_mandatory_events_for_success_degraded_timeout_and_empty_output(tmp_path):
+    db = _db(tmp_path)
+    base = {
+        "task_id": "task_wrap",
+        "allocation_id": "alloc_wrap",
+        "attempt_id": "attempt_wrap",
+        "worker_id": "codex",
+        "repo_id": "repo-a",
+        "branch": "132-learning-memory-runtime",
+    }
+    try:
+        result = run_worker_with_progress_events(
+            db,
+            **base,
+            worker_run=lambda: {
+                "status": "blocked",
+                "summary": "Need approval for migration.",
+                "stdout_ref": "log://stdout/success",
+                "validation_refs": ["test://unit"],
+                "artifact_refs": ["git://diff"],
+            },
+            now=100,
+        )
+        assert result["status"] == "blocked"
+        events = list_worker_progress_events(db, task_id="task_wrap")
+        event_types = [event["event_type"] for event in events]
+        assert event_types == [
+            "worker_started",
+            "worker_heartbeat",
+            "worker_stream_ref",
+            "worker_progress_checkpoint",
+            "worker_blocked",
+            "worker_validation",
+            "worker_final",
+        ]
+        assert all(event["task_id"] == "task_wrap" for event in events)
+        assert all(event["allocation_id"] == "alloc_wrap" for event in events)
+        assert all(event["attempt_id"] == "attempt_wrap" for event in events)
+        assert all(event["worker_id"] == "codex" for event in events)
+        assert all(event["repo_id"] == "repo-a" for event in events)
+        assert all(event["branch"] == "132-learning-memory-runtime" for event in events)
+        assert [event for event in events if event["event_type"] == "worker_stream_ref"][0]["store_only"] is True
+
+        for suffix, worker_run in [
+            ("unavailable", lambda: (_ for _ in ()).throw(RuntimeError("model unavailable"))),
+            ("timeout", lambda: (_ for _ in ()).throw(TimeoutError("worker timed out"))),
+            ("empty", lambda: {"status": "completed", "summary": ""}),
+        ]:
+            payload = dict(base)
+            payload.update(task_id=f"task_{suffix}", allocation_id=f"alloc_{suffix}", attempt_id=f"attempt_{suffix}")
+            run_worker_with_progress_events(db, **payload, worker_run=worker_run, now=200)
+            degraded_events = list_worker_progress_events(db, task_id=f"task_{suffix}")
+            assert "worker_degraded" in [event["event_type"] for event in degraded_events]
+            assert degraded_events[-1]["event_type"] == "worker_final"
+            assert degraded_events[-1]["status"] == "degraded"
+    finally:
+        db.close()
+
+
+def test_progress_summarizer_sidecar_is_bounded_low_cost_nonblocking_and_advisory_only(tmp_path):
+    db = _db(tmp_path)
+    called = {"foreground": False, "model": False}
+    try:
+        run_worker_with_progress_events(
+            db,
+            task_id="task_sum",
+            allocation_id="alloc_sum",
+            attempt_id="attempt_sum",
+            worker_id="codex",
+            repo_id="repo-a",
+            branch="132-learning-memory-runtime",
+            worker_run=lambda: {"status": "running", "summary": "edited files and ran tests", "stdout_ref": "log://stdout/sum"},
+            now=300,
+        )
+
+        def low_cost(events, budget):
+            called["model"] = True
+            assert budget["tier"] == "low_cost_reasoning"
+            assert budget["max_chars"] == 120
+            return "low-cost checkpoint from event refs"
+
+        payload = run_progress_summarizer_sidecar(
+            db,
+            task_id="task_sum",
+            allocation_id="alloc_sum",
+            low_cost_summarizer=low_cost,
+            foreground_blocking_callback=lambda: called.__setitem__("foreground", True),
+            max_chars=120,
+            max_events=20,
+            timeout_seconds=0.25,
+            budget_tokens=256,
+            now=400,
+        )
+        assert called == {"foreground": False, "model": True}
+        assert payload["packet"]["packet_type"] == "worker_checkpoint"
+        assert payload["packet"]["summary"] == "low-cost checkpoint from event refs"
+        assert payload["tier"] == "low_cost_reasoning"
+        assert payload["timeout_seconds"] == 0.25
+        assert payload["budget_tokens"] == 256
+        assert payload["authorities"] == {
+            "complete_tasks": False,
+            "approve_memory": False,
+            "enforce_policy": False,
+            "mutate_routing": False,
+            "change_config": False,
+        }
+
+        fallback = run_progress_summarizer_sidecar(
+            db,
+            task_id="task_sum",
+            allocation_id="alloc_sum",
+            low_cost_summarizer=lambda events, budget: (_ for _ in ()).throw(RuntimeError("low-cost unavailable")),
+            max_chars=90,
+            now=401,
+        )
+        assert fallback["status"] == "degraded"
+        assert fallback["fallback"] == "deterministic"
+        assert len(fallback["packet"]["summary"]) <= 90
+        assert "raw" not in json.dumps(fallback["supervisor_context"])
+    finally:
+        db.close()
+
+
+def test_worker_progress_observability_projects_refs_without_supervisor_context_raw_append(tmp_path, monkeypatch, capsys):
+    db = _db(tmp_path)
+    try:
+        run_worker_with_progress_events(
+            db,
+            task_id="task_obs",
+            allocation_id="alloc_obs",
+            attempt_id="attempt_obs",
+            worker_id="codex",
+            repo_id="repo-a",
+            branch="132-learning-memory-runtime",
+            worker_run=lambda: {"status": "completed", "summary": "done", "stdout_ref": "log://stdout/obs"},
+            now=500,
+        )
+        projection = project_worker_progress_for_delivery(db, task_id="task_obs", channel="slack")
+        assert projection["channel"] == "slack"
+        assert projection["source"] == "worker_progress_events"
+        assert projection["supervisor_context_appended"] is False
+        assert projection["events"][2]["event_type"] == "worker_stream_ref"
+        assert projection["events"][2]["store_only"] is True
+        assert "raw stdout" not in json.dumps(projection["supervisor_context_packets"])
+    finally:
+        db.close()
+
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    import hermes_state
+
+    monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", home / "state.db")
+    cli_db = SessionDB(db_path=home / "state.db")
+    try:
+        run_worker_with_progress_events(
+            cli_db,
+            task_id="task_cli_progress",
+            allocation_id="alloc_cli_progress",
+            attempt_id="attempt_cli_progress",
+            worker_id="codex",
+            repo_id="repo-a",
+            branch="132-learning-memory-runtime",
+            worker_run=lambda: {"status": "completed", "summary": "cli done", "stdout_ref": "log://stdout/cli"},
+            now=600,
+        )
+    finally:
+        cli_db.close()
+
+    from hermes_cli import main as hermes_main
+
+    with patch.object(sys, "argv", ["hermes", "runtime", "worker-progress", "list", "--task-id", "task_cli_progress", "--json"]):
+        hermes_main.main()
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["source"] == "worker_progress_events"
+    assert listed["events"][0]["event_type"] == "worker_started"
+
+    with patch.object(sys, "argv", ["hermes", "runtime", "worker-progress", "context", "--task-id", "task_cli_progress", "--json"]):
+        hermes_main.main()
+    context = json.loads(capsys.readouterr().out)
+    assert context["supervisor_context_appended"] is False
+    assert all(packet["packet_type"] in {"worker_checkpoint", "worker_final"} for packet in context["supervisor_context_packets"])
 
 
 def test_self_healing_runtime_cli_json_surfaces(tmp_path, monkeypatch, capsys):
