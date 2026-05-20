@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 
 REQUIRED_WORKLOAD_CLASSES = frozenset(
@@ -47,9 +48,18 @@ REQUIRED_TELEMETRY_ROLES = (
 )
 
 _REDACTED_EXCERPT_LIMIT = 2048
+_NOTIFICATION_TEXT_LIMIT = 3000
+_NOTIFICATION_FIELD_LIMIT = 500
 _TELEMETRY_JSONL = "telemetry.jsonl"
 _RUN_JSON = "run.json"
 _REPORT_JSON = "report.json"
+
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(sk-[a-z0-9][a-z0-9_\-]{8,})"),
+    re.compile(r"(?i)(xox[baprs]-[a-z0-9\-]{8,})"),
+    re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*([^\s,;]+)"),
+    re.compile(r"(?i)(authorization:\s*bearer\s+)([^\s,;]+)"),
+)
 
 
 def _clean_list(value: Optional[Iterable[Any]]) -> List[str]:
@@ -91,6 +101,19 @@ def _safe_ratio(numerator: float, denominator: float, *, default: float = 0.0) -
 
 def _round_money(value: float) -> float:
     return round(float(value), 6)
+
+
+def _redact_text(value: Any, *, limit: int = _NOTIFICATION_FIELD_LIMIT) -> str:
+    text = str(value or "")
+    for pattern in _SECRET_PATTERNS:
+        if pattern.groups >= 2:
+            text = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", text)
+        else:
+            text = pattern.sub("[REDACTED]", text)
+    text = text.replace("\x00", "")
+    if len(text) > limit:
+        return text[: max(0, limit - 16)].rstrip() + " ... [truncated]"
+    return text
 
 
 def _artifact_root_default() -> Path:
@@ -612,6 +635,64 @@ class ProductionGateResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class BenchmarkUrgentAlert:
+    """Bounded benchmark alert ready for Slack/runtime urgent routing."""
+
+    alert_id: str
+    severity: str
+    title: str
+    message: str
+    run_id: str
+    workload_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    blockers: List[str] = field(default_factory=list)
+    source: str = "runtime-benchmark"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "severity", _redact_text(self.severity, limit=64))
+        object.__setattr__(self, "title", _redact_text(self.title, limit=180))
+        object.__setattr__(self, "message", _redact_text(self.message, limit=1000))
+        object.__setattr__(self, "run_id", _redact_text(self.run_id, limit=120))
+        object.__setattr__(self, "workload_id", _redact_text(self.workload_id, limit=160) if self.workload_id else None)
+        object.__setattr__(self, "repo_id", _redact_text(self.repo_id, limit=160) if self.repo_id else None)
+        object.__setattr__(self, "blockers", [_redact_text(item, limit=160) for item in self.blockers[:12]])
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def to_slack_payload(self) -> Dict[str, Any]:
+        lines = [
+            f"[Hermes benchmark] {self.title}",
+            f"severity: {self.severity}",
+            f"run: {self.run_id}",
+        ]
+        if self.workload_id:
+            lines.append(f"workload: {self.workload_id}")
+        if self.repo_id:
+            lines.append(f"repo: {self.repo_id}")
+        if self.blockers:
+            lines.append("blockers: " + ", ".join(self.blockers))
+        if self.message:
+            lines.extend(["", self.message])
+        text = "\n".join(lines).strip()
+        if len(text) > _NOTIFICATION_TEXT_LIMIT:
+            text = text[: _NOTIFICATION_TEXT_LIMIT - 16].rstrip() + " ... [truncated]"
+        return {
+            "text": text,
+            "metadata": {
+                "event_type": "hermes_runtime_benchmark_alert",
+                "event_payload": {
+                    "alert_id": self.alert_id,
+                    "run_id": self.run_id,
+                    "workload_id": self.workload_id,
+                    "severity": self.severity,
+                    "source": self.source,
+                },
+            },
+        }
+
+
 def validate_production_gate(
     gate_input: ProductionGateInput,
     thresholds: Optional[GateThresholds] = None,
@@ -655,6 +736,9 @@ class RuntimeBenchmarkConfig:
     tenant_id: str = "benchmark-tenant"
     execution_mode: str = "fixture"
     thresholds: GateThresholds = field(default_factory=GateThresholds)
+    urgent_notifications: bool = False
+    urgent_notification_platform: str = "slack"
+    urgent_notification_dry_run: bool = False
 
     def __post_init__(self) -> None:
         self.suite_path = _as_path(self.suite_path)
@@ -850,6 +934,7 @@ def _fixture_outcome(workload: BenchmarkWorkload, environment: str, tenant_id: s
         "judge_operator_boundary_preserved": True,
         "operator_overrode_failed_validation": False,
         "fallback_reasons": ["fixture-fallback"] if workload.workload_class == "fallback" else [],
+        "message": "",
     }
     for key in list(default):
         default[key] = _fixture_value(workload, environment, key, default[key])
@@ -964,7 +1049,18 @@ class BenchmarkRunner:
         }
         _write_json(run_dir / _RUN_JSON, result)
         report = generate_comparison_report(run_id, artifact_root=artifact_root, persist=True)
+        if self.config.urgent_notifications:
+            send_benchmark_notifications_for_run(
+                run_id,
+                artifact_root=artifact_root,
+                platform=self.config.urgent_notification_platform,
+                dry_run=self.config.urgent_notification_dry_run,
+            )
+            report = generate_comparison_report(run_id, artifact_root=artifact_root, persist=True)
         result["production_gate"] = report["production_gate"]
+        result["notification_requirements"] = report["notification_requirements"]
+        if report.get("benchmark_notifications"):
+            result["benchmark_notifications"] = report["benchmark_notifications"]
         _write_json(run_dir / _RUN_JSON, result)
         return result
 
@@ -1018,6 +1114,80 @@ def _aggregate_outcomes(outcomes: List[Mapping[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _successful_benchmark_notifications(run: Mapping[str, Any]) -> int:
+    notifications = _coerce_mapping(run.get("benchmark_notifications"))
+    deliveries = notifications.get("deliveries")
+    if not isinstance(deliveries, list):
+        return 0
+    return sum(1 for item in deliveries if isinstance(item, Mapping) and item.get("status") == "sent")
+
+
+def _benchmark_failure_outcomes(run: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    failures: List[Mapping[str, Any]] = []
+    branch_results = list(_coerce_mapping(run.get("results")).get("branch", []))
+    for item in branch_results:
+        if not isinstance(item, Mapping):
+            continue
+        if not bool(item.get("success")) or not bool(item.get("validation_passed")):
+            failures.append(item)
+    return failures
+
+
+def _notification_requirements(
+    *,
+    run: Mapping[str, Any],
+    branch: Mapping[str, Any],
+    preliminary_gate: ProductionGateResult,
+) -> Dict[str, Any]:
+    failures = _benchmark_failure_outcomes(run)
+    non_notification_gate_blockers = [item for item in preliminary_gate.blockers if item != "urgent_alerts_missing"]
+    gate_block_alerts_expected = 1 if non_notification_gate_blockers else 0
+    benchmark_notifications_sent = _successful_benchmark_notifications(run)
+    base_expected = int(branch["urgent_alerts_expected"])
+    base_sent = int(branch["urgent_alerts_sent"])
+    return {
+        "workload_urgent_alerts_expected": base_expected,
+        "workload_urgent_alerts_sent": base_sent,
+        "benchmark_failures_expected": len(failures),
+        "production_gate_block_alerts_expected": gate_block_alerts_expected,
+        "benchmark_notifications_sent": benchmark_notifications_sent,
+        "total_urgent_alerts_expected": base_expected + len(failures) + gate_block_alerts_expected,
+        "total_urgent_alerts_sent": base_sent + benchmark_notifications_sent,
+        "gate_blockers_requiring_alert": non_notification_gate_blockers,
+    }
+
+
+def _gate_for_aggregates(
+    *,
+    upstream: Mapping[str, Any],
+    branch: Mapping[str, Any],
+    cost_ratio: float,
+    latency_ratio: float,
+    thresholds: GateThresholds,
+    urgent_alerts_expected: Optional[int] = None,
+    urgent_alerts_sent: Optional[int] = None,
+) -> ProductionGateResult:
+    return validate_production_gate(
+        ProductionGateInput(
+            upstream_success_rate=float(upstream["success_rate"]),
+            branch_success_rate=float(branch["success_rate"]),
+            upstream_false_completion_rate=float(upstream["false_completion_rate"]),
+            branch_false_completion_rate=float(branch["false_completion_rate"]),
+            upstream_repeated_error_rate=float(upstream["repeated_error_rate"]),
+            branch_repeated_error_rate=float(branch["repeated_error_rate"]),
+            cost_per_success_ratio=cost_ratio,
+            foreground_latency_ratio=latency_ratio,
+            sidecar_blocked_foreground=bool(branch["sidecar_blocked_foreground"]),
+            urgent_alerts_expected=int(branch["urgent_alerts_expected"] if urgent_alerts_expected is None else urgent_alerts_expected),
+            urgent_alerts_sent=int(branch["urgent_alerts_sent"] if urgent_alerts_sent is None else urgent_alerts_sent),
+            memory_approval_boundary_preserved=bool(branch["memory_boundary_preserved"]),
+            judge_operator_boundary_preserved=bool(branch["judge_operator_boundary_preserved"]),
+            operator_overrode_failed_validation=bool(branch["operator_overrode_failed_validation"]),
+        ),
+        thresholds=thresholds,
+    )
+
+
 def generate_comparison_report(
     run_id: str,
     *,
@@ -1031,24 +1201,26 @@ def generate_comparison_report(
     cost_ratio = _safe_ratio(branch["cost_per_success_usd"], upstream["cost_per_success_usd"], default=1.0)
     latency_ratio = _safe_ratio(branch["avg_latency_ms"], upstream["avg_latency_ms"], default=1.0)
     thresholds = GateThresholds(**_coerce_mapping(run.get("thresholds")))
-    gate = validate_production_gate(
-        ProductionGateInput(
-            upstream_success_rate=float(upstream["success_rate"]),
-            branch_success_rate=float(branch["success_rate"]),
-            upstream_false_completion_rate=float(upstream["false_completion_rate"]),
-            branch_false_completion_rate=float(branch["false_completion_rate"]),
-            upstream_repeated_error_rate=float(upstream["repeated_error_rate"]),
-            branch_repeated_error_rate=float(branch["repeated_error_rate"]),
-            cost_per_success_ratio=cost_ratio,
-            foreground_latency_ratio=latency_ratio,
-            sidecar_blocked_foreground=bool(branch["sidecar_blocked_foreground"]),
-            urgent_alerts_expected=int(branch["urgent_alerts_expected"]),
-            urgent_alerts_sent=int(branch["urgent_alerts_sent"]),
-            memory_approval_boundary_preserved=bool(branch["memory_boundary_preserved"]),
-            judge_operator_boundary_preserved=bool(branch["judge_operator_boundary_preserved"]),
-            operator_overrode_failed_validation=bool(branch["operator_overrode_failed_validation"]),
-        ),
+    preliminary_gate = _gate_for_aggregates(
+        upstream=upstream,
+        branch=branch,
+        cost_ratio=cost_ratio,
+        latency_ratio=latency_ratio,
         thresholds=thresholds,
+    )
+    notification_requirements = _notification_requirements(
+        run=run,
+        branch=branch,
+        preliminary_gate=preliminary_gate,
+    )
+    gate = _gate_for_aggregates(
+        upstream=upstream,
+        branch=branch,
+        cost_ratio=cost_ratio,
+        latency_ratio=latency_ratio,
+        thresholds=thresholds,
+        urgent_alerts_expected=int(notification_requirements["total_urgent_alerts_expected"]),
+        urgent_alerts_sent=int(notification_requirements["total_urgent_alerts_sent"]),
     )
     report = {
         "run_id": run_id,
@@ -1128,15 +1300,191 @@ def generate_comparison_report(
             },
         },
         "production_gate": gate.to_dict(),
+        "notification_requirements": notification_requirements,
+        "benchmark_notifications": _coerce_mapping(run.get("benchmark_notifications")),
         "artifacts": {
             "run_json": str(_run_dir(root, run_id) / _RUN_JSON),
             "telemetry_jsonl": str(_run_dir(root, run_id) / _TELEMETRY_JSONL),
             "report_json": str(_run_dir(root, run_id) / _REPORT_JSON),
         },
     }
+    report["pending_urgent_alerts"] = [alert.to_dict() for alert in build_benchmark_urgent_alerts(run, report)]
     if persist:
         _write_json(_run_dir(root, run_id) / _REPORT_JSON, report)
     return report
+
+
+def build_benchmark_urgent_alerts(
+    run: Mapping[str, Any],
+    report: Mapping[str, Any],
+) -> List[BenchmarkUrgentAlert]:
+    """Build bounded urgent alerts for benchmark failures and gate blocks."""
+    run_id = str(run.get("run_id") or report.get("run_id") or "unknown")
+    alerts: List[BenchmarkUrgentAlert] = []
+    for idx, outcome in enumerate(_benchmark_failure_outcomes(run), start=1):
+        repo_id = ""
+        workload_id = str(outcome.get("workload_id") or "")
+        message = (
+            "Benchmark workload failed or did not pass validation. "
+            f"status success={bool(outcome.get('success'))} validation_passed={bool(outcome.get('validation_passed'))}. "
+            f"reason={outcome.get('message') or outcome.get('error') or outcome.get('fallback_reasons') or 'not provided'}"
+        )
+        alerts.append(
+            BenchmarkUrgentAlert(
+                alert_id=f"{run_id}:failure:{idx}",
+                severity="failed",
+                title="runtime benchmark workload failed",
+                message=message,
+                run_id=run_id,
+                workload_id=workload_id or None,
+                repo_id=repo_id or None,
+                blockers=["benchmark_failure"],
+            )
+        )
+    gate = _coerce_mapping(report.get("production_gate"))
+    blockers = [str(item) for item in gate.get("blockers", []) if str(item) != "urgent_alerts_missing"]
+    if gate and gate.get("allowed") is False and blockers:
+        alerts.append(
+            BenchmarkUrgentAlert(
+                alert_id=f"{run_id}:production_gate",
+                severity="blocked",
+                title="runtime benchmark production gate blocked",
+                message="Production readiness gate blocked rollout for this benchmark run.",
+                run_id=run_id,
+                blockers=blockers,
+            )
+        )
+    return alerts
+
+
+def send_benchmark_urgent_alerts(
+    alerts: Iterable[BenchmarkUrgentAlert],
+    *,
+    platform: str = "slack",
+    dry_run: bool = False,
+    sender: Optional[Callable[[dict[str, Any]], str]] = None,
+) -> Dict[str, Any]:
+    """Send benchmark alerts through the urgent notification route.
+
+    The sender is injectable for tests and dry runs. Only actual successful
+    deliveries count as sent for production-gate accounting.
+    """
+    from hermes_cli.runtime_urgent_notify import UrgentNotification, send_urgent_notification
+
+    deliveries: List[Dict[str, Any]] = []
+    for alert in alerts:
+        payload = alert.to_slack_payload()
+        notification = UrgentNotification(
+            severity=alert.severity,
+            title=alert.title,
+            message=payload["text"],
+            repo_id=alert.repo_id,
+            event_kind="runtime_benchmark",
+            source=alert.source,
+        )
+        delivery = send_urgent_notification(
+            notification,
+            platform=platform,
+            dry_run=dry_run,
+            sender=sender,
+        )
+        deliveries.append({
+            "alert": alert.to_dict(),
+            "status": delivery.get("status"),
+            "target": _redact_text(delivery.get("target"), limit=160) if delivery.get("target") else None,
+            "dry_run": dry_run,
+            "delivery": {
+                key: _redact_text(value, limit=240)
+                for key, value in _coerce_mapping(delivery.get("delivery")).items()
+                if key in {"success", "error", "message", "message_ts", "raw"}
+            },
+        })
+    return {
+        "status": "completed",
+        "platform": platform,
+        "dry_run": dry_run,
+        "attempted": len(deliveries),
+        "sent": sum(1 for item in deliveries if item.get("status") == "sent"),
+        "failed": sum(1 for item in deliveries if item.get("status") == "failed"),
+        "skipped": sum(1 for item in deliveries if item.get("status") == "skipped"),
+        "deliveries": deliveries,
+    }
+
+
+def send_benchmark_notifications_for_run(
+    run_id: str,
+    *,
+    artifact_root: Optional[str | Path] = None,
+    platform: str = "slack",
+    dry_run: bool = False,
+    sender: Optional[Callable[[dict[str, Any]], str]] = None,
+) -> Dict[str, Any]:
+    root = _as_path(artifact_root) if artifact_root else _artifact_root_default()
+    run = get_benchmark_run(run_id, artifact_root=root)
+    report = generate_comparison_report(run_id, artifact_root=root, persist=False)
+    alerts = build_benchmark_urgent_alerts(run, report)
+    delivery = send_benchmark_urgent_alerts(alerts, platform=platform, dry_run=dry_run, sender=sender)
+    run["benchmark_notifications"] = delivery
+    _write_json(_run_dir(root, run_id) / _RUN_JSON, run)
+    final_report = generate_comparison_report(run_id, artifact_root=root, persist=True)
+    return {
+        **delivery,
+        "run_id": run_id,
+        "production_gate": final_report["production_gate"],
+        "notification_requirements": final_report["notification_requirements"],
+    }
+
+
+def build_azure_side_by_side_smoke_fixture(*, live: bool = False, env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Return deterministic Azure smoke status without running live providers."""
+    source_env = env or os.environ
+    required = ("AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", "AZURE_VM_NAME")
+    missing = [name for name in required if not str(source_env.get(name, "")).strip()]
+    live_enabled = live or str(source_env.get("HERMES_AZURE_LIVE_SMOKE", "")).strip().lower() in {"1", "true", "yes"}
+    blockers: List[str] = []
+    if missing:
+        blockers.append("missing_azure_live_smoke_configuration")
+    if not live_enabled:
+        blockers.append("live_azure_smoke_not_opted_in")
+    deterministic_fixture = {
+        "status": "passed",
+        "scenario": "azure-side-by-side-local-fixture",
+        "upstream": {
+            "execution_mode": "fixture",
+            "learning_enabled": False,
+            "quality_signal": "comparison-baseline",
+        },
+        "branch": {
+            "execution_mode": "fixture",
+            "learning_enabled": True,
+            "sidecars_advisory_only": True,
+            "enforcement_enabled": False,
+            "quality_signal": "memory-wrapper-smoke",
+        },
+        "metrics": {
+            "token_cost_latency_quality_recorded": True,
+            "self_learning_results_recorded": True,
+            "transcript_storage": "none",
+            "secrets_stored": False,
+        },
+    }
+    if live_enabled and not missing:
+        status = "blocked"
+        blockers.append("live_azure_provider_execution_not_run_by_local_harness")
+    else:
+        status = "skipped"
+    return {
+        "status": status,
+        "task": "T189",
+        "live_smoke": {
+            "enabled": live_enabled,
+            "required_configuration": list(required),
+            "missing_configuration": missing,
+            "blockers": blockers,
+            "note": "Live Azure/provider smoke is opt-in and was not executed by the deterministic local fixture.",
+        },
+        "deterministic_fixture": deterministic_fixture,
+    }
 
 
 class CostStatus:

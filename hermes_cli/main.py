@@ -11877,11 +11877,23 @@ Examples:
     runtime_benchmark_run.add_argument("--branch-command", default="", help="Opt-in branch command execution")
     runtime_benchmark_run.add_argument("--execution-mode", choices=["fixture", "command"], default="fixture")
     runtime_benchmark_run.add_argument("--tenant-id", default="benchmark-tenant")
+    runtime_benchmark_run.add_argument("--send-urgent-alerts", action="store_true", help="Opt in to urgent Slack alerts for benchmark failures/gate blocks")
+    runtime_benchmark_run.add_argument("--urgent-platform", default="slack", help="Urgent notification platform")
+    runtime_benchmark_run.add_argument("--urgent-dry-run", action="store_true", help="Build urgent alerts without sending")
     runtime_benchmark_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     runtime_benchmark_report = runtime_benchmark_sub.add_parser("report", help="Show a benchmark comparison report")
     runtime_benchmark_report.add_argument("--run-id", required=True, help="Benchmark run id")
     runtime_benchmark_report.add_argument("--artifact-root", default="", help="Benchmark artifact root")
     runtime_benchmark_report.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_benchmark_notify = runtime_benchmark_sub.add_parser("notify", help="Send urgent alerts for an existing benchmark run")
+    runtime_benchmark_notify.add_argument("--run-id", required=True, help="Benchmark run id")
+    runtime_benchmark_notify.add_argument("--artifact-root", default="", help="Benchmark artifact root")
+    runtime_benchmark_notify.add_argument("--platform", default="slack", help="Urgent notification platform")
+    runtime_benchmark_notify.add_argument("--dry-run", action="store_true", help="Build urgent alerts without sending")
+    runtime_benchmark_notify.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_benchmark_azure = runtime_benchmark_sub.add_parser("azure-smoke", help="Show opt-in Azure side-by-side smoke status")
+    runtime_benchmark_azure.add_argument("--live", action="store_true", help="Opt in to live Azure smoke readiness check")
+    runtime_benchmark_azure.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     runtime_costs = runtime_sub.add_parser("costs", help="Inspect runtime benchmark cost telemetry")
     runtime_costs_sub = runtime_costs.add_subparsers(dest="runtime_costs_command")
@@ -12316,8 +12328,10 @@ Examples:
         if cmd == "benchmark":
             from hermes_cli.runtime_benchmark import (
                 RuntimeBenchmarkConfig,
+                build_azure_side_by_side_smoke_fixture,
                 generate_comparison_report,
                 run_benchmark_suite,
+                send_benchmark_notifications_for_run,
             )
 
             benchmark_cmd = getattr(args, "runtime_benchmark_command", None) or "run"
@@ -12336,13 +12350,27 @@ Examples:
                             branch_command=getattr(args, "branch_command", "") or None,
                             tenant_id=getattr(args, "tenant_id", "benchmark-tenant") or "benchmark-tenant",
                             execution_mode=execution_mode,
+                            urgent_notifications=bool(getattr(args, "send_urgent_alerts", False)),
+                            urgent_notification_platform=getattr(args, "urgent_platform", "slack") or "slack",
+                            urgent_notification_dry_run=bool(getattr(args, "urgent_dry_run", False)),
                         )
                     )
-                else:
+                elif benchmark_cmd == "report":
                     payload = generate_comparison_report(
                         getattr(args, "run_id"),
                         artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
                     )
+                elif benchmark_cmd == "notify":
+                    payload = send_benchmark_notifications_for_run(
+                        getattr(args, "run_id"),
+                        artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
+                        platform=getattr(args, "platform", "slack") or "slack",
+                        dry_run=bool(getattr(args, "dry_run", False)),
+                    )
+                elif benchmark_cmd == "azure-smoke":
+                    payload = build_azure_side_by_side_smoke_fixture(live=bool(getattr(args, "live", False)))
+                else:
+                    raise SystemExit(f"unknown runtime benchmark command: {benchmark_cmd}")
             except ValueError as exc:
                 raise SystemExit(str(exc)) from exc
             _emit(payload)

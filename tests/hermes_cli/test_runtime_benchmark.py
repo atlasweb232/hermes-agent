@@ -21,6 +21,9 @@ from hermes_cli.runtime_benchmark import (
     TelemetryRecord,
     ValidationCommand,
     WorkloadPack,
+    build_azure_side_by_side_smoke_fixture,
+    build_benchmark_urgent_alerts,
+    send_benchmark_urgent_alerts,
     generate_comparison_report,
     get_benchmark_run,
     load_workload_pack,
@@ -416,6 +419,83 @@ def test_report_fails_closed_when_branch_fixture_regresses(tmp_path):
     assert "branch_success_rate_regressed" in report["production_gate"]["blockers"]
     assert "urgent_alerts_missing" in report["production_gate"]["blockers"]
     assert "memory_approval_boundary_violated" in report["production_gate"]["blockers"]
+
+
+def test_benchmark_failure_requires_urgent_alert_and_payloads_are_redacted(tmp_path):
+    suite = tmp_path / "suite.json"
+    workload = _workload("failure-1", "repeated_failure")
+    workload.metadata["fixture"] = {
+        "branch": {
+            "success": False,
+            "validation_passed": False,
+            "message": "token sk-live-secret should not leak",
+            "urgent_alerts_expected": 0,
+            "urgent_alerts_sent": 0,
+        }
+    }
+    pack = WorkloadPack(pack_id="phase14-alerts", version="1", workloads=[workload])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    run = run_benchmark_suite(RuntimeBenchmarkConfig(suite_path=suite, artifact_root=tmp_path / "bench"))
+
+    report = generate_comparison_report(run["run_id"], artifact_root=tmp_path / "bench")
+    alerts = build_benchmark_urgent_alerts(get_benchmark_run(run["run_id"], artifact_root=tmp_path / "bench"), report)
+
+    assert report["notification_requirements"]["benchmark_failures_expected"] == 1
+    assert report["notification_requirements"]["total_urgent_alerts_expected"] >= 1
+    assert report["production_gate"]["allowed"] is False
+    assert "urgent_alerts_missing" in report["production_gate"]["blockers"]
+    assert report["pending_urgent_alerts"]
+    assert "sk-live-secret" not in json.dumps(report["pending_urgent_alerts"])
+    assert alerts
+    payload = alerts[0].to_slack_payload()
+    encoded = json.dumps(payload)
+    assert "sk-live-secret" not in encoded
+    assert "[REDACTED]" in encoded
+    assert len(payload["text"]) <= 3000
+
+
+def test_benchmark_urgent_alert_sender_is_injectable_and_counts_only_sent(tmp_path, monkeypatch):
+    suite = tmp_path / "suite.json"
+    workload = _workload("failure-1", "repeated_failure")
+    workload.metadata["fixture"] = {"branch": {"success": False, "validation_passed": False, "urgent_alerts_expected": 0}}
+    pack = WorkloadPack(pack_id="phase14-alert-send", version="1", workloads=[workload])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    run = run_benchmark_suite(RuntimeBenchmarkConfig(suite_path=suite, artifact_root=tmp_path / "bench"))
+    report = generate_comparison_report(run["run_id"], artifact_root=tmp_path / "bench")
+    alerts = build_benchmark_urgent_alerts(get_benchmark_run(run["run_id"], artifact_root=tmp_path / "bench"), report)
+    sent_payloads = []
+
+    monkeypatch.setenv("SLACK_URGENT_CHANNEL", "C123BENCH")
+
+    def fake_sender(payload):
+        sent_payloads.append(payload)
+        return json.dumps({"success": True, "message_ts": "1.2"})
+
+    delivery = send_benchmark_urgent_alerts(alerts, sender=fake_sender)
+
+    assert delivery["sent"] == len(alerts)
+    assert delivery["failed"] == 0
+    assert sent_payloads
+    assert all(item["action"] == "send" for item in sent_payloads)
+    assert all("raw_transcript" not in json.dumps(item) for item in sent_payloads)
+
+
+def test_azure_side_by_side_smoke_fixture_skips_live_without_config(monkeypatch):
+    for key in (
+        "AZURE_SUBSCRIPTION_ID",
+        "AZURE_RESOURCE_GROUP",
+        "AZURE_VM_NAME",
+        "HERMES_AZURE_LIVE_SMOKE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    result = build_azure_side_by_side_smoke_fixture(live=False)
+
+    assert result["status"] == "skipped"
+    assert result["live_smoke"]["enabled"] is False
+    assert "missing_azure_live_smoke_configuration" in result["live_smoke"]["blockers"]
+    assert result["deterministic_fixture"]["status"] == "passed"
+    assert "raw_transcript" not in json.dumps(result)
 
 
 def test_get_run_and_cost_status_are_json_friendly(tmp_path):
