@@ -11311,6 +11311,214 @@ Examples:
         logging.getLogger(__name__).debug("curator CLI wiring failed: %s", _exc)
 
     # =========================================================================
+    # tenant command — local/dev tenant platform onboarding
+    # =========================================================================
+    tenant_parser = subparsers.add_parser(
+        "tenant",
+        help="Manage local/dev tenant onboarding records",
+        description="Create local tenant, repo, connector, toolset, and smoke-test records.",
+    )
+    tenant_sub = tenant_parser.add_subparsers(dest="tenant_command")
+
+    tenant_create = tenant_sub.add_parser("create", help="Create a tenant registry record")
+    tenant_create.add_argument("tenant_id")
+    tenant_create.add_argument("--name", required=True)
+    tenant_create.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    tenant_status = tenant_sub.add_parser("status", help="Show tenant onboarding status")
+    tenant_status.add_argument("tenant_id")
+    tenant_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    tenant_repo = tenant_sub.add_parser("repo", help="Manage tenant repositories")
+    tenant_repo_sub = tenant_repo.add_subparsers(dest="tenant_repo_command")
+    tenant_repo_add = tenant_repo_sub.add_parser("add", help="Register a tenant repository")
+    tenant_repo_add.add_argument("tenant_id")
+    tenant_repo_add.add_argument("repo_id")
+    tenant_repo_add.add_argument("--clone-url", required=True)
+    tenant_repo_add.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    tenant_repo_preflight = tenant_repo_sub.add_parser("preflight", help="Run read-only local repo preflight")
+    tenant_repo_preflight.add_argument("tenant_id")
+    tenant_repo_preflight.add_argument("repo_id")
+    tenant_repo_preflight.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    tenant_connector = tenant_sub.add_parser("connector", help="Manage tenant communication connectors")
+    tenant_connector_sub = tenant_connector.add_subparsers(dest="tenant_connector_command")
+    tenant_connector_add = tenant_connector_sub.add_parser("add", help="Register a connector")
+    tenant_connector_add.add_argument("tenant_id")
+    tenant_connector_add.add_argument("connector_id")
+    tenant_connector_add.add_argument("--platform", required=True)
+    tenant_connector_add.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    tenant_connector_status = tenant_connector_sub.add_parser("status", help="Show connector status")
+    tenant_connector_status.add_argument("tenant_id")
+    tenant_connector_status.add_argument("connector_id")
+    tenant_connector_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    tenant_toolset = tenant_sub.add_parser("toolset", help="Manage tenant toolset profiles")
+    tenant_toolset_sub = tenant_toolset.add_subparsers(dest="tenant_toolset_command")
+    tenant_toolset_set = tenant_toolset_sub.add_parser("set", help="Create or update a toolset profile")
+    tenant_toolset_set.add_argument("tenant_id")
+    tenant_toolset_set.add_argument("profile_id")
+    tenant_toolset_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    tenant_toolset_status = tenant_toolset_sub.add_parser("status", help="Show toolset profile status")
+    tenant_toolset_status.add_argument("tenant_id")
+    tenant_toolset_status.add_argument("profile_id")
+    tenant_toolset_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    tenant_smoke = tenant_sub.add_parser("smoke", help="Run local tenant onboarding smoke")
+    tenant_smoke.add_argument("tenant_id")
+    tenant_smoke.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    def cmd_tenant(args):
+        import json as _json
+        from hermes_constants import get_hermes_home
+        from hermes_cli.tenant_platform import (
+            TenantPlatformStore,
+            build_connector_registration,
+            build_repo_preflight,
+            build_repo_registration,
+            build_runtime_cell_assignment,
+            build_tenant_registry,
+            build_tenant_smoke_fixture,
+            build_toolset_profile,
+        )
+
+        def _emit(payload):
+            if getattr(args, "json", False):
+                print(_json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
+            else:
+                print(_json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
+
+        store = TenantPlatformStore()
+        try:
+            command = getattr(args, "tenant_command", None)
+            if command == "create":
+                tenant = build_tenant_registry(
+                    tenant_id=args.tenant_id,
+                    name=args.name,
+                    users=[{"user_id": "local-operator", "role": "tenant_admin"}],
+                    budgets={
+                        "tokens": {"limit": 1000000, "used": 0},
+                        "models": {"limit": 100, "used": 0},
+                        "tools": {"limit": 500, "used": 0},
+                        "sidecars": {"limit": 50, "used": 0},
+                    },
+                    feature_profile={"profile_id": "features-local", "enabled": [], "expert_mode": False},
+                    runtime_cell_id=f"cell-{args.tenant_id}",
+                    audit={"created_by": "local-dev", "created_at": "local"},
+                )
+                cell = build_runtime_cell_assignment(
+                    args.tenant_id,
+                    f"cell-{args.tenant_id}",
+                    root=str(get_hermes_home() / "tenant-cells"),
+                    isolation_mode="dedicated",
+                )
+                store.save_record(tenant)
+                store.save_record(cell)
+                _emit(tenant)
+                return
+            if command == "status":
+                payload = {
+                    "schema_version": 1,
+                    "kind": "tenant_status",
+                    "tenant_id": args.tenant_id,
+                    "tenant": store.get_record(args.tenant_id, "tenant_registry"),
+                    "runtime_cells": store.list_records("runtime_cell_assignment", tenant_id=args.tenant_id),
+                    "repos": store.list_records("repo_registration", tenant_id=args.tenant_id),
+                    "connectors": store.list_records("connector_registration", tenant_id=args.tenant_id),
+                    "toolsets": store.list_records("toolset_profile", tenant_id=args.tenant_id),
+                    "enforcement_allowed": False,
+                }
+                _emit(payload)
+                return
+            if command == "repo" and getattr(args, "tenant_repo_command", None) == "add":
+                repo = build_repo_registration(
+                    tenant_id=args.tenant_id,
+                    repo_id=args.repo_id,
+                    provider_ref={"provider": "local", "installation_ref": "local-dev"},
+                    clone_url=args.clone_url,
+                    branch_policy={"default_branch": "main", "allowed_branches": ["main"]},
+                    protected_paths=[".github/workflows/*"],
+                    validation_commands=["python3 -m pytest -q"],
+                    deployment_mapping={},
+                    secret_refs=[],
+                    speckit_policy={"required": True, "root": "specs/"},
+                    memory_sharing_policy={"tenant_private": True, "cross_tenant_shareable": False},
+                )
+                store.save_record(repo)
+                _emit(repo)
+                return
+            if command == "repo" and getattr(args, "tenant_repo_command", None) == "preflight":
+                repo = store.get_record(args.tenant_id, "repo_registration", args.repo_id)
+                _emit(build_repo_preflight(repo))
+                return
+            if command == "connector" and getattr(args, "tenant_connector_command", None) == "add":
+                connector = build_connector_registration(
+                    tenant_id=args.tenant_id,
+                    connector_id=args.connector_id,
+                    platform=args.platform,
+                    route_ref={"route": f"{args.platform}-local"},
+                    allowed_users=["local-operator"],
+                    allowed_channels=["local-channel"],
+                    urgent_route={"route": "local-urgent"},
+                    approval_route={"route": "local-approval"},
+                )
+                store.save_record(connector)
+                _emit(connector)
+                return
+            if command == "connector" and getattr(args, "tenant_connector_command", None) == "status":
+                _emit(store.get_record(args.tenant_id, "connector_registration", args.connector_id))
+                return
+            if command == "toolset" and getattr(args, "tenant_toolset_command", None) == "set":
+                profile = build_toolset_profile(
+                    tenant_id=args.tenant_id,
+                    profile_id=args.profile_id,
+                    roles={
+                        "planner": {"enabled": True},
+                        "speckit_creator": {"enabled": True},
+                        "code_worker": {"enabled": True},
+                        "qa_browser": {"enabled": True},
+                        "tinyfish_api": {"enabled": False},
+                        "tinyfish_browser": {"enabled": False},
+                        "cicd": {"enabled": True},
+                        "deployment": {"enabled": False},
+                        "cloud": {"enabled": False},
+                        "repo": {"enabled": True},
+                        "voice": {"enabled": False},
+                        "image": {"enabled": False},
+                    },
+                    scopes={"repos": [], "environments": ["local"]},
+                    budgets={"tokens": 200000, "tool_calls": 200, "sidecars": 10},
+                    approval_requirements={"deployment": True, "protected_environment": True},
+                    feature_toggle_deps=["runtime.task_graph"],
+                )
+                store.save_record(profile)
+                _emit(profile)
+                return
+            if command == "toolset" and getattr(args, "tenant_toolset_command", None) == "status":
+                _emit(store.get_record(args.tenant_id, "toolset_profile", args.profile_id))
+                return
+            if command == "smoke":
+                smoke = build_tenant_smoke_fixture(
+                    store,
+                    tenant_id=args.tenant_id,
+                    repo_id="repo-smoke",
+                    connector_id="dashboard-smoke",
+                    root=str(get_hermes_home() / "tenant-cells"),
+                    speckit_refs={
+                        "spec": "specs/001-learning-memory-runtime/spec.md",
+                        "plan": "specs/001-learning-memory-runtime/plan.md",
+                        "tasks": "specs/001-learning-memory-runtime/tasks.md",
+                    },
+                )
+                _emit(smoke)
+                return
+            tenant_parser.print_help()
+        finally:
+            store.close()
+
+    tenant_parser.set_defaults(func=cmd_tenant)
+
+    # =========================================================================
     # runtime command — supervisor orchestration packets and gates
     # =========================================================================
     runtime_parser = subparsers.add_parser(

@@ -549,17 +549,17 @@
 
 ### Implementation For Tenant Platform
 
-- [ ] T222 [US13] Implement tenant registry DTOs/state helpers with local SQLite/dev adapter and JSON serialization
-- [ ] T223 [US13] Implement repo registration DTOs/state helpers and read-only repo preflight output
-- [ ] T224 [US13] Implement communication connector registration DTOs/state helpers with adapter-neutral route metadata
-- [ ] T225 [US13] Implement toolset profile DTOs/state helpers and merge logic with job-level overrides
-- [ ] T226 [US13] Implement runtime cell assignment model for dedicated and pooled modes with isolation metadata
-- [ ] T227 [US13] Implement tenant-scoped job submission packet builder that feeds the existing supervisor task packet path
-- [ ] T228 [US13] Add CLI/API-compatible surfaces for tenant onboarding: `hermes tenant create/status`, `hermes tenant repo add/preflight`, `hermes tenant connector add/status`, `hermes tenant toolset set/status`, and `hermes tenant smoke --json`
-- [ ] T229 [US13] Add admin dashboard DTOs for tenants, runtime cells, connectors, repos, jobs, faults, worker health, sidecar health, cost, memory flow, and urgent alerts
-- [ ] T230 [US13] Add E2E onboarding smoke fixture that proves a tenant can submit a Spec Kit-backed job through a registered connector with isolated runtime state
-- [ ] T231 [US13] Implement connector-normalized tenant message envelope and reply/approval/urgent route DTOs
-- [ ] T232 [US13] Implement CI/CD toolset profile DTOs and worker packet builder for pipeline create/repair/run/validate/report tasks
+- [x] T222 [US13] Implement tenant registry DTOs/state helpers with local SQLite/dev adapter and JSON serialization
+- [x] T223 [US13] Implement repo registration DTOs/state helpers and read-only repo preflight output
+- [x] T224 [US13] Implement communication connector registration DTOs/state helpers with adapter-neutral route metadata
+- [x] T225 [US13] Implement toolset profile DTOs/state helpers and merge logic with job-level overrides
+- [x] T226 [US13] Implement runtime cell assignment model for dedicated and pooled modes with isolation metadata
+- [x] T227 [US13] Implement tenant-scoped job submission packet builder that feeds the existing supervisor task packet path
+- [x] T228 [US13] Add CLI/API-compatible surfaces for tenant onboarding: `hermes tenant create/status`, `hermes tenant repo add/preflight`, `hermes tenant connector add/status`, `hermes tenant toolset set/status`, and `hermes tenant smoke --json`
+- [x] T229 [US13] Add admin dashboard DTOs for tenants, runtime cells, connectors, repos, jobs, faults, worker health, sidecar health, cost, memory flow, and urgent alerts
+- [x] T230 [US13] Add E2E onboarding smoke fixture that proves a tenant can submit a Spec Kit-backed job through a registered connector with isolated runtime state
+- [x] T231 [US13] Implement connector-normalized tenant message envelope and reply/approval/urgent route DTOs
+- [x] T232 [US13] Implement CI/CD toolset profile DTOs and worker packet builder for pipeline create/repair/run/validate/report tasks
 
 **Checkpoint**: Multiple tenants can be represented, isolated, observed, budgeted, and smoke-tested before production multi-tenant deployment begins.
 

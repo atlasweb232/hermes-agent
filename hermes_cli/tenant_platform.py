@@ -11,6 +11,7 @@ import copy
 import json
 import re
 from hashlib import sha256
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 
@@ -24,6 +25,15 @@ SUPPORTED_CICD_TASK_KINDS = (
     "workflow_validate",
     "workflow_report",
 )
+_TENANT_STATE_PREFIX = "tenant_platform"
+_RECORD_ID_FIELDS = {
+    "tenant_registry": "tenant_id",
+    "repo_registration": "repo_id",
+    "connector_registration": "connector_id",
+    "toolset_profile": "profile_id",
+    "runtime_cell_assignment": "runtime_cell_id",
+    "tenant_job_submission": "job_id",
+}
 
 _STANDALONE_SECRET_PATTERNS = (
     re.compile(r"(?i)\bsk-[A-Za-z0-9_-]{6,}\b"),
@@ -86,6 +96,68 @@ def _require_supported(value: str, supported: Iterable[str], field_name: str) ->
 def _hash_ref(*parts: str) -> str:
     digest = sha256(":".join(parts).encode("utf-8")).hexdigest()[:12]
     return digest
+
+
+def _state_key(tenant_id: str, kind: str, record_id: Optional[str] = None) -> str:
+    record_id = record_id or tenant_id
+    return f"{_TENANT_STATE_PREFIX}:{tenant_id}:{kind}:{record_id}"
+
+
+def _record_id(payload: Mapping[str, Any]) -> str:
+    kind = str(payload.get("kind", ""))
+    field = _RECORD_ID_FIELDS.get(kind)
+    if field and payload.get(field):
+        return str(payload[field])
+    return str(payload.get("id") or payload.get("tenant_id") or kind)
+
+
+class TenantPlatformStore:
+    """Local/dev SQLite-backed state adapter for tenant onboarding records."""
+
+    def __init__(self, db_path: Optional[Path | str] = None, db: Any = None):
+        if db is not None:
+            self._db = db
+            self._owns_db = False
+        else:
+            from hermes_state import SessionDB
+
+            self._db = SessionDB(Path(db_path) if db_path is not None else None)
+            self._owns_db = True
+
+    def close(self) -> None:
+        if self._owns_db and hasattr(self._db, "close"):
+            self._db.close()
+
+    def save_record(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        record = copy.deepcopy(dict(payload))
+        tenant_id = str(record.get("tenant_id") or "")
+        kind = str(record.get("kind") or "")
+        if not tenant_id:
+            raise ValueError("tenant_id is required")
+        if not kind:
+            raise ValueError("kind is required")
+        record["enforcement_allowed"] = False
+        self._db.set_meta(_state_key(tenant_id, kind, _record_id(record)), stable_json(record))
+        return record
+
+    def get_record(self, tenant_id: str, kind: str, record_id: Optional[str] = None) -> Dict[str, Any]:
+        value = self._db.get_meta(_state_key(tenant_id, kind, record_id))
+        if value is None:
+            raise KeyError(f"missing tenant platform record: {tenant_id}/{kind}/{record_id or tenant_id}")
+        return json.loads(value)
+
+    def list_records(self, kind: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        prefix = f"{_TENANT_STATE_PREFIX}:{tenant_id or '%'}:{kind}:"
+        if tenant_id is None:
+            like = f"{_TENANT_STATE_PREFIX}:%:{kind}:%"
+        else:
+            like = prefix + "%"
+        with self._db._lock:
+            rows = self._db._conn.execute(
+                "SELECT value FROM state_meta WHERE key LIKE ? ORDER BY key",
+                (like,),
+            ).fetchall()
+        return [json.loads(row["value"] if hasattr(row, "keys") else row[0]) for row in rows]
 
 
 def build_tenant_registry(
@@ -285,6 +357,108 @@ def build_runtime_cell_assignment(
             "sidecar_namespace": f"sidecar://{tenant_id}/{runtime_cell_id}",
             "cost_ledger_namespace": f"cost://{tenant_id}/{runtime_cell_id}",
             "state_ref": f"{base}/state.db",
+            "isolation": {
+                "mode": isolation_mode,
+                "pooled": isolation_mode == "pooled",
+                "tenant_namespace": tenant_id,
+                "runtime_namespace": f"{tenant_id}:{runtime_cell_id}",
+                "state_scope": "tenant",
+            },
+        }
+    )
+    return payload
+
+
+def build_repo_preflight(repo: Mapping[str, Any]) -> Dict[str, Any]:
+    checks = {
+        "clone_url_present": bool(repo.get("clone_url")),
+        "branch_policy_present": bool(repo.get("branch_policy")),
+        "validation_commands_present": bool(repo.get("validation_commands")),
+        "speckit_policy_present": bool(repo.get("speckit_policy")),
+        "secret_refs_only": all(str(ref).startswith("secret://") for ref in repo.get("secret_refs", [])),
+    }
+    payload = _base_packet("repo_preflight", str(repo["tenant_id"]))
+    payload.update(
+        {
+            "repo_id": repo["repo_id"],
+            "read_only": True,
+            "mutation_performed": False,
+            "external_call_performed": False,
+            "checks": checks,
+            "status": "passed" if all(checks.values()) else "blocked",
+            "evidence_refs": [f"evidence://tenant/{repo['tenant_id']}/repo/{repo['repo_id']}/preflight/local"],
+        }
+    )
+    return payload
+
+
+def merge_toolset_profile(profile: Mapping[str, Any], job_overrides: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    payload = copy.deepcopy(dict(profile))
+    overrides = _copy_dict(job_overrides)
+    for field in ("roles", "scopes", "budgets", "approval_requirements"):
+        merged = _copy_dict(payload.get(field))
+        for key, value in _copy_dict(overrides.get(field)).items():
+            if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+                nested = _copy_dict(merged[key])
+                nested.update(_copy_dict(value))
+                merged[key] = nested
+            else:
+                merged[key] = copy.deepcopy(value)
+        payload[field] = merged
+    payload["kind"] = "toolset_profile_resolved"
+    payload["base_profile_id"] = profile.get("profile_id")
+    payload["job_overrides_applied"] = bool(overrides)
+    payload["enforcement_allowed"] = False
+    return payload
+
+
+def build_tenant_supervisor_job_packet(
+    *,
+    tenant_id: str,
+    repo_id: str,
+    connector_id: str,
+    request_summary: str,
+    speckit_refs: Mapping[str, Any],
+    runtime_cell_id: str,
+    toolset_profile_id: str,
+    source: str,
+    job_id: Optional[str] = None,
+    job_overrides: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    bounded_request = _bounded_summary(request_summary, limit=160)
+    derived_job_id = job_id or f"job-{_hash_ref(tenant_id, repo_id, connector_id, bounded_request)}"
+    task_id = f"task-{_hash_ref(derived_job_id, tenant_id, repo_id)}"
+    supervisor_task_packet = {
+        "id": task_id,
+        "source": source,
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "cwd": None,
+        "raw_request_summary": bounded_request,
+        "task_type": "speckit_backed_job",
+        "complexity": "standard",
+        "requires_speckit": True,
+        "clarifications": [],
+        "memory_packet_id": None,
+        "success_criteria": ["Spec Kit refs are preserved", "Tenant runtime state remains isolated"],
+        "constraints": ["local/dev only", "no raw transcripts", "enforcement_allowed=false"],
+        "status": "intake",
+        "skip_reason": None,
+    }
+    payload = _base_packet("tenant_job_submission", tenant_id)
+    payload.update(
+        {
+            "job_id": derived_job_id,
+            "repo_id": repo_id,
+            "connector_id": connector_id,
+            "runtime_cell_id": runtime_cell_id,
+            "toolset_profile_id": toolset_profile_id,
+            "speckit_refs": _copy_dict(speckit_refs),
+            "job_overrides": _copy_dict(job_overrides),
+            "supervisor_task_path": "hermes_cli.runtime_packets.SupervisorTaskPacket",
+            "supervisor_task_packet": supervisor_task_packet,
+            "status": "submitted",
+            "raw_transcript_stored": False,
         }
     )
     return payload
@@ -413,6 +587,234 @@ def build_cicd_pipeline_packet(
                 "validate": task_kind == "workflow_validate",
                 "report": task_kind == "workflow_report",
             },
+            "raw_logs_stored": False,
+        }
+    )
+    return payload
+
+
+def build_connector_route_packet(
+    connector: Mapping[str, Any],
+    *,
+    route_kind: str,
+    message_ref: str,
+    body_summary: str,
+    approval_context: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    _require_supported(route_kind, ("reply", "approval", "urgent"), "route_kind")
+    route_ref = _copy_dict(connector.get("route_ref"))
+    if route_kind == "approval":
+        route_ref.update(_copy_dict(connector.get("routes", {}).get("approval")))
+    elif route_kind == "urgent":
+        route_ref.update(_copy_dict(connector.get("routes", {}).get("urgent")))
+    payload = _base_packet(f"tenant_{route_kind}_route", str(connector["tenant_id"]))
+    payload.update(
+        {
+            "connector_id": connector["connector_id"],
+            "platform": connector["platform"],
+            "route_kind": route_kind,
+            "route_ref": route_ref,
+            "message_ref": message_ref,
+            "body_summary": _bounded_summary(body_summary),
+            "approval_context": _copy_dict(approval_context),
+            "status": "queued",
+            "external_call_performed": False,
+            "raw_transcript_stored": False,
+        }
+    )
+    return payload
+
+
+def build_admin_dashboard_snapshot(
+    store: TenantPlatformStore,
+    *,
+    tenant_id: Optional[str] = None,
+    jobs: Optional[Iterable[Mapping[str, Any]]] = None,
+    faults: Optional[Iterable[Mapping[str, Any]]] = None,
+    worker_health: Optional[Iterable[Mapping[str, Any]]] = None,
+    sidecar_health: Optional[Iterable[Mapping[str, Any]]] = None,
+    cost: Optional[Iterable[Mapping[str, Any]]] = None,
+    memory_flow: Optional[Iterable[Mapping[str, Any]]] = None,
+    urgent_alerts: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    payload = _base_packet("tenant_admin_dashboard", tenant_id or "all")
+    payload.update(
+        {
+            "tenants": store.list_records("tenant_registry", tenant_id=tenant_id),
+            "runtime_cells": store.list_records("runtime_cell_assignment", tenant_id=tenant_id),
+            "connectors": store.list_records("connector_registration", tenant_id=tenant_id),
+            "repos": store.list_records("repo_registration", tenant_id=tenant_id),
+            "jobs": [_copy_dict(item) for item in (jobs or [])],
+            "faults": [_copy_dict(item) for item in (faults or [])],
+            "worker_health": [_copy_dict(item) for item in (worker_health or [])],
+            "sidecar_health": [_copy_dict(item) for item in (sidecar_health or [])],
+            "cost": [_copy_dict(item) for item in (cost or [])],
+            "memory_flow": [_copy_dict(item) for item in (memory_flow or [])],
+            "urgent_alerts": [_copy_dict(item) for item in (urgent_alerts or [])],
+            "raw_transcript_stored": False,
+        }
+    )
+    return payload
+
+
+def build_tenant_smoke_fixture(
+    store: TenantPlatformStore,
+    *,
+    tenant_id: str,
+    repo_id: str,
+    connector_id: str,
+    root: str,
+    speckit_refs: Mapping[str, Any],
+) -> Dict[str, Any]:
+    tenant = build_tenant_registry(
+        tenant_id=tenant_id,
+        name=tenant_id,
+        users=[{"user_id": "local-operator", "role": "tenant_admin"}],
+        budgets={"tokens": {"limit": 1000000, "used": 0}, "tools": {"limit": 500, "used": 0}},
+        feature_profile={"profile_id": "features-local", "enabled": ["runtime.task_graph"], "expert_mode": False},
+        runtime_cell_id=f"cell-{tenant_id}",
+        audit={"created_by": "local-dev", "created_at": "local"},
+    )
+    repo = build_repo_registration(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        provider_ref={"provider": "local", "installation_ref": "local-dev"},
+        clone_url=f"local://{tenant_id}/{repo_id}",
+        branch_policy={"default_branch": "main", "allowed_branches": ["main"]},
+        protected_paths=[".github/workflows/*"],
+        validation_commands=["python3 -m py_compile hermes_cli/tenant_platform.py"],
+        deployment_mapping={},
+        secret_refs=[],
+        speckit_policy={"required": True, "root": "specs/"},
+        memory_sharing_policy={"tenant_private": True, "cross_tenant_shareable": False},
+    )
+    connector = build_connector_registration(
+        tenant_id=tenant_id,
+        connector_id=connector_id,
+        platform="dashboard",
+        route_ref={"route": "local-dashboard"},
+        allowed_users=["local-operator"],
+        allowed_channels=["local-channel"],
+        urgent_route={"route": "local-urgent"},
+        approval_route={"route": "local-approval"},
+    )
+    toolset = build_toolset_profile(
+        tenant_id=tenant_id,
+        profile_id="toolset-local",
+        roles={"planner": {"enabled": True}, "speckit_creator": {"enabled": True}, "code_worker": {"enabled": True}},
+        scopes={"repos": [repo_id], "environments": ["local"]},
+        budgets={"tokens": 100000, "tool_calls": 100, "sidecars": 5},
+        approval_requirements={"deployment": True, "protected_environment": True},
+        feature_toggle_deps=["runtime.task_graph"],
+    )
+    cell = build_runtime_cell_assignment(tenant_id, f"cell-{tenant_id}", root=root, isolation_mode="dedicated")
+    envelope = normalize_connector_message(
+        connector,
+        sender_ref="local-operator",
+        channel_ref="local-channel",
+        thread_ref="local-smoke",
+        body="Submit Spec Kit backed local smoke job",
+        message_kind="job_request",
+        repo_id=repo_id,
+    )
+    job = build_tenant_supervisor_job_packet(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        connector_id=connector_id,
+        request_summary=envelope["body_summary"],
+        speckit_refs=speckit_refs,
+        runtime_cell_id=cell["runtime_cell_id"],
+        toolset_profile_id=toolset["profile_id"],
+        source="connector",
+    )
+    for record in (tenant, repo, connector, toolset, cell, job):
+        store.save_record(record)
+    payload = _base_packet("tenant_onboarding_smoke", tenant_id)
+    payload.update(
+        {
+            "status": "passed" if envelope["status"] == "accepted" else "blocked",
+            "tenant": tenant,
+            "repo": repo,
+            "connector": connector,
+            "toolset": toolset,
+            "runtime_cell": cell,
+            "connector_envelope": envelope,
+            "job_packet": job,
+            "isolation": {
+                "tenant_scoped_state": True,
+                "runtime_cell_id": cell["runtime_cell_id"],
+                "state_ref": cell["state_ref"],
+            },
+            "raw_transcript_stored": False,
+        }
+    )
+    return payload
+
+
+def build_cicd_toolset_profile(
+    *,
+    tenant_id: str,
+    profile_id: str,
+    repo_ids: Iterable[str],
+    protected_environments: Iterable[str],
+) -> Dict[str, Any]:
+    return build_toolset_profile(
+        tenant_id=tenant_id,
+        profile_id=profile_id,
+        roles={
+            "planner": {"enabled": True},
+            "speckit_creator": {"enabled": True},
+            "code_worker": {"enabled": True},
+            "qa_browser": {"enabled": False},
+            "cicd": {"enabled": True},
+            "deployment": {"enabled": False},
+            "repo": {"enabled": True},
+        },
+        scopes={"repos": _clean_list(repo_ids), "environments": _clean_list(protected_environments)},
+        budgets={"tokens": 200000, "tool_calls": 200, "sidecars": 10},
+        approval_requirements={"deployment": True, "protected_environment": True},
+        feature_toggle_deps=["runtime.task_graph"],
+    )
+
+
+def build_cicd_worker_packet(
+    *,
+    tenant_id: str,
+    repo_id: str,
+    task_kind: str,
+    workflow_ref: str,
+    speckit_refs: Mapping[str, Any],
+    secret_refs: Iterable[str],
+    protected_environment_approvals: Iterable[Mapping[str, Any]],
+    validation_evidence_refs: Iterable[str],
+    rollback_expectations: Mapping[str, Any],
+    urgent_failure_notification: Mapping[str, Any],
+) -> Dict[str, Any]:
+    pipeline = build_cicd_pipeline_packet(
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        task_kind=task_kind,
+        speckit_refs=speckit_refs,
+        secret_refs=secret_refs,
+        protected_environment_approvals=protected_environment_approvals,
+        validation_evidence_refs=validation_evidence_refs,
+        rollback_expectations=rollback_expectations,
+        urgent_failure_notification=urgent_failure_notification,
+    )
+    payload = _base_packet("cicd_worker_packet", tenant_id)
+    payload.update(
+        {
+            "repo_id": repo_id,
+            "workflow_ref": workflow_ref,
+            "task_kind": task_kind,
+            "pipeline_packet": pipeline,
+            "speckit_refs": _copy_dict(speckit_refs),
+            "secret_refs": _clean_list(secret_refs),
+            "protected_environment_approvals": [_copy_dict(item) for item in protected_environment_approvals],
+            "validation_evidence_refs": _clean_list(validation_evidence_refs),
+            "rollback_expectations": _copy_dict(rollback_expectations),
+            "urgent_failure_notification": _copy_dict(urgent_failure_notification),
+            "worker_packet_shape": _copy_dict(pipeline["worker_packet_shape"]),
             "raw_logs_stored": False,
         }
     )
