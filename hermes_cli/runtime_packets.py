@@ -65,6 +65,8 @@ class SupervisorTaskPacket(RuntimePacket):
     cwd: Optional[str] = None
     clarifications: List[str] = field(default_factory=list)
     memory_packet_id: Optional[str] = None
+    skill_packet_id: Optional[str] = None
+    skill_refs: List[Dict[str, Any]] = field(default_factory=list)
     success_criteria: List[str] = field(default_factory=list)
     constraints: List[str] = field(default_factory=list)
     status: str = "intake"
@@ -100,6 +102,8 @@ class PlannerPacket(RuntimePacket):
     return_schema: Dict[str, Any]
     worktree_path: Optional[str] = None
     memory_packet_id: Optional[str] = None
+    skill_packet_id: Optional[str] = None
+    skill_refs: List[Dict[str, Any]] = field(default_factory=list)
     status: str = "queued"
 
     required_fields = (
@@ -155,6 +159,8 @@ class WorkerDelegationPacket(RuntimePacket):
     validation_commands: List[str]
     memory_packet_id: str
     return_schema: Dict[str, Any]
+    skill_packet_id: Optional[str] = None
+    skill_refs: List[Dict[str, Any]] = field(default_factory=list)
     status: str = "queued"
 
     required_fields = (
@@ -216,6 +222,8 @@ class ValidationReport(RuntimePacket):
     test_results: Dict[str, Any]
     requirement_coverage: Dict[str, Any]
     status: str
+    skill_packet_id: Optional[str] = None
+    skill_refs: List[Dict[str, Any]] = field(default_factory=list)
 
     required_fields = (
         "id",
@@ -242,6 +250,8 @@ class SessionSummary(RuntimePacket):
     validation_report_id: str
     memory_outcome: str
     commit_refs: List[str]
+    skill_packet_id: Optional[str] = None
+    skill_refs: List[Dict[str, Any]] = field(default_factory=list)
 
     required_fields = (
         "id",

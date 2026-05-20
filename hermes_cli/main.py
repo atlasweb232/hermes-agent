@@ -11166,7 +11166,108 @@ Examples:
         help="Interactive skill configuration — enable/disable individual skills",
     )
 
+    skills_runtime = skills_subparsers.add_parser(
+        "runtime", help="Local runtime skill retrieval helpers"
+    )
+    skills_runtime_sub = skills_runtime.add_subparsers(dest="skills_runtime_action")
+    skills_runtime_search = skills_runtime_sub.add_parser("search", help="Search approved runtime skills")
+    skills_runtime_search.add_argument("--tenant-id", required=True)
+    skills_runtime_search.add_argument("--repo-id", default=None)
+    skills_runtime_search.add_argument("--query", required=True)
+    skills_runtime_search.add_argument("--worker-role", default="worker")
+    skills_runtime_search.add_argument("--toolset", default=None)
+    skills_runtime_search.add_argument("--json", action="store_true")
+    skills_runtime_packet = skills_runtime_sub.add_parser("packet", help="Build a bounded skill packet")
+    skills_runtime_packet.add_argument("--tenant-id", required=True)
+    skills_runtime_packet.add_argument("--repo-id", default=None)
+    skills_runtime_packet.add_argument("--task-id", required=True)
+    skills_runtime_packet.add_argument("--worker-role", default="worker")
+    skills_runtime_packet.add_argument("--query", required=True)
+    skills_runtime_packet.add_argument("--toolset", default=None)
+    skills_runtime_packet.add_argument("--json", action="store_true")
+
+    skills_feedback = skills_subparsers.add_parser("feedback", help="Record local skill outcome feedback")
+    skills_feedback.add_argument("--tenant-id", required=True)
+    skills_feedback.add_argument("--repo-id", default=None)
+    skills_feedback.add_argument("--task-id", required=True)
+    skills_feedback.add_argument("--session-id", default=None)
+    skills_feedback.add_argument("--skill-id", required=True)
+    skills_feedback.add_argument("--skill-version", required=True)
+    skills_feedback.add_argument("--worker-role", default="worker")
+    skills_feedback.add_argument("--impact", required=True, choices=["helpful", "irrelevant", "harmful", "unknown"])
+    skills_feedback.add_argument("--evidence-ref", action="append", default=[])
+    skills_feedback.add_argument("--validation-ref", action="append", default=[])
+    skills_feedback.add_argument("--reason", default="")
+    skills_feedback.add_argument("--json", action="store_true")
+
+    skills_candidates = skills_subparsers.add_parser("candidates", help="List local skill candidates")
+    skills_candidates.add_argument("--tenant-id", required=True)
+    skills_candidates.add_argument("--json", action="store_true")
+
     def cmd_skills(args):
+        def _print_skill_json(payload):
+            print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+        if getattr(args, "skills_action", None) in {"runtime", "feedback", "candidates"}:
+            from hermes_state import SessionDB
+            from hermes_cli.skill_memory import (
+                SkillMemoryRegistry,
+                apply_skill_feedback,
+                build_bounded_skill_packet,
+                build_skill_feedback,
+                build_skill_retrieval_query,
+                record_skill_feedback,
+                retrieve_skills,
+            )
+
+            registry = SkillMemoryRegistry(SessionDB())
+            action = getattr(args, "skills_action", None)
+            if action == "runtime":
+                query = build_skill_retrieval_query(
+                    raw_query=args.query,
+                    tenant_id=args.tenant_id,
+                    repo_id=getattr(args, "repo_id", None),
+                    task_id=getattr(args, "task_id", None),
+                    toolset=getattr(args, "toolset", None),
+                    worker_role=getattr(args, "worker_role", None),
+                    feature_state={"skills_enabled": True},
+                )
+                result = retrieve_skills(registry, query)
+                if getattr(args, "skills_runtime_action", None) == "packet":
+                    result = build_bounded_skill_packet(
+                        query=query,
+                        skills=result.get("skills", []),
+                        worker_role=getattr(args, "worker_role", "worker"),
+                    )
+                _print_skill_json(result)
+                return
+            if action == "feedback":
+                feedback = record_skill_feedback(
+                    registry,
+                    build_skill_feedback(
+                        tenant_id=args.tenant_id,
+                        repo_id=getattr(args, "repo_id", None),
+                        task_id=args.task_id,
+                        session_id=getattr(args, "session_id", None),
+                        skill_id=args.skill_id,
+                        skill_version=args.skill_version,
+                        worker_role=args.worker_role,
+                        impact=args.impact,
+                        evidence_refs=getattr(args, "evidence_ref", []),
+                        validation_refs=getattr(args, "validation_ref", []),
+                        reason=getattr(args, "reason", ""),
+                    ),
+                )
+                payload = {"status": "recorded", "feedback": feedback}
+                try:
+                    payload["skill"] = apply_skill_feedback(registry, feedback)
+                except KeyError:
+                    payload["skill"] = None
+                    payload["status"] = "recorded_without_skill"
+                _print_skill_json(payload)
+                return
+            _print_skill_json({"status": "ok", "candidates": registry.list_candidates(tenant_id=args.tenant_id)})
+            return
         # Route 'config' action to skills_config module
         if getattr(args, "skills_action", None) == "config":
             _require_tty("skills config")

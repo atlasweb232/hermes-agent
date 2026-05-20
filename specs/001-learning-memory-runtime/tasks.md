@@ -587,11 +587,11 @@
 
 ### Tests For Skill Evolution And SkillClaw
 
-- [ ] T241 [P] [US14] Add skill outcome feedback tests for helpful, irrelevant, harmful, and unknown impact per task/session/skill version
-- [ ] T242 [P] [US14] Add skill candidate tests proving approved memory/wiki can propose skill creation/update but cannot publish without validation and approval
-- [ ] T243 [P] [US14] Add harmful skill demotion tests proving failed validation creates repair/retire candidates and lowers retrieval confidence
-- [ ] T244 [P] [US14] Add SkillClaw adapter tests for local bundle read/write, content hash/version preservation, validation result ingestion, and disabled shared sync by default
-- [ ] T245 [P] [US14] Add E2E skill test using a CI/CD or TinyFish QA skill from retrieval through worker dispatch, validation, feedback, and candidate evolution
+- [x] T241 [P] [US14] Add skill outcome feedback tests for helpful, irrelevant, harmful, and unknown impact per task/session/skill version
+- [x] T242 [P] [US14] Add skill candidate tests proving approved memory/wiki can propose skill creation/update but cannot publish without validation and approval
+- [x] T243 [P] [US14] Add harmful skill demotion tests proving failed validation creates repair/retire candidates and lowers retrieval confidence
+- [x] T244 [P] [US14] Add SkillClaw adapter tests for local bundle read/write, content hash/version preservation, validation result ingestion, and disabled shared sync by default
+- [x] T245 [P] [US14] Add E2E skill test using a CI/CD or TinyFish QA skill from retrieval through worker dispatch, validation, feedback, and candidate evolution
 
 ### Implementation For Skill Pipeline
 
@@ -599,11 +599,11 @@
 - [x] T247 [US14] Implement skill retrieval query builder using existing task classifier metadata
 - [x] T248 [US14] Implement skill scorer with hard filters, lexical/semantic hooks, scope penalties, confidence, recency, and usage feedback
 - [x] T249 [US14] Implement bounded skill packet builder for supervisor/planner/worker/QA/browser/deployment roles
-- [ ] T250 [US14] Add skill refs to supervisor task packets, planner packets, worker delegation packets, validation reports, and session summaries
-- [ ] T251 [US14] Implement skill outcome feedback recording and confidence/demotion helpers
-- [ ] T252 [US14] Implement skill candidate creation from approved memory/wiki records
-- [ ] T253 [US14] Implement optional SkillClaw adapter interface for local bundle read/write, validation status, and tenant/global sync hooks
-- [ ] T254 [US14] Add CLI/API-compatible surfaces for `hermes skills runtime search`, `hermes skills runtime packet`, `hermes skills feedback`, and `hermes skills candidates --json`
+- [x] T250 [US14] Add skill refs to supervisor task packets, planner packets, worker delegation packets, validation reports, and session summaries
+- [x] T251 [US14] Implement skill outcome feedback recording and confidence/demotion helpers
+- [x] T252 [US14] Implement skill candidate creation from approved memory/wiki records
+- [x] T253 [US14] Implement optional SkillClaw adapter interface for local bundle read/write, validation status, and tenant/global sync hooks
+- [x] T254 [US14] Add CLI/API-compatible surfaces for `hermes skills runtime search`, `hermes skills runtime packet`, `hermes skills feedback`, and `hermes skills candidates --json`
 
 **Checkpoint**: Skills can improve repeated task execution without context bloat, cross-tenant leakage, raw-session publishing, or hidden enforcement.
 

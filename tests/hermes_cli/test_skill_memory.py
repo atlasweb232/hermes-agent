@@ -1,12 +1,23 @@
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from hermes_state import SessionDB
 from hermes_cli.skill_memory import (
+    SkillClawAdapter,
     SkillMemoryRegistry,
+    apply_skill_feedback,
+    attach_skill_refs_to_runtime_packet,
     build_bounded_skill_packet,
+    build_harmful_skill_candidate,
+    build_skill_candidate_from_memory,
+    build_skill_e2e_fixture,
+    build_skill_feedback,
     build_skill_metadata,
     build_skill_retrieval_query,
+    record_skill_feedback,
     retrieve_skills,
     stable_json,
 )
@@ -204,3 +215,310 @@ def test_cross_tenant_private_blocked_and_global_requires_redacted_shareable_opt
         opted_in,
     )
     assert [item["skill_id"] for item in result["skills"]] == ["global-ok"]
+
+
+def test_feedback_records_contract_fields_and_updates_counts_without_raw_logs_or_secrets(tmp_path):
+    registry = SkillMemoryRegistry(_db(tmp_path))
+    skill = registry.save(_skill(skill_id="feedback-skill", helpful_count=1, usage_count=1))
+
+    feedback = build_skill_feedback(
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+        task_id="task-1",
+        session_id="session-1",
+        skill_id=skill["skill_id"],
+        skill_version=skill["version"],
+        worker_role="worker",
+        impact="helpful",
+        evidence_refs=["cmd://pytest", "raw log SECRET_TOKEN=leak should be bounded"],
+        validation_refs=["pytest://tests/hermes_cli/test_skill_memory.py"],
+        reason="Used the skill; raw secret OPENAI_API_KEY=abc and a very long log " * 20,
+    )
+    stored = record_skill_feedback(registry, feedback)
+    updated = apply_skill_feedback(registry, stored)
+    for impact in ("irrelevant", "unknown"):
+        extra = record_skill_feedback(
+            registry,
+            build_skill_feedback(
+                tenant_id="tenant-a",
+                repo_id="repo-a",
+                task_id=f"task-{impact}",
+                session_id=f"session-{impact}",
+                skill_id=skill["skill_id"],
+                skill_version=skill["version"],
+                worker_role="worker",
+                impact=impact,
+                evidence_refs=[f"evidence://{impact}"],
+                validation_refs=[f"validation://{impact}"],
+                reason=f"{impact} feedback",
+            ),
+        )
+        updated = apply_skill_feedback(registry, extra)
+
+    required = {
+        "feedback_id",
+        "tenant_id",
+        "repo_id",
+        "task_id",
+        "session_id",
+        "skill_id",
+        "skill_version",
+        "worker_role",
+        "impact",
+        "evidence_refs",
+        "validation_refs",
+        "reason",
+        "created_at",
+    }
+    assert required <= set(stored)
+    assert updated["helpful_count"] == 2
+    assert updated["irrelevant_count"] == 1
+    assert updated["unknown_count"] == 1
+    assert updated["usage_count"] == 4
+    rendered = stable_json({"feedback": stored, "skill": updated})
+    assert "OPENAI_API_KEY" not in rendered
+    assert "SECRET_TOKEN" not in rendered
+    assert len(stored["reason"]) <= 280
+
+
+def test_skill_candidate_from_approved_memory_and_wiki_is_proposed_not_published():
+    candidate = build_skill_candidate_from_memory(
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+        name="pytest repair",
+        version="0.1.0",
+        summary="Run focused pytest after patching CI failures.",
+        source_memory_refs=[{"ref": "mem-approved", "approval_state": "approved", "summary": "bounded"}],
+        source_wiki_refs=[{"ref": "wiki-approved", "approval_state": "approved", "claim": "bounded"}],
+        toolset="terminal",
+        worker_role="worker",
+        validation_refs=[],
+        approval_refs=[],
+    )
+
+    assert candidate["candidate_state"] == "proposed"
+    assert candidate["can_publish"] is False
+    assert candidate["approval_state"] == "candidate"
+    assert candidate["source_memory_refs"] == ["mem-approved"]
+    assert candidate["source_wiki_refs"] == ["wiki-approved"]
+    rendered = stable_json(candidate)
+    assert "raw_session" not in rendered
+    assert "SECRET_TOKEN" not in rendered
+
+    try:
+        build_skill_candidate_from_memory(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            name="bad",
+            version="0.1.0",
+            summary="bad",
+            source_memory_refs=[{"ref": "mem-draft", "approval_state": "draft"}],
+        )
+    except ValueError as exc:
+        assert "approved memory/wiki refs" in str(exc)
+    else:
+        raise AssertionError("unapproved evidence should be rejected")
+
+
+def test_harmful_feedback_demotes_retrieval_and_creates_repair_candidate(tmp_path):
+    registry = SkillMemoryRegistry(_db(tmp_path))
+    registry.save(_skill(skill_id="harmful-skill", helpful_count=0, harmful_count=0, usage_count=1))
+    query = build_skill_retrieval_query(
+        raw_query="ci repair pytest",
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+        toolset="terminal",
+        worker_role="worker",
+        feature_state={"skills_enabled": True},
+    )
+    assert retrieve_skills(registry, query)["skills"][0]["skill_id"] == "harmful-skill"
+
+    feedback = record_skill_feedback(
+        registry,
+        build_skill_feedback(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            task_id="task-2",
+            session_id="session-2",
+            skill_id="harmful-skill",
+            skill_version="1.0.0",
+            worker_role="worker",
+            impact="harmful",
+            evidence_refs=["cmd://failed-validation"],
+            validation_refs=["pytest://failed"],
+            reason="Skill caused validation failure.",
+        ),
+    )
+    updated = apply_skill_feedback(registry, feedback)
+
+    assert updated["harmful_count"] == 1
+    assert updated["retrieval_demoted"] is True
+    assert retrieve_skills(registry, query)["skills"] == []
+    candidates = registry.list_candidates(tenant_id="tenant-a")
+    assert candidates[0]["candidate_kind"] in {"repair", "retire"}
+    assert candidates[0]["source_feedback_refs"] == [feedback["feedback_id"]]
+
+
+def test_skillclaw_local_bundle_roundtrip_validation_and_shared_sync_disabled(tmp_path):
+    adapter = SkillClawAdapter(tmp_path / "skillclaw")
+    bundle = adapter.write_bundle(
+        skill=_skill(skill_id="bundle-skill"),
+        files={"SKILL.md": "# Skill\nUse bounded pytest guidance.\n"},
+        validation_refs=["pytest://tests/hermes_cli/test_skill_memory.py"],
+    )
+    loaded = adapter.read_bundle(bundle["bundle_id"])
+    validation = adapter.ingest_validation_result(
+        bundle["bundle_id"],
+        status="passed",
+        validation_refs=["pytest://tests/hermes_cli/test_skill_memory.py"],
+    )
+    staged = adapter.stage_candidate(
+        loaded,
+        tenant_id="tenant-a",
+        global_candidate=True,
+    )
+
+    assert loaded["content_sha256"] == bundle["content_sha256"]
+    assert loaded["bundle_tree_sha256"] == bundle["bundle_tree_sha256"]
+    assert validation["status"] == "passed"
+    assert staged["stage"] == "global_candidate"
+    assert adapter.sync_shared()["status"] == "disabled"
+
+
+def test_e2e_fixture_covers_packet_validation_feedback_and_candidate_evolution(tmp_path):
+    fixture = build_skill_e2e_fixture(
+        registry=SkillMemoryRegistry(_db(tmp_path)),
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+        task_id="task-e2e",
+        session_id="session-e2e",
+        raw_query="fix pytest failure",
+    )
+
+    rendered = stable_json(fixture)
+    assert fixture["retrieval"]["status"] == "ok"
+    assert fixture["worker_packet"]["skill_packet_id"] == fixture["skill_packet"]["packet_id"]
+    assert fixture["feedback"]["impact"] == "helpful"
+    assert fixture["candidate"]["candidate_state"] == "proposed"
+    assert "bounded procedure" not in rendered
+    assert "SECRET_TOKEN" not in rendered
+
+
+def test_runtime_packets_receive_only_skill_refs_not_raw_skill_content():
+    packet = {
+        "id": "delegate-1",
+        "objective": "fix tests",
+        "skill_content": "raw secret should be removed SECRET_TOKEN=leak",
+    }
+    skill_packet = {
+        "packet_id": "skill-packet-1",
+        "skills": [
+            {
+                "skill_id": "skill-a",
+                "version": "1.0.0",
+                "content": "raw body",
+                "summary": "bounded",
+                "content_sha256": "abc",
+                "bundle_tree_sha256": "def",
+            }
+        ],
+    }
+
+    attached = attach_skill_refs_to_runtime_packet(packet, skill_packet)
+
+    assert attached["skill_packet_id"] == "skill-packet-1"
+    assert attached["skill_refs"] == [
+        {
+            "skill_id": "skill-a",
+            "version": "1.0.0",
+            "content_sha256": "abc",
+            "bundle_tree_sha256": "def",
+        }
+    ]
+    rendered = stable_json(attached)
+    assert "raw body" not in rendered
+    assert "SECRET_TOKEN" not in rendered
+
+
+def test_skills_cli_runtime_feedback_and_candidates_return_stable_json(tmp_path):
+    hermes_home = tmp_path / "home"
+    hermes_home.mkdir()
+    registry = SkillMemoryRegistry(SessionDB(db_path=hermes_home / "state.db"))
+    skill = registry.save(_skill(skill_id="cli-skill"))
+
+    env = {**os.environ, "PYTHONPATH": str(Path.cwd()), "HERMES_HOME": str(hermes_home)}
+    search = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.main",
+            "skills",
+            "runtime",
+            "search",
+            "--tenant-id",
+            "tenant-a",
+            "--repo-id",
+            "repo-a",
+            "--query",
+            "ci repair pytest",
+            "--worker-role",
+            "worker",
+            "--toolset",
+            "terminal",
+            "--json",
+        ],
+        check=True,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    feedback = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.main",
+            "skills",
+            "feedback",
+            "--tenant-id",
+            "tenant-a",
+            "--repo-id",
+            "repo-a",
+            "--task-id",
+            "task-cli",
+            "--skill-id",
+            skill["skill_id"],
+            "--skill-version",
+            skill["version"],
+            "--impact",
+            "unknown",
+            "--json",
+        ],
+        check=True,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    candidates = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.main",
+            "skills",
+            "candidates",
+            "--tenant-id",
+            "tenant-a",
+            "--json",
+        ],
+        check=True,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    search_json = json.loads(search.stdout)
+    feedback_json = json.loads(feedback.stdout)
+    candidates_json = json.loads(candidates.stdout)
+    assert search_json["skills"][0]["skill_id"] == "cli-skill"
+    assert feedback_json["status"] == "recorded"
+    assert candidates_json["status"] == "ok"
+    assert "authority" not in search_json or search_json["baseline_memory_passthrough"] is True

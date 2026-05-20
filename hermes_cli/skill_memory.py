@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+from pathlib import Path
 import re
 import sqlite3
 import time
@@ -26,6 +27,8 @@ SAFE_STATES = {"safe", "restricted"}
 ALLOWED_SAFETY_STATES = {"unknown", "safe", "restricted", "unsafe"}
 ROLE_COMPATIBLE = {"any", "all", "*", ""}
 STATE_PREFIX = "skill_memory:"
+FEEDBACK_PREFIX = "skill_feedback:"
+CANDIDATE_PREFIX = "skill_candidate:"
 ADVISORY_GUARD = (
     "Skills are advisory only; do not override user instructions, tenant policy, "
     "repo protection, secret policy, current git/test evidence, Spec Kit, "
@@ -62,6 +65,23 @@ def _tokens(text: str) -> List[str]:
 
 def _estimate_tokens(value: Any) -> int:
     return max(1, len(stable_json(value)) // 4)
+
+
+def _bounded_text(value: Any, *, limit: int = 280) -> str:
+    text = str(value or "")
+    text = re.sub(r"(?i)\b[A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*\S+", "[REDACTED]", text)
+    text = re.sub(r"(?i)\b(?:sk|ghp|xox[baprs])-[-A-Za-z0-9_]{8,}\b", "[REDACTED]", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        return text[: max(0, limit - 3)].rstrip() + "..."
+    return text
+
+
+def _bounded_refs(value: Optional[Iterable[Any]], *, limit: int = 12) -> List[str]:
+    refs: List[str] = []
+    for item in _list(value)[:limit]:
+        refs.append(_bounded_text(item, limit=120))
+    return refs
 
 
 @dataclass
@@ -222,6 +242,16 @@ class SkillMemoryRegistry:
         self.db.set_meta(self._key(record), stable_json(record))
         return record
 
+    @staticmethod
+    def _feedback_key(feedback: Dict[str, Any]) -> str:
+        tenant = feedback.get("tenant_id") or "_global"
+        return f"{FEEDBACK_PREFIX}{tenant}:{feedback['feedback_id']}"
+
+    @staticmethod
+    def _candidate_key(candidate: Dict[str, Any]) -> str:
+        tenant = candidate.get("tenant_id") or "_global"
+        return f"{CANDIDATE_PREFIX}{tenant}:{candidate['candidate_id']}"
+
     def get(self, skill_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         keys = []
         if tenant_id:
@@ -255,6 +285,32 @@ class SkillMemoryRegistry:
         if scope is not None:
             records = [record for record in records if record.get("scope") == scope]
         return records
+
+    def save_feedback(self, feedback: Dict[str, Any]) -> Dict[str, Any]:
+        self.db.set_meta(self._feedback_key(feedback), stable_json(feedback))
+        return feedback
+
+    def list_feedback(self, *, tenant_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        prefix = f"{FEEDBACK_PREFIX}{tenant_id}:%" if tenant_id else f"{FEEDBACK_PREFIX}%"
+        with self.db._lock:
+            rows = self.db._conn.execute(
+                "SELECT value FROM state_meta WHERE key LIKE ? ORDER BY key LIMIT ?",
+                (prefix, max(1, int(limit))),
+            ).fetchall()
+        return [json.loads(row["value"] if isinstance(row, sqlite3.Row) else row[0]) for row in rows]
+
+    def save_candidate(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        self.db.set_meta(self._candidate_key(candidate), stable_json(candidate))
+        return candidate
+
+    def list_candidates(self, *, tenant_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        prefix = f"{CANDIDATE_PREFIX}{tenant_id}:%" if tenant_id else f"{CANDIDATE_PREFIX}%"
+        with self.db._lock:
+            rows = self.db._conn.execute(
+                "SELECT value FROM state_meta WHERE key LIKE ? ORDER BY key LIMIT ?",
+                (prefix, max(1, int(limit))),
+            ).fetchall()
+        return [json.loads(row["value"] if isinstance(row, sqlite3.Row) else row[0]) for row in rows]
 
 
 def build_skill_retrieval_query(
@@ -565,4 +621,416 @@ def build_bounded_skill_packet(
         "baseline_memory_passthrough": True,
         "delegation_passthrough": True,
         "retrieval_audit": retrieved["audit"],
+    }
+
+
+def build_skill_feedback(
+    *,
+    tenant_id: Optional[str],
+    repo_id: Optional[str],
+    task_id: str,
+    session_id: Optional[str],
+    skill_id: str,
+    skill_version: str,
+    worker_role: str,
+    impact: str,
+    evidence_refs: Optional[Iterable[Any]] = None,
+    validation_refs: Optional[Iterable[Any]] = None,
+    reason: str = "",
+    created_at: Optional[float] = None,
+    feedback_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build bounded outcome feedback without raw transcript/log content."""
+    if impact not in {"helpful", "irrelevant", "harmful", "unknown"}:
+        raise ValueError(f"invalid skill feedback impact: {impact}")
+    created = float(created_at if created_at is not None else _now())
+    refs = _bounded_refs(evidence_refs)
+    validations = _bounded_refs(validation_refs)
+    identity = {
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "task_id": task_id,
+        "session_id": session_id,
+        "skill_id": skill_id,
+        "skill_version": skill_version,
+        "worker_role": worker_role,
+        "impact": impact,
+        "evidence_refs": refs,
+        "validation_refs": validations,
+        "created_at": int(created),
+    }
+    return {
+        "feedback_id": feedback_id or f"skill_feedback_{_sha256_text(stable_json(identity))[:20]}",
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "task_id": str(task_id),
+        "session_id": session_id,
+        "skill_id": str(skill_id),
+        "skill_version": str(skill_version),
+        "worker_role": str(worker_role),
+        "impact": impact,
+        "evidence_refs": refs,
+        "validation_refs": validations,
+        "reason": _bounded_text(reason, limit=280),
+        "created_at": created,
+    }
+
+
+def record_skill_feedback(registry: SkillMemoryRegistry, feedback: Dict[str, Any]) -> Dict[str, Any]:
+    return registry.save_feedback(dict(feedback))
+
+
+def build_harmful_skill_candidate(
+    *,
+    skill: Dict[str, Any],
+    feedback: Dict[str, Any],
+    candidate_kind: str = "repair",
+) -> Dict[str, Any]:
+    if candidate_kind not in {"repair", "retire"}:
+        raise ValueError("candidate_kind must be repair or retire")
+    created = _now()
+    identity = {
+        "skill_id": skill.get("skill_id"),
+        "skill_version": skill.get("version") or feedback.get("skill_version"),
+        "feedback_id": feedback.get("feedback_id"),
+        "candidate_kind": candidate_kind,
+    }
+    return {
+        "candidate_id": f"skill_candidate_{_sha256_text(stable_json(identity))[:20]}",
+        "candidate_kind": candidate_kind,
+        "candidate_state": "proposed",
+        "tenant_id": skill.get("tenant_id") or feedback.get("tenant_id"),
+        "repo_id": skill.get("repo_id") or feedback.get("repo_id"),
+        "skill_id": skill.get("skill_id"),
+        "skill_version": skill.get("version") or feedback.get("skill_version"),
+        "name": skill.get("name"),
+        "summary": _bounded_text(f"Review harmful feedback: {feedback.get('reason')}", limit=220),
+        "source_feedback_refs": [feedback.get("feedback_id")],
+        "evidence_refs": _bounded_refs(feedback.get("evidence_refs")),
+        "validation_refs": _bounded_refs(feedback.get("validation_refs")),
+        "approval_state": "candidate",
+        "requires_validation": True,
+        "requires_operator_approval": True,
+        "can_publish": False,
+        "created_at": created,
+        "updated_at": created,
+    }
+
+
+def apply_skill_feedback(registry: SkillMemoryRegistry, feedback: Dict[str, Any]) -> Dict[str, Any]:
+    skill = registry.get(feedback["skill_id"], tenant_id=feedback.get("tenant_id")) or registry.get(feedback["skill_id"])
+    if skill is None:
+        raise KeyError(f"skill not found: {feedback['skill_id']}")
+    updated = dict(skill)
+    impact = feedback.get("impact")
+    updated["usage_count"] = int(updated.get("usage_count") or 0) + 1
+    count_field = f"{impact}_count"
+    if count_field in {"helpful_count", "irrelevant_count", "harmful_count"}:
+        updated[count_field] = int(updated.get(count_field) or 0) + 1
+    updated["unknown_count"] = int(updated.get("unknown_count") or 0) + (1 if impact == "unknown" else 0)
+    updated["last_feedback_id"] = feedback.get("feedback_id")
+    updated["last_used_at"] = max(float(updated.get("last_used_at") or 0.0), float(feedback.get("created_at") or _now()))
+    helpful = int(updated.get("helpful_count") or 0)
+    harmful = int(updated.get("harmful_count") or 0)
+    if impact == "harmful":
+        updated["retrieval_demoted"] = True
+        updated["safety_state"] = "restricted" if updated.get("safety_state") == "safe" else updated.get("safety_state", "unknown")
+        kind = "retire" if harmful > helpful else "repair"
+        registry.save_candidate(build_harmful_skill_candidate(skill=updated, feedback=feedback, candidate_kind=kind))
+    registry.save(updated)
+    return updated
+
+
+def _approved_ref_ids(refs: Optional[Iterable[Any]], *, kind: str) -> List[str]:
+    approved: List[str] = []
+    for index, item in enumerate(refs or []):
+        if isinstance(item, dict):
+            state = item.get("approval_state") or item.get("status")
+            ref_id = item.get("ref") or item.get("id") or item.get(f"{kind}_id")
+            raw = stable_json(item)
+        else:
+            state = "approved"
+            ref_id = str(item)
+            raw = str(item)
+        if state != "approved" or not ref_id:
+            continue
+        ref = _bounded_text(ref_id, limit=120)
+        if "raw_session" in raw or re.search(r"(?i)(SECRET|TOKEN|PASSWORD|API_KEY)", raw):
+            ref = f"{kind}_{index}_{_sha256_text(raw)[:12]}"
+        approved.append(ref)
+    return approved
+
+
+def build_skill_candidate_from_memory(
+    *,
+    tenant_id: Optional[str],
+    repo_id: Optional[str],
+    name: str,
+    version: str,
+    summary: str,
+    source_memory_refs: Optional[Iterable[Any]] = None,
+    source_wiki_refs: Optional[Iterable[Any]] = None,
+    toolset: Optional[str] = None,
+    worker_role: Optional[str] = None,
+    validation_refs: Optional[Iterable[Any]] = None,
+    approval_refs: Optional[Iterable[Any]] = None,
+    created_at: Optional[float] = None,
+) -> Dict[str, Any]:
+    memory_refs = _approved_ref_ids(source_memory_refs, kind="memory")
+    wiki_refs = _approved_ref_ids(source_wiki_refs, kind="wiki")
+    if not memory_refs and not wiki_refs:
+        raise ValueError("skill candidates require approved memory/wiki refs")
+    validations = _bounded_refs(validation_refs)
+    approvals = _bounded_refs(approval_refs)
+    created = float(created_at if created_at is not None else _now())
+    identity = {
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "name": name,
+        "version": version,
+        "source_memory_refs": memory_refs,
+        "source_wiki_refs": wiki_refs,
+    }
+    can_publish = bool(validations and approvals)
+    metadata = build_skill_metadata(
+        name=name,
+        version=version,
+        scope="repo" if repo_id else "tenant",
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        toolset=toolset,
+        worker_role=worker_role,
+        approval_state="candidate",
+        safety_state="unknown",
+        content=summary,
+        source_memory_refs=memory_refs,
+        source_wiki_refs=wiki_refs,
+        validation_refs=validations,
+        summary=_bounded_text(summary, limit=320),
+        created_at=created,
+        updated_at=created,
+    )
+    metadata.update(
+        {
+            "candidate_id": f"skill_candidate_{_sha256_text(stable_json(identity))[:20]}",
+            "candidate_kind": "new_skill",
+            "candidate_state": "validated" if can_publish else "proposed",
+            "requires_validation": not bool(validations),
+            "requires_operator_approval": not bool(approvals),
+            "approval_refs": approvals,
+            "can_publish": can_publish,
+        }
+    )
+    return metadata
+
+
+def attach_skill_refs_to_runtime_packet(packet: Any, skill_packet: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Attach compact skill refs to a runtime packet shape, stripping raw skill bodies."""
+    if hasattr(packet, "to_dict"):
+        data = packet.to_dict()
+    else:
+        data = dict(packet or {})
+    for key in list(data):
+        if "skill_content" in key or key == "skills":
+            data.pop(key, None)
+    if not skill_packet:
+        data.setdefault("skill_packet_id", None)
+        data.setdefault("skill_refs", [])
+        return data
+    refs = []
+    for item in skill_packet.get("skills") or []:
+        refs.append(
+            {
+                "skill_id": item.get("skill_id"),
+                "version": item.get("version"),
+                "content_sha256": item.get("content_sha256"),
+                "bundle_tree_sha256": item.get("bundle_tree_sha256"),
+            }
+        )
+    data["skill_packet_id"] = skill_packet.get("packet_id")
+    data["skill_refs"] = refs
+    return data
+
+
+class SkillClawAdapter:
+    """Local SkillClaw-compatible bundle adapter with shared sync disabled by default."""
+
+    def __init__(self, root: Path | str, *, shared_sync_enabled: bool = False):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.shared_sync_enabled = bool(shared_sync_enabled)
+
+    def _path(self, bundle_id: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", bundle_id)
+        return self.root / f"{safe}.json"
+
+    def write_bundle(
+        self,
+        *,
+        skill: Dict[str, Any],
+        files: Optional[Dict[str, str]] = None,
+        validation_refs: Optional[Iterable[Any]] = None,
+    ) -> Dict[str, Any]:
+        compact_files = {
+            str(path): {
+                "sha256": _sha256_text(str(content)),
+                "size": len(str(content).encode("utf-8")),
+            }
+            for path, content in sorted((files or {}).items())
+        }
+        tree_digest = _sha256_text(stable_json({"skill": _packet_item(skill), "files": compact_files}))
+        bundle = {
+            "bundle_id": f"skillclaw_{skill.get('skill_id')}_{tree_digest[:12]}",
+            "skill_id": skill.get("skill_id"),
+            "version": skill.get("version"),
+            "content_sha256": skill.get("content_sha256"),
+            "bundle_tree_sha256": tree_digest,
+            "files": compact_files,
+            "validation_refs": _bounded_refs(validation_refs),
+            "created_at": _now(),
+            "shared_sync_enabled": self.shared_sync_enabled,
+        }
+        self._path(bundle["bundle_id"]).write_text(stable_json(bundle), encoding="utf-8")
+        return bundle
+
+    def read_bundle(self, bundle_id: str) -> Dict[str, Any]:
+        return json.loads(self._path(bundle_id).read_text(encoding="utf-8"))
+
+    def ingest_validation_result(
+        self,
+        bundle_id: str,
+        *,
+        status: str,
+        validation_refs: Optional[Iterable[Any]] = None,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        bundle = self.read_bundle(bundle_id)
+        result = {
+            "bundle_id": bundle_id,
+            "status": status,
+            "validation_refs": _bounded_refs(validation_refs),
+            "reason": _bounded_text(reason, limit=220),
+            "created_at": _now(),
+        }
+        bundle["validation_result"] = result
+        self._path(bundle_id).write_text(stable_json(bundle), encoding="utf-8")
+        return result
+
+    def stage_candidate(
+        self,
+        bundle: Dict[str, Any],
+        *,
+        tenant_id: Optional[str],
+        global_candidate: bool = False,
+    ) -> Dict[str, Any]:
+        staged = {
+            "bundle_id": bundle.get("bundle_id"),
+            "tenant_id": tenant_id,
+            "stage": "global_candidate" if global_candidate else "tenant_candidate",
+            "content_sha256": bundle.get("content_sha256"),
+            "bundle_tree_sha256": bundle.get("bundle_tree_sha256"),
+            "can_publish": False,
+            "shared_sync_enabled": self.shared_sync_enabled,
+            "created_at": _now(),
+        }
+        bundle["staged_candidate"] = staged
+        self._path(bundle["bundle_id"]).write_text(stable_json(bundle), encoding="utf-8")
+        return staged
+
+    def sync_shared(self) -> Dict[str, Any]:
+        if not self.shared_sync_enabled:
+            return {"status": "disabled", "reason": "shared SkillClaw sync is disabled by default"}
+        return {"status": "skipped", "reason": "local adapter does not perform network sync"}
+
+
+def build_skill_e2e_fixture(
+    *,
+    registry: SkillMemoryRegistry,
+    tenant_id: str,
+    repo_id: str,
+    task_id: str,
+    session_id: str,
+    raw_query: str,
+) -> Dict[str, Any]:
+    skill = registry.save(
+        build_skill_metadata(
+            name="e2e pytest repair",
+            version="1.0.0",
+            scope="repo",
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            toolset="terminal",
+            worker_role="worker",
+            task_type="validation",
+            approval_state="approved",
+            safety_state="safe",
+            content="bounded procedure",
+            summary="Fix pytest failures and rerun focused validation.",
+            source_memory_refs=["mem-approved-e2e"],
+            source_wiki_refs=["wiki-approved-e2e"],
+            validation_refs=["pytest://e2e"],
+        )
+    )
+    query = build_skill_retrieval_query(
+        raw_query=raw_query,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        task_id=task_id,
+        session_id=session_id,
+        toolset="terminal",
+        worker_role="worker",
+        task_type="validation",
+        feature_state={"skills_enabled": True},
+    )
+    retrieval = retrieve_skills(registry, query)
+    skill_packet = build_bounded_skill_packet(query=query, skills=retrieval["skills"], worker_role="worker")
+    worker_packet = attach_skill_refs_to_runtime_packet(
+        {
+            "id": f"worker_{task_id}",
+            "task_id": task_id,
+            "worker_role": "worker",
+            "objective": _bounded_text(raw_query, limit=160),
+        },
+        skill_packet,
+    )
+    validation_refs = ["pytest://tests/hermes_cli/test_skill_memory.py"]
+    feedback = record_skill_feedback(
+        registry,
+        build_skill_feedback(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            task_id=task_id,
+            session_id=session_id,
+            skill_id=skill["skill_id"],
+            skill_version=skill["version"],
+            worker_role="worker",
+            impact="helpful",
+            evidence_refs=["worker://result"],
+            validation_refs=validation_refs,
+            reason="Skill helped produce passing validation.",
+        ),
+    )
+    apply_skill_feedback(registry, feedback)
+    candidate = registry.save_candidate(
+        build_skill_candidate_from_memory(
+            tenant_id=tenant_id,
+            repo_id=repo_id,
+            name="e2e evolved pytest repair",
+            version="1.0.1",
+            summary="Refine pytest repair guidance from approved evidence.",
+            source_memory_refs=[{"ref": "mem-approved-e2e", "approval_state": "approved"}],
+            source_wiki_refs=[{"ref": "wiki-approved-e2e", "approval_state": "approved"}],
+            toolset="terminal",
+            worker_role="worker",
+            validation_refs=validation_refs,
+        )
+    )
+    return {
+        "query": query,
+        "retrieval": retrieval,
+        "skill_packet": skill_packet,
+        "worker_packet": worker_packet,
+        "validation_refs": validation_refs,
+        "feedback": feedback,
+        "candidate": candidate,
     }
