@@ -723,6 +723,13 @@ DEFAULT_CONFIG = {
                 "backend": "sqlite",
                 "uri": "~/.hermes/memory-wiki/global/graph.sqlite",
             },
+            "task_memory_profile": {
+                "vector_graph_fallback": {
+                    "enabled": False,
+                    "min_exact_score": 1.0,
+                    "max_candidates": 3,
+                },
+            },
             "limits": {
                 "max_local_cache_gb": 50,
                 "raw_retention_days": 30,

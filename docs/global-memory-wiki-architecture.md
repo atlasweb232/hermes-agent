@@ -841,9 +841,28 @@ programmatic by default:
 
 Exact approved profile hits are terminal for the cheap retrieval step:
 `llm_calls` stays empty and no curator, judge, dreaming, vector, or graph
-backend is requested. On a scoped exact miss, the optional semantic fallback is
-a deterministic `local_fake` advisory item that tells the worker no approved
-task memory matched. It is a placeholder, not a production vector dependency.
+backend is requested. T135 adds an opt-in vector/graph extension point for this
+profile after the low-end worker hot-cache/signature path has proven useful:
+
+- The fallback is disabled by default at
+  `supervisor.global_memory_wiki.task_memory_profile.vector_graph_fallback.enabled`.
+- When enabled, it only accepts `vector_index.backend: local_fake` and
+  `graph_index.backend: sqlite|memory`; production vector or graph services are
+  not used by this path.
+- Exact/signature matches remain the first path. The fallback is skipped when
+  the best local exact/signature score meets `min_exact_score`; operators can
+  raise that threshold to force fallback evaluation for experiments.
+- Only approved/canonical/applied global lessons that are cross-tenant
+  shareable, non-secret, and already compact/canonical are indexed. Private
+  tenant-only lessons, raw proposals, raw transcripts, provider logs, and
+  secret-like text are skipped and redacted from profile output.
+- JSON profile output includes bounded counters for `exact_hit`,
+  `signature_hit`, `vector_fallback_used`, `graph_fallback_used`,
+  `skipped_private`, and `skipped_secret`.
+
+On a scoped exact miss, the older optional semantic fallback is still a
+deterministic `local_fake` advisory item that tells the worker no approved task
+memory matched. It is a placeholder, not a production vector dependency.
 
 Operators and dashboards can inspect the JSON packet through:
 

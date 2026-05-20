@@ -110,6 +110,8 @@ def test_global_memory_config_defaults_exist(_isolate_hermes_home):
     assert wiki["state_store"]["backend"] == "sqlite"
     assert wiki["vector_index"]["backend"] == "disabled"
     assert wiki["require_global_approval"] is True
+    assert wiki["task_memory_profile"]["vector_graph_fallback"]["enabled"] is False
+    assert wiki["task_memory_profile"]["vector_graph_fallback"]["min_exact_score"] == 1.0
     assert bus["backend"] == "sqlite"
     assert bus["topic_prefix"] == "hermes.memory"
     assert wiki["precuration"]["skip_expensive_curator_on_exact"] is True

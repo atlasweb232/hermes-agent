@@ -366,7 +366,7 @@
 - [x] T132 [US8] Implement `global_indexer_sidecar` only after Phase 11A VM value is proven; it should index approved canonical global lessons into lexical/vector/graph backends behind config, never raw proposals
 - [x] T133 [US8] Implement `local_sync_sidecar` only after Phase 11A VM value is proven; it should pull approved sync deltas relevant to configured tenants/repos/tools into warm cache without blocking foreground work
 - [x] T134 [US8] Add sync-delta protocol tests for global-to-local cache updates, idempotency, TTL demotion, deleted/retired lesson removal, and no private/secret lesson sync
-- [ ] T135 [US8] Add optional vector/graph indexing tests for global lessons only after hash/signature/SQLite hot-cache retrieval shows measured low-end-worker improvement
+- [x] T135 [US8] Add optional vector/graph indexing tests for global lessons only after hash/signature/SQLite hot-cache retrieval shows measured low-end-worker improvement
 
 **Checkpoint**: Lower-cost workers can be evaluated against deterministic baselines, receive compact relevant memory, and show measurable improvement without gaining authority over memory approval, policy enforcement, config mutation, or cross-tenant sharing.
 

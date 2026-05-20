@@ -256,6 +256,12 @@ class SQLiteGraphIndex:
                 "INSERT OR REPLACE INTO memory_wiki_edges (source_id, target_id, relation) VALUES (?, ?, ?)",
                 (item_id, str(ref), "EVIDENCED_BY"),
             )
+        graph_keys = data.get("graph_keys") if isinstance(data.get("graph_keys"), list) else []
+        for key in graph_keys:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO memory_wiki_edges (source_id, target_id, relation) VALUES (?, ?, ?)",
+                (str(key), item_id, "INDEXES_LESSON"),
+            )
         self._conn.commit()
 
     def neighbors(self, item_id: str, limit: int = 10) -> List[Dict[str, Any]]:
