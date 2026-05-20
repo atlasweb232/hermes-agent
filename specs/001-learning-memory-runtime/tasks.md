@@ -316,7 +316,7 @@
 - [ ] T102 [P] [US8] Add realtime voice config/transport tests for OpenAI `gpt-realtime-2`, MiniMax `speech-2.8`, and xAI/Grok provider selection, fallback reporting, and no secret leakage
 - [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving idempotent publish/consume/replay/dead-letter behavior
 - [ ] T104 [P] [US8] Add training corpus export tests for JSONL/Parquet bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters
-- [ ] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
+- [x] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
 - [x] T105A [P] [US8] Add global pre-curation dedupe tests proving an exact approved global lesson suppresses local expensive curation, a near match creates only lightweight confirmation, and a miss allows local curation
 - [x] T105B [P] [US8] Add global lesson reuse metric tests for `global_lesson_hit`, `global_lesson_near_hit`, `global_lesson_used`, `global_lesson_helped`, `global_lesson_ignored`, and `global_lesson_hurt`
 - [x] T105C [P] [US8] Add local-vs-global dreaming tests proving local dreaming cannot publish globally, global dreaming reads only approved/shareable canonical memory, and neither path mutates live runtime state
@@ -334,7 +334,7 @@
 - [x] T108 [US8] Implement richer observability frontend/backend surfaces for active/historical jobs: tenant, repo, task description, worker, model, Spec Kit refs, architecture refs, task list refs, blocker status, completion status, evidence bundle, and scoped Ask analysis
 - [ ] T109 [US8] Implement realtime voice transport behind the existing `voice.realtime` config, with provider adapters for OpenAI realtime first and MiniMax/xAI-compatible extension points
 - [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend
-- [ ] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
+- [x] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
 - [ ] T112 [US8] Implement training corpus bundle writer with JSONL first, Parquet optional, manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility
 - [x] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [x] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator

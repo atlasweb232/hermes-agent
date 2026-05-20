@@ -12896,6 +12896,8 @@ Examples:
     wiki_status.add_argument("--status", default="", help="Claim status filter")
     wiki_status.add_argument("--limit", type=int, default=50, help="Maximum rows")
     wiki_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    wiki_backends = wiki_sub.add_parser("backends", help="Inspect configured memory wiki backend adapters")
+    wiki_backends.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     wiki_export = wiki_sub.add_parser("export-training", help="Create curated training corpus candidates from wiki claims")
     wiki_export.add_argument("--tenant-id", default="", help="Tenant scope")
     wiki_export.add_argument("--repo-id", default="", help="Repository scope")
@@ -13623,6 +13625,21 @@ Examples:
                                 f"  created: {result.claims_created}"
                                 f"  updated: {result.claims_updated}\n"
                             )
+                    elif wiki_cmd == "backends":
+                        from hermes_cli.config import load_config
+                        from hermes_cli.memory_wiki_backends import build_memory_wiki_backends
+
+                        result = build_memory_wiki_backends(load_config()).to_dict()
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            print("\n  memory wiki backends:\n")
+                            for item in result["backends"]:
+                                print(
+                                    f"  {item['role']}: {item['backend']} "
+                                    f"{item['status']} ({item.get('reason') or 'ready'})"
+                                )
+                            print()
                     elif wiki_cmd == "export-training":
                         result = export_training_corpus(
                             db,

@@ -104,6 +104,32 @@ supervisor:
       max_ingest_batch: 500
 ```
 
+The runtime boundary lives behind adapter roles, not provider imports:
+
+- Object store adapter: stores sanitized canonical JSON/blob artifacts. The
+  default backend is local filesystem storage.
+- State store adapter: stores canonical claim/page state and sync cursors. The
+  default backend is SQLite.
+- Lexical index adapter: stores dependency-free text search payloads. The
+  default backend is SQLite-backed local search.
+- Vector index adapter: disabled by default. Tests may opt into `local_fake`
+  token-overlap search, but production vector providers must be added behind
+  the adapter boundary.
+- Graph index adapter: stores claim/evidence/scope relationships. The default
+  backend is SQLite.
+
+`hermes memory wiki backends --json` reports configured adapter health without
+emitting provider secrets or raw backend URIs. Unknown production backends such
+as S3, Postgres, Qdrant, or Neo4j are represented as configured-but-unavailable
+health DTOs until a future plugin supplies the provider implementation. Hermes
+must not import optional cloud/database/vector/graph packages from the core
+runtime path.
+
+Indexable payloads are limited to approved, canonical, or applied global
+shareable memory/wiki evidence. Raw transcripts, raw proposals, provider logs,
+secrets, unbounded logs, and tenant-private records are rejected or redacted
+before any object, state, lexical, vector, or graph adapter receives them.
+
 ## Message Bus
 
 A true Kafka-like bus makes sense for the global layer, but not as the required
