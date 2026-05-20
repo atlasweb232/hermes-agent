@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,15 +10,21 @@ from hermes_cli.runtime_benchmark import (
     REQUIRED_TELEMETRY_ROLES,
     BenchmarkEnvironment,
     BenchmarkEnvironmentPair,
+    BenchmarkRunner,
     BenchmarkWorkload,
+    CostStatus,
     GateThresholds,
     ModelToolProfile,
     ProductionGateInput,
     RepoRef,
+    RuntimeBenchmarkConfig,
     TelemetryRecord,
     ValidationCommand,
     WorkloadPack,
+    generate_comparison_report,
+    get_benchmark_run,
     load_workload_pack,
+    run_benchmark_suite,
     validate_environment_pair,
     validate_production_gate,
 )
@@ -334,3 +343,148 @@ def test_workload_rejects_missing_prompt_validation_and_rubric():
     assert "repo_refs" in result.missing
     assert "validation_commands" in result.missing
     assert "pass_fail_rubric" in result.missing
+
+
+def test_runner_creates_isolated_fixture_run_and_bounded_telemetry(tmp_path):
+    suite = tmp_path / "suite.json"
+    pack = WorkloadPack(pack_id="phase14-fixture", version="1", workloads=[_workload("review-1")])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+
+    result = run_benchmark_suite(
+        RuntimeBenchmarkConfig(
+            suite_path=suite,
+            artifact_root=tmp_path / "bench",
+            branch_checkout=tmp_path / "branch-checkout",
+            upstream_checkout=tmp_path / "upstream-checkout",
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert result["execution_mode"] == "fixture"
+    env = result["environment_pair"]
+    assert env["upstream"]["hermes_home"] != env["branch"]["hermes_home"]
+    assert env["upstream"]["artifact_root"] != env["branch"]["artifact_root"]
+    assert Path(env["upstream"]["hermes_home"]).exists()
+    assert Path(env["branch"]["artifact_root"]).exists()
+    assert result["telemetry_summary"]["records"] >= 6
+
+    telemetry_path = Path(result["artifacts"]["telemetry_jsonl"])
+    records = [json.loads(line) for line in telemetry_path.read_text(encoding="utf-8").splitlines()]
+    assert {record["environment"] for record in records} == {"upstream", "branch"}
+    assert {"supervisor", "worker", "judge"}.issubset({record["role"] for record in records})
+    assert all("raw_transcript" not in record for record in records)
+    assert all(record["evidence_refs"] for record in records)
+
+
+def test_comparison_report_contains_required_metrics_and_gate(tmp_path):
+    suite = tmp_path / "suite.json"
+    pack = WorkloadPack(pack_id="phase14-report", version="1", workloads=[_workload("review-1")])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    run = run_benchmark_suite(RuntimeBenchmarkConfig(suite_path=suite, artifact_root=tmp_path / "bench"))
+
+    report = generate_comparison_report(run["run_id"], artifact_root=tmp_path / "bench")
+
+    assert report["run_id"] == run["run_id"]
+    assert report["production_gate"]["allowed"] is True
+    assert set(report["comparison"]) == {"quality", "cost", "latency", "context", "self_learning"}
+    assert report["comparison"]["quality"]["branch"]["success_rate"] >= report["comparison"]["quality"]["upstream"]["success_rate"]
+    assert report["comparison"]["cost"]["cost_per_success_ratio"] <= 1.2
+    assert report["comparison"]["self_learning"]["branch"]["memory_hit_rate"] > report["comparison"]["self_learning"]["upstream"]["memory_hit_rate"]
+
+
+def test_report_fails_closed_when_branch_fixture_regresses(tmp_path):
+    suite = tmp_path / "suite.json"
+    workload = _workload("review-1")
+    workload.metadata["fixture"] = {
+        "branch": {
+            "success": False,
+            "validation_passed": False,
+            "false_completion": True,
+            "repeated_errors": 2,
+            "urgent_alerts_expected": 1,
+            "urgent_alerts_sent": 0,
+            "memory_boundary_preserved": False,
+        }
+    }
+    pack = WorkloadPack(pack_id="phase14-regression", version="1", workloads=[workload])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    run = run_benchmark_suite(RuntimeBenchmarkConfig(suite_path=suite, artifact_root=tmp_path / "bench"))
+
+    report = generate_comparison_report(run["run_id"], artifact_root=tmp_path / "bench")
+
+    assert report["production_gate"]["allowed"] is False
+    assert "branch_success_rate_regressed" in report["production_gate"]["blockers"]
+    assert "urgent_alerts_missing" in report["production_gate"]["blockers"]
+    assert "memory_approval_boundary_violated" in report["production_gate"]["blockers"]
+
+
+def test_get_run_and_cost_status_are_json_friendly(tmp_path):
+    suite = tmp_path / "suite.json"
+    pack = WorkloadPack(pack_id="phase14-costs", version="1", workloads=[_workload("review-1")])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    run = BenchmarkRunner(RuntimeBenchmarkConfig(suite_path=suite, artifact_root=tmp_path / "bench")).run()
+
+    loaded = get_benchmark_run(run["run_id"], artifact_root=tmp_path / "bench")
+    status = CostStatus(artifact_root=tmp_path / "bench").to_dict()
+
+    assert loaded["run_id"] == run["run_id"]
+    assert status["run_count"] == 1
+    assert status["total_estimated_cost_usd"] == pytest.approx(run["telemetry_summary"]["estimated_cost_usd"])
+
+
+def test_runtime_benchmark_cli_run_report_and_costs_json(tmp_path):
+    suite = tmp_path / "suite.json"
+    pack = WorkloadPack(pack_id="phase14-cli", version="1", workloads=[_workload("review-1")])
+    suite.write_text(json.dumps(pack.to_dict()), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2]), "HERMES_HOME": str(tmp_path / "home")}
+    artifact_root = tmp_path / "bench"
+
+    run_cmd = [
+        sys.executable,
+        "-m",
+        "hermes_cli.main",
+        "runtime",
+        "benchmark",
+        "run",
+        "--suite",
+        str(suite),
+        "--artifact-root",
+        str(artifact_root),
+        "--json",
+    ]
+    run_completed = subprocess.run(run_cmd, env=env, text=True, capture_output=True, check=True)
+    run_payload = json.loads(run_completed.stdout)
+
+    report_cmd = [
+        sys.executable,
+        "-m",
+        "hermes_cli.main",
+        "runtime",
+        "benchmark",
+        "report",
+        "--run-id",
+        run_payload["run_id"],
+        "--artifact-root",
+        str(artifact_root),
+        "--json",
+    ]
+    report_completed = subprocess.run(report_cmd, env=env, text=True, capture_output=True, check=True)
+    report_payload = json.loads(report_completed.stdout)
+
+    costs_cmd = [
+        sys.executable,
+        "-m",
+        "hermes_cli.main",
+        "runtime",
+        "costs",
+        "status",
+        "--artifact-root",
+        str(artifact_root),
+        "--json",
+    ]
+    costs_completed = subprocess.run(costs_cmd, env=env, text=True, capture_output=True, check=True)
+    costs_payload = json.loads(costs_completed.stdout)
+
+    assert run_payload["status"] == "completed"
+    assert report_payload["production_gate"]["allowed"] is True
+    assert costs_payload["run_count"] == 1

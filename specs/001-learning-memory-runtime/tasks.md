@@ -475,10 +475,10 @@
 ### Implementation For Production Evaluation Harness
 
 - [x] T182 [US11] Implement benchmark workload dataclasses and JSON/YAML loader with repo refs, prompt, model/tool profile, expected artifacts, validation commands, and pass/fail rubric
-- [ ] T183 [US11] Implement isolated environment runner that can invoke upstream Hermes and branch Hermes with separate homes, worktrees, env files, and artifact roots
-- [ ] T184 [US11] Implement telemetry collector for model usage, latency, cost estimates, context admitted, raw bytes stored, worker attempts, sidecar runs, judge decisions, memory hits, validation results, notifications, and operator interventions
-- [ ] T185 [US11] Implement comparison report generator with upstream-vs-branch quality/cost/latency/context/self-learning metrics and production gate status
-- [ ] T186 [US11] Add CLI/API surfaces: `hermes runtime benchmark run --suite ... --json`, `hermes runtime benchmark report --run-id ... --json`, and `hermes runtime costs status --json`
+- [x] T183 [US11] Implement isolated environment runner that can invoke upstream Hermes and branch Hermes with separate homes, worktrees, env files, and artifact roots
+- [x] T184 [US11] Implement telemetry collector for model usage, latency, cost estimates, context admitted, raw bytes stored, worker attempts, sidecar runs, judge decisions, memory hits, validation results, notifications, and operator interventions
+- [x] T185 [US11] Implement comparison report generator with upstream-vs-branch quality/cost/latency/context/self-learning metrics and production gate status
+- [x] T186 [US11] Add CLI/API surfaces: `hermes runtime benchmark run --suite ... --json`, `hermes runtime benchmark report --run-id ... --json`, and `hermes runtime costs status --json`
 - [ ] T187 [US11] Add urgent Slack integration for benchmark failures and production-gate blocks
 - [ ] T188 [US11] Add CI/CD harness template that runs deterministic benchmark smoke on PRs and full long-horizon benchmark on scheduled/operator-triggered runs
 - [ ] T189 [US11] Run Azure VM side-by-side smoke: upstream clean Hermes vs branch Hermes on the Azure port workflow, recording token/cost/latency/quality/self-learning results

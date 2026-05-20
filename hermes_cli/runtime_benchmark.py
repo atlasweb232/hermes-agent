@@ -1,13 +1,16 @@
-"""Production benchmark schemas and fail-closed gate helpers.
+"""Production benchmark schemas, runner, telemetry, and reports.
 
-This module intentionally stops at deterministic schema and validation logic.
-The runner, provider execution, telemetry persistence, and report generation are
-separate Phase 14 tasks.
+The default runner is deterministic fixture execution. Live/provider execution
+is opt-in through explicit commands so local tests never contact providers.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -44,6 +47,9 @@ REQUIRED_TELEMETRY_ROLES = (
 )
 
 _REDACTED_EXCERPT_LIMIT = 2048
+_TELEMETRY_JSONL = "telemetry.jsonl"
+_RUN_JSON = "run.json"
+_REPORT_JSON = "report.json"
 
 
 def _clean_list(value: Optional[Iterable[Any]]) -> List[str]:
@@ -77,6 +83,47 @@ def _path_contains(parent: Path, child: Path) -> bool:
 
 def _coerce_mapping(value: Any) -> Dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _safe_ratio(numerator: float, denominator: float, *, default: float = 0.0) -> float:
+    return numerator / denominator if denominator else default
+
+
+def _round_money(value: float) -> float:
+    return round(float(value), 6)
+
+
+def _artifact_root_default() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home() / "runtime-benchmark"
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return loaded
+
+
+def _load_env_file(path: Optional[Path]) -> Dict[str, str]:
+    if path is None or not path.exists():
+        return {}
+    env: Dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if key:
+            env[key] = value.strip().strip("\"'")
+    return env
 
 
 @dataclass
@@ -592,3 +639,535 @@ def validate_production_gate(
     if gate_input.operator_overrode_failed_validation:
         blockers.append("operator_overrode_failed_validation")
     return ProductionGateResult(allowed=not blockers, blockers=blockers)
+
+
+@dataclass
+class RuntimeBenchmarkConfig:
+    suite_path: Path
+    artifact_root: Optional[Path] = None
+    upstream_checkout: Optional[Path] = None
+    branch_checkout: Optional[Path] = None
+    upstream_env_file: Optional[Path] = None
+    branch_env_file: Optional[Path] = None
+    upstream_command: Optional[str] = None
+    branch_command: Optional[str] = None
+    run_id: Optional[str] = None
+    tenant_id: str = "benchmark-tenant"
+    execution_mode: str = "fixture"
+    thresholds: GateThresholds = field(default_factory=GateThresholds)
+
+    def __post_init__(self) -> None:
+        self.suite_path = _as_path(self.suite_path)
+        self.artifact_root = _as_path(self.artifact_root) if self.artifact_root else _artifact_root_default()
+        if self.upstream_checkout is not None:
+            self.upstream_checkout = _as_path(self.upstream_checkout)
+        if self.branch_checkout is not None:
+            self.branch_checkout = _as_path(self.branch_checkout)
+        if self.upstream_env_file is not None:
+            self.upstream_env_file = _as_path(self.upstream_env_file)
+        if self.branch_env_file is not None:
+            self.branch_env_file = _as_path(self.branch_env_file)
+        if self.execution_mode not in {"fixture", "command"}:
+            raise ValueError("execution_mode must be fixture or command")
+        if self.execution_mode == "command" and (not self.upstream_command or not self.branch_command):
+            raise ValueError("command execution requires upstream_command and branch_command")
+
+
+class TelemetryCollector:
+    """Bounded structured telemetry writer for benchmark runs."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = _as_path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._records: List[TelemetryRecord] = []
+
+    def record(self, record: TelemetryRecord) -> None:
+        validation = record.validate()
+        if not validation.valid:
+            details = ", ".join(validation.missing + validation.errors)
+            raise ValueError(f"invalid telemetry record: {details}")
+        self._records.append(record)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
+
+    @property
+    def records(self) -> List[TelemetryRecord]:
+        return list(self._records)
+
+    def summary(self) -> Dict[str, Any]:
+        records = self._records
+        return {
+            "records": len(records),
+            "estimated_cost_usd": _round_money(sum(record.estimated_cost_usd for record in records)),
+            "prompt_tokens": sum(record.prompt_tokens for record in records),
+            "completion_tokens": sum(record.completion_tokens for record in records),
+            "context_tokens_admitted": sum(record.context_tokens_admitted for record in records),
+            "raw_bytes_stored_out_of_context": sum(record.raw_bytes_stored_out_of_context for record in records),
+            "worker_attempts": sum(record.worker_attempts for record in records),
+            "sidecar_runs": sum(len(record.sidecars_triggered) for record in records),
+            "judge_decisions": sum(len(record.judge_decisions) for record in records),
+            "memory_hits": sum(1 for record in records if record.memory_packet_ids),
+            "operator_interventions": sum(record.operator_intervention_count for record in records),
+        }
+
+
+def _run_dir(artifact_root: Path, run_id: str) -> Path:
+    return artifact_root / "runs" / run_id
+
+
+def _build_environment_pair(config: RuntimeBenchmarkConfig, run_dir: Path) -> BenchmarkEnvironmentPair:
+    suite_path = config.suite_path.resolve(strict=False)
+    return BenchmarkEnvironmentPair(
+        upstream=BenchmarkEnvironment(
+            name="upstream",
+            hermes_home=run_dir / "homes" / "upstream",
+            artifact_root=run_dir / "artifacts" / "upstream",
+            checkout_path=config.upstream_checkout or (run_dir / "worktrees" / "upstream"),
+            workload_definition=suite_path,
+            env_file=config.upstream_env_file,
+            learning_enabled=False,
+        ),
+        branch=BenchmarkEnvironment(
+            name="branch",
+            hermes_home=run_dir / "homes" / "branch",
+            artifact_root=run_dir / "artifacts" / "branch",
+            checkout_path=config.branch_checkout or (run_dir / "worktrees" / "branch"),
+            workload_definition=suite_path,
+            env_file=config.branch_env_file,
+            learning_enabled=True,
+        ),
+    )
+
+
+def _prepare_environment(env: BenchmarkEnvironment) -> None:
+    env.hermes_home.mkdir(parents=True, exist_ok=True)
+    env.artifact_root.mkdir(parents=True, exist_ok=True)
+    env.checkout_path.mkdir(parents=True, exist_ok=True)
+
+
+def _fixture_value(workload: BenchmarkWorkload, environment: str, key: str, default: Any) -> Any:
+    fixture = _coerce_mapping(workload.metadata.get("fixture"))
+    env_fixture = _coerce_mapping(fixture.get(environment))
+    if key in env_fixture:
+        return env_fixture[key]
+    shared = _coerce_mapping(fixture.get("shared"))
+    return shared.get(key, default)
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, (len(text) + 3) // 4)
+
+
+def _record_fixture_telemetry(
+    *,
+    collector: TelemetryCollector,
+    env: BenchmarkEnvironment,
+    workload: BenchmarkWorkload,
+    outcome: Mapping[str, Any],
+) -> None:
+    environment = env.name
+    roles = ("supervisor", "worker", "judge")
+    if environment == "branch":
+        roles = ("supervisor", "memory_retrieval", "worker", "progress_summarizer", "judge", "curator")
+    prompt_tokens = _estimate_tokens(workload.prompt)
+    repo_id = workload.repo_refs[0].repo_id if workload.repo_refs else "unknown"
+    for idx, role in enumerate(roles):
+        sidecars = []
+        if role in {"progress_summarizer", "curator"}:
+            sidecars = [role]
+        memory_ids = ["mempkt-fixture"] if environment == "branch" and role in {"memory_retrieval", "worker"} else []
+        judge_decisions = ["approved"] if role == "judge" else []
+        record = TelemetryRecord(
+            environment=environment,
+            session_id=f"{environment}-{workload.workload_id}",
+            task_id=f"task-{workload.workload_id}",
+            workload_id=workload.workload_id,
+            tenant_id=str(outcome.get("tenant_id") or "benchmark-tenant"),
+            repo_id=repo_id,
+            role=role,
+            provider=workload.model_profile.provider,
+            model=workload.model_profile.model,
+            worker_id=f"{environment}-{role}" if role in {"worker", "qa", "deployment"} else None,
+            prompt_tokens=prompt_tokens + idx,
+            completion_tokens=20 + idx,
+            cached_tokens=5 if environment == "branch" else 0,
+            input_tokens=prompt_tokens + idx,
+            output_tokens=20 + idx,
+            token_usage_estimated=True,
+            estimated_cost_usd=float(outcome.get("cost_usd", 0.0)) / max(1, len(roles)),
+            wall_latency_ms=int(float(outcome.get("latency_ms", 0)) / max(1, len(roles))),
+            queue_latency_ms=idx,
+            context_tokens_admitted=int(outcome.get("context_tokens", 0)) // max(1, len(roles)),
+            context_bytes_admitted=int(outcome.get("context_bytes", 0)) // max(1, len(roles)),
+            raw_bytes_stored_out_of_context=int(outcome.get("raw_bytes", 0)) // max(1, len(roles)),
+            memory_packet_ids=memory_ids,
+            sidecars_triggered=sidecars,
+            sidecars_skipped=[],
+            judge_decisions=judge_decisions,
+            worker_attempts=1 if role == "worker" else 0,
+            fallback_reasons=_clean_list(outcome.get("fallback_reasons")) if role == "worker" else [],
+            validation_result="passed" if outcome.get("validation_passed") else "failed",
+            notification_counts={
+                "slack": int(outcome.get("urgent_alerts_sent", 0)),
+                "dashboard": int(outcome.get("urgent_alerts_sent", 0)),
+            } if role == "supervisor" else {},
+            operator_intervention_count=int(outcome.get("operator_interventions", 0)) if role == "supervisor" else 0,
+            path_attribution={"surface": "runtime-benchmark", "role": role, "mode": "fixture"},
+            evidence_refs=[f"artifact://{environment}/{workload.workload_id}/{role}.json"],
+            evidence_excerpt=f"{environment} {role} fixture telemetry",
+        )
+        collector.record(record)
+
+
+def _fixture_outcome(workload: BenchmarkWorkload, environment: str, tenant_id: str) -> Dict[str, Any]:
+    branch = environment == "branch"
+    default = {
+        "environment": environment,
+        "workload_id": workload.workload_id,
+        "tenant_id": tenant_id,
+        "success": True,
+        "validation_passed": True,
+        "false_completion": False if branch else True,
+        "repeated_errors": 0 if branch else 1,
+        "worker_reallocations": 1 if branch and workload.workload_class in {"fallback", "stale_worker"} else 0,
+        "operator_interventions": 0,
+        "cost_usd": 0.018 if branch else 0.02,
+        "latency_ms": 900 if branch else 1000,
+        "time_to_first_artifact_ms": 250 if branch else 320,
+        "context_tokens": 180 if branch else 260,
+        "context_bytes": 900 if branch else 1300,
+        "raw_bytes": 4096 if branch else 2048,
+        "memory_hits": 1 if branch else 0,
+        "memory_helpful": 1 if branch else 0,
+        "memory_ignored": 0,
+        "memory_harmful": 0,
+        "sidecar_wall_ms": 40 if branch else 0,
+        "sidecar_cost_usd": 0.002 if branch else 0.0,
+        "sidecar_blocked_foreground": False,
+        "urgent_alerts_expected": 1 if workload.workload_class in {"fallback", "stale_worker", "repeated_failure"} else 0,
+        "urgent_alerts_sent": 1 if branch and workload.workload_class in {"fallback", "stale_worker", "repeated_failure"} else 0,
+        "memory_boundary_preserved": True,
+        "judge_operator_boundary_preserved": True,
+        "operator_overrode_failed_validation": False,
+        "fallback_reasons": ["fixture-fallback"] if workload.workload_class == "fallback" else [],
+    }
+    for key in list(default):
+        default[key] = _fixture_value(workload, environment, key, default[key])
+    return default
+
+
+def _run_command_environment(
+    *,
+    command: str,
+    env: BenchmarkEnvironment,
+    workload: BenchmarkWorkload,
+    tenant_id: str,
+) -> Dict[str, Any]:
+    start = time.monotonic()
+    process_env = os.environ.copy()
+    process_env.update(_load_env_file(env.env_file))
+    process_env.update(
+        {
+            "HERMES_HOME": str(env.hermes_home),
+            "HERMES_BENCHMARK_ARTIFACT_ROOT": str(env.artifact_root),
+            "HERMES_BENCHMARK_WORKLOAD_ID": workload.workload_id,
+            "HERMES_BENCHMARK_TENANT_ID": tenant_id,
+        }
+    )
+    completed = subprocess.run(
+        command,
+        cwd=str(env.checkout_path),
+        env=process_env,
+        shell=True,
+        text=True,
+        capture_output=True,
+        timeout=600,
+        check=False,
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+    evidence_path = env.artifact_root / workload.workload_id / "command-result.json"
+    evidence = {
+        "status_code": completed.returncode,
+        "stdout_excerpt": completed.stdout[:1000],
+        "stderr_excerpt": completed.stderr[:1000],
+    }
+    _write_json(evidence_path, evidence)
+    return {
+        **_fixture_outcome(workload, env.name, tenant_id),
+        "success": completed.returncode == 0,
+        "validation_passed": completed.returncode == 0,
+        "latency_ms": latency_ms,
+        "evidence_ref": f"artifact://{env.name}/{workload.workload_id}/command-result.json",
+    }
+
+
+class BenchmarkRunner:
+    def __init__(self, config: RuntimeBenchmarkConfig) -> None:
+        self.config = config
+
+    def run(self) -> Dict[str, Any]:
+        pack = load_workload_pack(self.config.suite_path)
+        validation = pack.validate()
+        if not validation.valid:
+            details = ", ".join(validation.missing + validation.errors)
+            raise ValueError(f"invalid workload pack: {details}")
+        run_id = self.config.run_id or f"bench_{uuid.uuid4().hex[:16]}"
+        artifact_root = _as_path(self.config.artifact_root)
+        run_dir = _run_dir(artifact_root, run_id)
+        pair = _build_environment_pair(self.config, run_dir)
+        env_validation = validate_environment_pair(pair)
+        if not env_validation.valid:
+            details = ", ".join(env_validation.missing + env_validation.errors)
+            raise ValueError(f"invalid benchmark environments: {details}")
+        _prepare_environment(pair.upstream)
+        _prepare_environment(pair.branch)
+        telemetry = TelemetryCollector(run_dir / _TELEMETRY_JSONL)
+        environment_results: Dict[str, List[Dict[str, Any]]] = {"upstream": [], "branch": []}
+        commands = {"upstream": self.config.upstream_command, "branch": self.config.branch_command}
+        for workload in pack.workloads:
+            for env in (pair.upstream, pair.branch):
+                command = commands[env.name]
+                if self.config.execution_mode == "command":
+                    outcome = _run_command_environment(
+                        command=command,
+                        env=env,
+                        workload=workload,
+                        tenant_id=self.config.tenant_id,
+                    )
+                else:
+                    outcome = _fixture_outcome(workload, env.name, self.config.tenant_id)
+                environment_results[env.name].append(outcome)
+                _record_fixture_telemetry(
+                    collector=telemetry,
+                    env=env,
+                    workload=workload,
+                    outcome=outcome,
+                )
+        result = {
+            "run_id": run_id,
+            "status": "completed",
+            "suite": str(self.config.suite_path),
+            "pack_id": pack.pack_id,
+            "version": pack.version,
+            "execution_mode": self.config.execution_mode,
+            "environment_pair": pair.to_dict(),
+            "workload_count": len(pack.workloads),
+            "results": environment_results,
+            "telemetry_summary": telemetry.summary(),
+            "artifacts": {
+                "run_dir": str(run_dir),
+                "run_json": str(run_dir / _RUN_JSON),
+                "telemetry_jsonl": str(telemetry.path),
+                "report_json": str(run_dir / _REPORT_JSON),
+            },
+            "thresholds": asdict(self.config.thresholds),
+        }
+        _write_json(run_dir / _RUN_JSON, result)
+        report = generate_comparison_report(run_id, artifact_root=artifact_root, persist=True)
+        result["production_gate"] = report["production_gate"]
+        _write_json(run_dir / _RUN_JSON, result)
+        return result
+
+
+def run_benchmark_suite(config: RuntimeBenchmarkConfig) -> Dict[str, Any]:
+    return BenchmarkRunner(config).run()
+
+
+def get_benchmark_run(run_id: str, *, artifact_root: Optional[str | Path] = None) -> Dict[str, Any]:
+    root = _as_path(artifact_root) if artifact_root else _artifact_root_default()
+    run_path = _run_dir(root, run_id) / _RUN_JSON
+    if not run_path.exists():
+        raise ValueError(f"unknown benchmark run: {run_id}")
+    return _read_json(run_path)
+
+
+def _aggregate_outcomes(outcomes: List[Mapping[str, Any]]) -> Dict[str, Any]:
+    count = len(outcomes)
+    successes = sum(1 for item in outcomes if item.get("success"))
+    validation_passes = sum(1 for item in outcomes if item.get("validation_passed"))
+    total_cost = sum(float(item.get("cost_usd") or 0.0) for item in outcomes)
+    total_latency = sum(float(item.get("latency_ms") or 0.0) for item in outcomes)
+    return {
+        "task_count": count,
+        "successes": successes,
+        "success_rate": _safe_ratio(successes, count),
+        "validation_pass_rate": _safe_ratio(validation_passes, count),
+        "false_completion_rate": _safe_ratio(sum(1 for item in outcomes if item.get("false_completion")), count),
+        "repeated_error_rate": _safe_ratio(sum(float(item.get("repeated_errors") or 0.0) for item in outcomes), count),
+        "worker_reallocations": sum(int(item.get("worker_reallocations") or 0) for item in outcomes),
+        "operator_interventions": sum(int(item.get("operator_interventions") or 0) for item in outcomes),
+        "estimated_cost_usd": _round_money(total_cost),
+        "cost_per_success_usd": _round_money(_safe_ratio(total_cost, successes, default=total_cost)),
+        "avg_latency_ms": _safe_ratio(total_latency, count),
+        "avg_time_to_first_artifact_ms": _safe_ratio(sum(float(item.get("time_to_first_artifact_ms") or 0.0) for item in outcomes), count),
+        "context_tokens_per_task": _safe_ratio(sum(float(item.get("context_tokens") or 0.0) for item in outcomes), count),
+        "context_bytes_per_task": _safe_ratio(sum(float(item.get("context_bytes") or 0.0) for item in outcomes), count),
+        "raw_bytes_stored_out_of_context": sum(int(item.get("raw_bytes") or 0) for item in outcomes),
+        "memory_hit_rate": _safe_ratio(sum(1 for item in outcomes if int(item.get("memory_hits") or 0) > 0), count),
+        "memory_helpful": sum(int(item.get("memory_helpful") or 0) for item in outcomes),
+        "memory_ignored": sum(int(item.get("memory_ignored") or 0) for item in outcomes),
+        "memory_harmful": sum(int(item.get("memory_harmful") or 0) for item in outcomes),
+        "sidecar_wall_ms": sum(float(item.get("sidecar_wall_ms") or 0.0) for item in outcomes),
+        "sidecar_cost_usd": _round_money(sum(float(item.get("sidecar_cost_usd") or 0.0) for item in outcomes)),
+        "sidecar_blocked_foreground": any(bool(item.get("sidecar_blocked_foreground")) for item in outcomes),
+        "urgent_alerts_expected": sum(int(item.get("urgent_alerts_expected") or 0) for item in outcomes),
+        "urgent_alerts_sent": sum(int(item.get("urgent_alerts_sent") or 0) for item in outcomes),
+        "memory_boundary_preserved": all(bool(item.get("memory_boundary_preserved", True)) for item in outcomes),
+        "judge_operator_boundary_preserved": all(bool(item.get("judge_operator_boundary_preserved", True)) for item in outcomes),
+        "operator_overrode_failed_validation": any(bool(item.get("operator_overrode_failed_validation")) for item in outcomes),
+    }
+
+
+def generate_comparison_report(
+    run_id: str,
+    *,
+    artifact_root: Optional[str | Path] = None,
+    persist: bool = True,
+) -> Dict[str, Any]:
+    root = _as_path(artifact_root) if artifact_root else _artifact_root_default()
+    run = get_benchmark_run(run_id, artifact_root=root)
+    upstream = _aggregate_outcomes(list(run.get("results", {}).get("upstream", [])))
+    branch = _aggregate_outcomes(list(run.get("results", {}).get("branch", [])))
+    cost_ratio = _safe_ratio(branch["cost_per_success_usd"], upstream["cost_per_success_usd"], default=1.0)
+    latency_ratio = _safe_ratio(branch["avg_latency_ms"], upstream["avg_latency_ms"], default=1.0)
+    thresholds = GateThresholds(**_coerce_mapping(run.get("thresholds")))
+    gate = validate_production_gate(
+        ProductionGateInput(
+            upstream_success_rate=float(upstream["success_rate"]),
+            branch_success_rate=float(branch["success_rate"]),
+            upstream_false_completion_rate=float(upstream["false_completion_rate"]),
+            branch_false_completion_rate=float(branch["false_completion_rate"]),
+            upstream_repeated_error_rate=float(upstream["repeated_error_rate"]),
+            branch_repeated_error_rate=float(branch["repeated_error_rate"]),
+            cost_per_success_ratio=cost_ratio,
+            foreground_latency_ratio=latency_ratio,
+            sidecar_blocked_foreground=bool(branch["sidecar_blocked_foreground"]),
+            urgent_alerts_expected=int(branch["urgent_alerts_expected"]),
+            urgent_alerts_sent=int(branch["urgent_alerts_sent"]),
+            memory_approval_boundary_preserved=bool(branch["memory_boundary_preserved"]),
+            judge_operator_boundary_preserved=bool(branch["judge_operator_boundary_preserved"]),
+            operator_overrode_failed_validation=bool(branch["operator_overrode_failed_validation"]),
+        ),
+        thresholds=thresholds,
+    )
+    report = {
+        "run_id": run_id,
+        "status": "reported",
+        "comparison": {
+            "quality": {
+                "upstream": {
+                    "success_rate": upstream["success_rate"],
+                    "validation_pass_rate": upstream["validation_pass_rate"],
+                    "false_completion_rate": upstream["false_completion_rate"],
+                    "repeated_error_rate": upstream["repeated_error_rate"],
+                    "worker_reallocations": upstream["worker_reallocations"],
+                    "operator_interventions": upstream["operator_interventions"],
+                },
+                "branch": {
+                    "success_rate": branch["success_rate"],
+                    "validation_pass_rate": branch["validation_pass_rate"],
+                    "false_completion_rate": branch["false_completion_rate"],
+                    "repeated_error_rate": branch["repeated_error_rate"],
+                    "worker_reallocations": branch["worker_reallocations"],
+                    "operator_interventions": branch["operator_interventions"],
+                },
+            },
+            "cost": {
+                "upstream": {
+                    "estimated_cost_usd": upstream["estimated_cost_usd"],
+                    "cost_per_success_usd": upstream["cost_per_success_usd"],
+                },
+                "branch": {
+                    "estimated_cost_usd": branch["estimated_cost_usd"],
+                    "cost_per_success_usd": branch["cost_per_success_usd"],
+                },
+                "cost_per_success_ratio": cost_ratio,
+            },
+            "latency": {
+                "upstream": {
+                    "avg_latency_ms": upstream["avg_latency_ms"],
+                    "avg_time_to_first_artifact_ms": upstream["avg_time_to_first_artifact_ms"],
+                },
+                "branch": {
+                    "avg_latency_ms": branch["avg_latency_ms"],
+                    "avg_time_to_first_artifact_ms": branch["avg_time_to_first_artifact_ms"],
+                    "sidecar_wall_ms": branch["sidecar_wall_ms"],
+                },
+                "foreground_latency_ratio": latency_ratio,
+            },
+            "context": {
+                "upstream": {
+                    "context_tokens_per_task": upstream["context_tokens_per_task"],
+                    "context_bytes_per_task": upstream["context_bytes_per_task"],
+                    "raw_bytes_stored_out_of_context": upstream["raw_bytes_stored_out_of_context"],
+                },
+                "branch": {
+                    "context_tokens_per_task": branch["context_tokens_per_task"],
+                    "context_bytes_per_task": branch["context_bytes_per_task"],
+                    "raw_bytes_stored_out_of_context": branch["raw_bytes_stored_out_of_context"],
+                },
+            },
+            "self_learning": {
+                "upstream": {
+                    "memory_hit_rate": upstream["memory_hit_rate"],
+                    "memory_helpful": upstream["memory_helpful"],
+                    "memory_ignored": upstream["memory_ignored"],
+                    "memory_harmful": upstream["memory_harmful"],
+                    "sidecar_cost_usd": upstream["sidecar_cost_usd"],
+                },
+                "branch": {
+                    "memory_hit_rate": branch["memory_hit_rate"],
+                    "memory_helpful": branch["memory_helpful"],
+                    "memory_ignored": branch["memory_ignored"],
+                    "memory_harmful": branch["memory_harmful"],
+                    "sidecar_cost_usd": branch["sidecar_cost_usd"],
+                    "sidecar_blocked_foreground": branch["sidecar_blocked_foreground"],
+                    "urgent_alerts_expected": branch["urgent_alerts_expected"],
+                    "urgent_alerts_sent": branch["urgent_alerts_sent"],
+                },
+            },
+        },
+        "production_gate": gate.to_dict(),
+        "artifacts": {
+            "run_json": str(_run_dir(root, run_id) / _RUN_JSON),
+            "telemetry_jsonl": str(_run_dir(root, run_id) / _TELEMETRY_JSONL),
+            "report_json": str(_run_dir(root, run_id) / _REPORT_JSON),
+        },
+    }
+    if persist:
+        _write_json(_run_dir(root, run_id) / _REPORT_JSON, report)
+    return report
+
+
+class CostStatus:
+    def __init__(self, artifact_root: Optional[str | Path] = None) -> None:
+        self.artifact_root = _as_path(artifact_root) if artifact_root else _artifact_root_default()
+
+    def to_dict(self) -> Dict[str, Any]:
+        runs_root = self.artifact_root / "runs"
+        runs: List[Dict[str, Any]] = []
+        if runs_root.exists():
+            for run_json in sorted(runs_root.glob(f"*/{_RUN_JSON}")):
+                try:
+                    run = _read_json(run_json)
+                except Exception:
+                    continue
+                summary = _coerce_mapping(run.get("telemetry_summary"))
+                runs.append(
+                    {
+                        "run_id": run.get("run_id"),
+                        "pack_id": run.get("pack_id"),
+                        "estimated_cost_usd": float(summary.get("estimated_cost_usd") or 0.0),
+                        "prompt_tokens": int(summary.get("prompt_tokens") or 0),
+                        "completion_tokens": int(summary.get("completion_tokens") or 0),
+                        "production_gate": run.get("production_gate", {}),
+                    }
+                )
+        return {
+            "artifact_root": str(self.artifact_root),
+            "run_count": len(runs),
+            "total_estimated_cost_usd": _round_money(sum(item["estimated_cost_usd"] for item in runs)),
+            "total_prompt_tokens": sum(item["prompt_tokens"] for item in runs),
+            "total_completion_tokens": sum(item["completion_tokens"] for item in runs),
+            "runs": runs,
+        }

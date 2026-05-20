@@ -11864,6 +11864,31 @@ Examples:
     runtime_e2e_report.add_argument("--run-id", required=True, help="Runtime E2E run id")
     runtime_e2e_report.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_benchmark = runtime_sub.add_parser("benchmark", help="Run upstream-vs-branch production benchmarks")
+    runtime_benchmark_sub = runtime_benchmark.add_subparsers(dest="runtime_benchmark_command")
+    runtime_benchmark_run = runtime_benchmark_sub.add_parser("run", help="Run a deterministic benchmark suite")
+    runtime_benchmark_run.add_argument("--suite", required=True, help="Workload pack JSON/YAML path")
+    runtime_benchmark_run.add_argument("--artifact-root", default="", help="Benchmark artifact root")
+    runtime_benchmark_run.add_argument("--upstream-checkout", default="", help="Upstream Hermes worktree path")
+    runtime_benchmark_run.add_argument("--branch-checkout", default="", help="Branch Hermes worktree path")
+    runtime_benchmark_run.add_argument("--upstream-env-file", default="", help="Upstream environment file")
+    runtime_benchmark_run.add_argument("--branch-env-file", default="", help="Branch environment file")
+    runtime_benchmark_run.add_argument("--upstream-command", default="", help="Opt-in upstream command execution")
+    runtime_benchmark_run.add_argument("--branch-command", default="", help="Opt-in branch command execution")
+    runtime_benchmark_run.add_argument("--execution-mode", choices=["fixture", "command"], default="fixture")
+    runtime_benchmark_run.add_argument("--tenant-id", default="benchmark-tenant")
+    runtime_benchmark_run.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    runtime_benchmark_report = runtime_benchmark_sub.add_parser("report", help="Show a benchmark comparison report")
+    runtime_benchmark_report.add_argument("--run-id", required=True, help="Benchmark run id")
+    runtime_benchmark_report.add_argument("--artifact-root", default="", help="Benchmark artifact root")
+    runtime_benchmark_report.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    runtime_costs = runtime_sub.add_parser("costs", help="Inspect runtime benchmark cost telemetry")
+    runtime_costs_sub = runtime_costs.add_subparsers(dest="runtime_costs_command")
+    runtime_costs_status = runtime_costs_sub.add_parser("status", help="Show benchmark cost status")
+    runtime_costs_status.add_argument("--artifact-root", default="", help="Benchmark artifact root")
+    runtime_costs_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
     runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
     runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
@@ -12288,6 +12313,49 @@ Examples:
             finally:
                 db.close()
             return
+        if cmd == "benchmark":
+            from hermes_cli.runtime_benchmark import (
+                RuntimeBenchmarkConfig,
+                generate_comparison_report,
+                run_benchmark_suite,
+            )
+
+            benchmark_cmd = getattr(args, "runtime_benchmark_command", None) or "run"
+            try:
+                if benchmark_cmd == "run":
+                    execution_mode = getattr(args, "execution_mode", "fixture") or "fixture"
+                    payload = run_benchmark_suite(
+                        RuntimeBenchmarkConfig(
+                            suite_path=Path(getattr(args, "suite")),
+                            artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
+                            upstream_checkout=Path(getattr(args, "upstream_checkout")) if getattr(args, "upstream_checkout", "") else None,
+                            branch_checkout=Path(getattr(args, "branch_checkout")) if getattr(args, "branch_checkout", "") else None,
+                            upstream_env_file=Path(getattr(args, "upstream_env_file")) if getattr(args, "upstream_env_file", "") else None,
+                            branch_env_file=Path(getattr(args, "branch_env_file")) if getattr(args, "branch_env_file", "") else None,
+                            upstream_command=getattr(args, "upstream_command", "") or None,
+                            branch_command=getattr(args, "branch_command", "") or None,
+                            tenant_id=getattr(args, "tenant_id", "benchmark-tenant") or "benchmark-tenant",
+                            execution_mode=execution_mode,
+                        )
+                    )
+                else:
+                    payload = generate_comparison_report(
+                        getattr(args, "run_id"),
+                        artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
+                    )
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+            _emit(payload)
+            return
+        if cmd == "costs":
+            from hermes_cli.runtime_benchmark import CostStatus
+
+            costs_cmd = getattr(args, "runtime_costs_command", None) or "status"
+            if costs_cmd == "status":
+                _emit(CostStatus(
+                    artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
+                ).to_dict())
+                return
         if cmd == "notify":
             notify_cmd = getattr(args, "runtime_notify_command", None) or "urgent"
             if notify_cmd == "urgent":
