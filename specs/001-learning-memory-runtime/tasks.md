@@ -533,19 +533,19 @@
 ### Spec And Architecture Artifacts
 
 - [x] T213 [US13] Add `docs/tenant-platform-architecture.md` defining control plane, tenant runtime cells, repo onboarding, communication connectors, toolset profiles, isolation, memory, admin dashboard, cost, deployment, and bus options
-- [ ] T214 [US13] Add tenant onboarding contract covering registry, repo registration, communication connector, toolset profile, runtime cell, budget, feature profile, and smoke-test schemas
-- [ ] T215 [US13] Link tenant onboarding architecture from dashboard, observability, memory, and deployment docs
+- [x] T214 [US13] Add tenant onboarding contract covering registry, repo registration, communication connector, toolset profile, runtime cell, budget, feature profile, and smoke-test schemas
+- [x] T215 [US13] Link tenant onboarding architecture from dashboard, observability, memory, and deployment docs
 
 ### Tests For Tenant Onboarding
 
-- [ ] T216 [P] [US13] Add tenant registry schema tests for tenant status, isolation mode, users/roles, budgets, feature profile, runtime cell assignment, and audit metadata
-- [ ] T217 [P] [US13] Add repo onboarding tests for provider refs, clone URL, branch policy, protected paths, validation commands, deployment mapping, secret refs, Spec Kit policy, and memory sharing policy
-- [ ] T218 [P] [US13] Add communication connector tests for Slack, Telegram, WhatsApp, dashboard/API route registration, tenant/user/channel allowlists, urgent routes, approval routes, and unauthorized sender rejection
-- [ ] T219 [P] [US13] Add toolset profile tests for planner, Spec Kit creator, code workers, QA/browser, TinyFish API/browser agent, CI/CD, deployment, cloud, repo, voice/image tools, scopes, budgets, and approval requirements
-- [ ] T220 [P] [US13] Add runtime cell isolation tests proving tenant homes, worktrees, secrets, memory, connectors, sidecars, and cost ledgers do not cross boundaries
-- [ ] T221 [P] [US13] Add tenant budget tests proving token/model/tool/sidecar budget exhaustion pauses or degrades jobs without looping
-- [ ] T221A [P] [US13] Add connector onboarding tests proving provided Slack/Telegram/WhatsApp credentials are stored as secret references, verified with a test message, and activated only after channel access succeeds
-- [ ] T221B [P] [US13] Add CI/CD pipeline task tests proving workflow creation/repair uses Spec Kit, secret references, protected environment approvals, validation evidence, rollback expectations, and urgent failure notification
+- [x] T216 [P] [US13] Add tenant registry schema tests for tenant status, isolation mode, users/roles, budgets, feature profile, runtime cell assignment, and audit metadata
+- [x] T217 [P] [US13] Add repo onboarding tests for provider refs, clone URL, branch policy, protected paths, validation commands, deployment mapping, secret refs, Spec Kit policy, and memory sharing policy
+- [x] T218 [P] [US13] Add communication connector tests for Slack, Telegram, WhatsApp, dashboard/API route registration, tenant/user/channel allowlists, urgent routes, approval routes, and unauthorized sender rejection
+- [x] T219 [P] [US13] Add toolset profile tests for planner, Spec Kit creator, code workers, QA/browser, TinyFish API/browser agent, CI/CD, deployment, cloud, repo, voice/image tools, scopes, budgets, and approval requirements
+- [x] T220 [P] [US13] Add runtime cell isolation tests proving tenant homes, worktrees, secrets, memory, connectors, sidecars, and cost ledgers do not cross boundaries
+- [x] T221 [P] [US13] Add tenant budget tests proving token/model/tool/sidecar budget exhaustion pauses or degrades jobs without looping
+- [x] T221A [P] [US13] Add connector onboarding tests proving provided Slack/Telegram/WhatsApp credentials are stored as secret references, verified with a test message, and activated only after channel access succeeds
+- [x] T221B [P] [US13] Add CI/CD pipeline task tests proving workflow creation/repair uses Spec Kit, secret references, protected environment approvals, validation evidence, rollback expectations, and urgent failure notification
 
 ### Implementation For Tenant Platform
 

@@ -7,6 +7,12 @@ It must show measurable improvement against upstream Hermes over longer task
 horizons with controlled workloads, identical repositories, comparable models,
 and full cost/latency/quality telemetry.
 
+Tenant onboarding smoke and deployment packet shapes are defined in
+[`specs/001-learning-memory-runtime/contracts/tenant-onboarding.md`](../specs/001-learning-memory-runtime/contracts/tenant-onboarding.md).
+Harness workloads that exercise tenant onboarding should report statuses and
+evidence refs for repo access, connector routing, toolsets, budgets, runtime
+cell isolation, and CI/CD packets without storing raw transcripts or secrets.
+
 ## Architecture
 
 ```text

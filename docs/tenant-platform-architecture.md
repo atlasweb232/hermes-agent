@@ -10,6 +10,12 @@ end-to-end production workflows with human approval points.
 This document defines the first architecture for tenant onboarding and scaling.
 It is intentionally a platform architecture, not only a code refactor.
 
+The concrete local/dev DTO contract for this phase is
+[`specs/001-learning-memory-runtime/contracts/tenant-onboarding.md`](../specs/001-learning-memory-runtime/contracts/tenant-onboarding.md).
+That contract is the source of truth for registry, repo, connector, toolset,
+runtime cell, budget, smoke, normalized message, connector verification, and
+CI/CD packet shapes.
+
 ## Goals
 
 - Onboard enterprise tenants and power users safely.
@@ -441,6 +447,12 @@ Global admin dashboard views:
 
 Tenant admins see only their tenant scope.
 
+Dashboard DTOs should consume the tenant onboarding contract directly: tenant
+registry rows, runtime cell assignments, connector registrations, repo
+registrations, budget decisions, toolset profiles, and CI/CD packet status. The
+dashboard must display bounded summaries and evidence refs, not raw connector
+transcripts, credentials, worker streams, or unbounded logs.
+
 ## Cost And Budgeting
 
 Every model/tool path must emit cost telemetry:
@@ -480,6 +492,13 @@ First deployable shape:
 - optional Postgres production adapter
 - optional object storage adapter
 - communication gateway workers
+
+Deployment surfaces must preserve the runtime cell fields from the onboarding
+contract: `hermes_home`, `worktree_root`, `secret_namespace`,
+`memory_namespace`, `connector_namespace`, `sidecar_namespace`, and
+`cost_ledger_namespace`. Production orchestration can map those fields to
+containers, volumes, schemas, and secret managers, but the local/dev contract
+remains the compatibility boundary.
 
 Scale-out shape:
 

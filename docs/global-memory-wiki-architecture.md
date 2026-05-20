@@ -10,6 +10,11 @@ publishes approved deltas back to local instances.
 It is not a raw transcript store and not a free-form append log. Raw data is
 evidence. Canonical wiki claims are approved, deduplicated, scoped knowledge.
 
+Tenant boundaries come from the tenant platform contract:
+[`specs/001-learning-memory-runtime/contracts/tenant-onboarding.md`](../specs/001-learning-memory-runtime/contracts/tenant-onboarding.md).
+Global memory may consume only redacted, approved, shareable tenant evidence;
+tenant-private memory namespaces from runtime cell assignments remain private.
+
 ## Storage Model
 
 Use separate stores for raw evidence, canonical state, and indexes:

@@ -83,6 +83,13 @@ The backend should expose the curator/control-plane operations directly so the
 dashboard, gateway, Telegram supervisor, and automation do not shell out to the
 CLI.
 
+Tenant onboarding and control-plane DTOs are specified in
+[`specs/001-learning-memory-runtime/contracts/tenant-onboarding.md`](../specs/001-learning-memory-runtime/contracts/tenant-onboarding.md)
+and the platform architecture is
+[`docs/tenant-platform-architecture.md`](tenant-platform-architecture.md). The
+dashboard, gateway, observability, memory, and deployment surfaces should share
+those packet shapes instead of creating per-surface tenant records.
+
 ```http
 GET  /api/curator/config
 POST /api/curator/config
@@ -912,6 +919,12 @@ Guardrails:
 This keeps the first dashboard lean while preserving the backend capability to
 answer analytical questions about a specific task or job.
 
+For tenant onboarding, observability line items should link back to registry,
+repo, connector, toolset, runtime cell, budget, smoke, and CI/CD packet refs
+from the tenant onboarding contract. Evidence bundles remain bounded: no raw
+connector transcripts, channel logs, credentials, tokens, worker streams, or
+unbounded provider logs.
+
 Implemented Phase 8 surfaces:
 
 - `hermes memory jobs list/status --json` exposes filtered learning job records
@@ -1050,6 +1063,12 @@ candidate confidence up for helpful memory and down for irrelevant or harmful
 memory. Deterministic command-repair memories can be escalated into proposed
 policy candidates, but they still require judge/operator approval before
 runtime enforcement.
+
+Tenant onboarding uses the same memory boundary. Repository registrations and
+runtime cell assignments define `tenant_id`, memory namespace, and sharing
+policy before retrieval can run. Tenant-private memory stays private; global or
+cross-tenant memory requires redaction, approval provenance, shareability
+metadata, and hard scope filters before it can appear in a packet.
 
 ## Why This Shape
 
@@ -1842,3 +1861,10 @@ in the caller's local `state_meta`. Disabled smoke cases are reported as
 `skipped`; enabled scoped cases record synthetic bounded evidence refs. The
 runner does not start provider calls, hidden sidecars, Kafka/vector/graph/cloud
 services, enforcement, raw transcript capture, or unbounded log storage.
+
+The tenant platform smoke schema extends this local/dev deployment stance:
+onboarding smoke records repo access, connector reply route, toolset
+availability, budget policy, feature profile, runtime cell isolation, and
+baseline job execution as statuses plus evidence refs. Deployment adapters may
+replace local roots with containers and managed stores, but enforcement fields
+remain false or unavailable until a later explicit phase.
