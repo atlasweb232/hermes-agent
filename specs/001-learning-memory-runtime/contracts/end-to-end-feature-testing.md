@@ -105,6 +105,10 @@ The E2E suite must include at least these line items:
 | Upstream-vs-branch comparison | Feature states included in benchmark report | Branch runs baseline-only profile | comparison report |
 | Azure chat/voice port workload | Real workload fixture exercises planning, delegation, validation | Workload is listed but skipped by toggle/profile | workload artifacts |
 
+Dreaming E2E fixtures must also follow the proposal-only integration contract in
+[`dreaming-integration.md`](./dreaming-integration.md), including local/global
+evidence filtering and validator output checks.
+
 ## Report Schema
 
 Each test case result must include:

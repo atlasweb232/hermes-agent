@@ -8,14 +8,19 @@ import pytest
 from hermes_cli.memory_dreaming import (
     DreamingConfig,
     DreamingProposal,
+    build_dreaming_input_packet,
     approve_dreaming_proposal,
+    build_dreaming_dashboard_dto,
     get_dreaming_proposal,
     judge_dreaming_proposal,
     list_dreaming_proposals,
     parse_dreaming_proposal_output,
     reject_dreaming_proposal,
+    resolve_dreaming_role,
     run_dreaming,
+    validate_dreaming_proposal_details,
     validate_dreaming_proposal,
+    PHASE18_PROPOSAL_TYPES,
 )
 from hermes_cli.memory_wiki import compile_memory_wiki
 from hermes_state import SessionDB
@@ -61,6 +66,31 @@ def _proposal_json(**overrides):
     return json.dumps(payload)
 
 
+def _phase18_proposal_json(**overrides):
+    payload = {
+        "proposal_type": "skill_candidate",
+        "summary": "Create a bounded skill for repeated release triage",
+        "rationale": "Approved redacted evidence shows the same triage steps recurring.",
+        "evidence_refs": ["packet_1"],
+        "scope": {"tenant_id": "atlas", "repo_id": "hermes-agent", "visibility": "local"},
+        "risk": "low",
+        "trigger": "manual",
+        "requested_action": "Create a proposal-only skill candidate for review.",
+        "runtime_effect": False,
+        "affected_feature_ids": ["US15"],
+        "conversion_target": "skill_candidate",
+        "expected_benefit": "Reduce repeated manual release triage.",
+        "forbidden_direct_actions": ["publish_skill", "edit_repo"],
+        "suggested_validation": ["Run skill validation fixture before publish."],
+        "role_metadata": {"role": "local_dreaming", "tenant_id": "atlas", "repo_id": "hermes-agent"},
+        "evidence_packets": [{"packet_id": "packet_1", "source_ref": "wikiclaim_1"}],
+        "judge_state": {"status": "pending"},
+        "operator_state": {"status": "pending"},
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
 def test_parse_dreaming_proposal_output_accepts_strict_schema():
     proposal = parse_dreaming_proposal_output(_proposal_json())
 
@@ -68,6 +98,45 @@ def test_parse_dreaming_proposal_output_accepts_strict_schema():
     assert proposal.trigger == "manual"
     assert proposal.runtime_effect is False
     assert proposal.id.startswith("dream_")
+
+
+def test_phase18_proposal_schema_covers_required_types_and_fields():
+    required = {
+        "skill_candidate",
+        "skill_repair",
+        "test_gap",
+        "ci_cd_hardening",
+        "memory_wiki_update",
+        "routing_improvement",
+        "allocator_policy_candidate",
+        "observability_gap",
+        "tenant_onboarding_improvement",
+        "toolset_recommendation",
+        "cost_optimization",
+        "training_corpus_candidate",
+        "architecture_review_item",
+    }
+    assert required <= PHASE18_PROPOSAL_TYPES
+
+    for proposal_type in required:
+        proposal = parse_dreaming_proposal_output(
+            _phase18_proposal_json(proposal_type=proposal_type, conversion_target=proposal_type)
+        )
+        data = proposal.to_dict()
+        for field in (
+            "proposal_type",
+            "affected_feature_ids",
+            "conversion_target",
+            "expected_benefit",
+            "forbidden_direct_actions",
+            "suggested_validation",
+            "role_metadata",
+            "evidence_packets",
+            "judge_state",
+            "operator_state",
+        ):
+            assert field in data
+        assert proposal.runtime_effect is False
 
 
 @pytest.mark.parametrize(
@@ -184,6 +253,133 @@ def test_dreaming_validator_rejects_unknown_or_missing_evidence_refs():
     )
     proposal.evidence_refs = []
     assert "missing_evidence_refs" in validate_dreaming_proposal(proposal, config=DreamingConfig())
+
+
+def test_local_dreaming_input_is_tenant_repo_scoped_and_cannot_publish_globally():
+    role = resolve_dreaming_role(mode="local", tenant_id="atlas", repo_id="hermes-agent")
+    records = [
+        {
+            "id": "local_ok",
+            "tenant_id": "atlas",
+            "repo_id": "hermes-agent",
+            "content": "approved local repair summary",
+            "approved": True,
+            "redacted": True,
+            "shareable": False,
+        },
+        {
+            "id": "wrong_tenant",
+            "tenant_id": "other",
+            "repo_id": "hermes-agent",
+            "content": "must not cross tenant",
+            "approved": True,
+            "redacted": True,
+        },
+    ]
+
+    packet = build_dreaming_input_packet(role, records)
+
+    assert [item.packet_id for item in packet.evidence_packets] == ["local_ok"]
+    assert packet.role_metadata["tenant_id"] == "atlas"
+    assert packet.role_metadata["repo_id"] == "hermes-agent"
+    assert packet.role_metadata["can_publish_global"] is False
+
+    proposal = parse_dreaming_proposal_output(
+        _phase18_proposal_json(
+            evidence_refs=["local_ok"],
+            role_metadata=packet.role_metadata,
+            scope={"tenant_id": "atlas", "repo_id": "hermes-agent", "visibility": "global"},
+            conversion_target="global_memory_wiki",
+            requested_action="Publish globally after review.",
+        )
+    )
+    details = validate_dreaming_proposal_details(proposal, known_evidence_refs={"local_ok"})
+    assert "local_cannot_publish_global" in details.error_codes
+
+
+def test_global_dreaming_input_uses_only_redacted_approved_shareable_global_evidence():
+    role = resolve_dreaming_role(mode="global")
+    records = [
+        {
+            "id": "global_ok",
+            "scope": "global",
+            "content": "redacted approved shareable global repair pattern",
+            "approved": True,
+            "redacted": True,
+            "shareable": True,
+        },
+        {"id": "private", "scope": "tenant", "content": "tenant private", "approved": True, "redacted": True, "shareable": True},
+        {"id": "raw", "scope": "global", "content": "raw transcript", "approved": True, "redacted": False, "shareable": True},
+        {"id": "unapproved", "scope": "global", "content": "draft", "approved": False, "redacted": True, "shareable": True},
+        {"id": "not_shareable", "scope": "global", "content": "not shareable", "approved": True, "redacted": True, "shareable": False},
+    ]
+
+    packet = build_dreaming_input_packet(role, records)
+
+    assert [item.packet_id for item in packet.evidence_packets] == ["global_ok"]
+    assert packet.role_metadata["role"] == "global_dreaming"
+    assert packet.role_metadata["input_policy"] == "redacted_approved_shareable_global_only"
+
+
+@pytest.mark.parametrize(
+    "proposal_type,conversion_target",
+    [
+        ("skill_candidate", "skill_candidate"),
+        ("skill_repair", "skill_candidate"),
+        ("ci_cd_hardening", "ci_cd_task"),
+        ("test_gap", "test_backlog_item"),
+        ("routing_improvement", "routing_advisory"),
+        ("cost_optimization", "cost_review_item"),
+        ("training_corpus_candidate", "training_corpus_candidate"),
+        ("architecture_review_item", "architecture_review_item"),
+    ],
+)
+def test_phase18_validators_accept_safe_domain_proposals(proposal_type, conversion_target):
+    proposal = parse_dreaming_proposal_output(
+        _phase18_proposal_json(proposal_type=proposal_type, conversion_target=conversion_target)
+    )
+
+    details = validate_dreaming_proposal_details(proposal, known_evidence_refs={"packet_1"})
+
+    assert details.accepted is True
+    assert details.error_codes == []
+    assert details.proposal_type == proposal_type
+
+
+def test_phase18_validators_reject_direct_mutation_and_unsafe_evidence_content():
+    proposal = parse_dreaming_proposal_output(
+        _phase18_proposal_json(
+            proposal_type="ci_cd_hardening",
+            conversion_target="ci_cd_task",
+            requested_action="Edit repos, deploy code, change config, and export training data directly.",
+            evidence_packets=[
+                {
+                    "packet_id": "packet_1",
+                    "source_ref": "wikiclaim_1",
+                    "content_summary": "raw transcript includes token=sk-thisisunsafe1234567890",
+                }
+            ],
+        )
+    )
+
+    details = validate_dreaming_proposal_details(proposal, known_evidence_refs={"packet_1"})
+
+    assert details.accepted is False
+    assert "forbidden_direct_runtime_effect" in details.error_codes
+    assert "secret_pattern_detected" in details.error_codes
+    assert "raw_transcript_or_unbounded_log_detected" in details.error_codes
+
+
+def test_dreaming_dashboard_dto_exposes_review_fields():
+    proposal = parse_dreaming_proposal_output(_phase18_proposal_json())
+    dto = build_dreaming_dashboard_dto(proposal)
+
+    assert dto["id"] == proposal.id
+    assert dto["proposal_type"] == "skill_candidate"
+    assert dto["evidence_refs"] == ["packet_1"]
+    assert dto["expected_benefit"]
+    assert dto["judge_state"]["status"] == "pending"
+    assert dto["operator_state"]["status"] == "pending"
 
 
 def test_dreaming_judge_operator_conversion_requires_both_gates(tmp_path):

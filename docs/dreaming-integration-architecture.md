@@ -11,6 +11,10 @@ tasks, goals, or policy candidates.
 This document updates the original dreaming design for tenant runtime cells,
 global memory, SkillClaw/skills, CI/CD automation, and E2E testing.
 
+The normative DTO, evidence packet, validator, dashboard, and toggle contract
+is
+[`dreaming-integration.md`](../specs/001-learning-memory-runtime/contracts/dreaming-integration.md).
+
 ## Non-Negotiable Rule
 
 Dreaming cannot directly mutate live runtime state.

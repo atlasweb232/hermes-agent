@@ -473,6 +473,10 @@ promote private local evidence globally without the normal approval path.
 
 Local and global dreaming are separate sidecar roles.
 
+The detailed dreaming role, evidence packet, proposal DTO, and validator
+contract lives in
+[`dreaming-integration.md`](../specs/001-learning-memory-runtime/contracts/dreaming-integration.md).
+
 Local dreaming:
 
 - reads local approved memory/wiki evidence only

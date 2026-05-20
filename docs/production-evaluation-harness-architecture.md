@@ -99,6 +99,13 @@ The harness must prove that sidecars add value without dragging the runtime:
 - health sidecar emitted recovery packets for stale/no-progress work
 - urgent Slack alert fired for blocked/degraded/fallback-exhausted states
 
+Dreaming checks should reference
+[`dreaming-integration-architecture.md`](./dreaming-integration-architecture.md)
+and the
+[`dreaming-integration.md`](../specs/001-learning-memory-runtime/contracts/dreaming-integration.md)
+contract for proposal schema, local/global evidence filtering, and validator
+outputs.
+
 ## Multi-Agent And QA Toolsets
 
 Long-horizon workloads should include agent clusters, not only single worker

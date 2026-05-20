@@ -618,14 +618,14 @@
 ### Spec And Architecture Artifacts
 
 - [x] T255 [US15] Add `docs/dreaming-integration-architecture.md` covering local/global dreaming, inputs, outputs, triggers, approval flow, skill integration, CI/CD/test proposals, dashboard review, toggles, E2E tests, and failure modes
-- [ ] T256 [US15] Add dreaming integration contract covering proposal types, evidence packet schema, conversion targets, validator output, judge/operator state, dashboard DTOs, and feature toggles
-- [ ] T257 [US15] Link dreaming integration architecture from skill pipeline, tenant platform, global memory wiki, E2E feature testing, and production evaluation docs
+- [x] T256 [US15] Add dreaming integration contract covering proposal types, evidence packet schema, conversion targets, validator output, judge/operator state, dashboard DTOs, and feature toggles
+- [x] T257 [US15] Link dreaming integration architecture from skill pipeline, tenant platform, global memory wiki, E2E feature testing, and production evaluation docs
 
 ### Tests For Dreaming Integration
 
-- [ ] T258 [P] [US15] Add local dreaming tests proving proposals remain tenant/repo scoped and cannot publish globally
-- [ ] T259 [P] [US15] Add global dreaming tests proving only redacted approved shareable global memory/wiki evidence is consumed
-- [ ] T260 [P] [US15] Add proposal schema tests for skill candidate, skill repair, test gap, CI/CD hardening, memory wiki update, routing improvement, allocator policy candidate, observability gap, tenant onboarding improvement, toolset recommendation, cost optimization, training corpus candidate, and architecture review item
+- [x] T258 [P] [US15] Add local dreaming tests proving proposals remain tenant/repo scoped and cannot publish globally
+- [x] T259 [P] [US15] Add global dreaming tests proving only redacted approved shareable global memory/wiki evidence is consumed
+- [x] T260 [P] [US15] Add proposal schema tests for skill candidate, skill repair, test gap, CI/CD hardening, memory wiki update, routing improvement, allocator policy candidate, observability gap, tenant onboarding improvement, toolset recommendation, cost optimization, training corpus candidate, and architecture review item
 - [ ] T261 [P] [US15] Add conversion-gate tests proving dreaming proposals require deterministic validation, judge review, and operator or tenant-admin approval before becoming memory/wiki/skill/test/policy/goal/training candidates
 - [ ] T262 [P] [US15] Add negative tests proving dreaming cannot inject prompts, publish skills, update wiki, change config, queue goals, enforce policy, edit repos, deploy code, or export training data directly
 - [ ] T263 [P] [US15] Add dashboard/API tests for listing proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history
@@ -633,9 +633,9 @@
 
 ### Implementation For Dreaming Integration
 
-- [ ] T265 [US15] Extend dreaming proposal DTOs with proposal type, affected feature ids, conversion target, expected benefit, forbidden direct actions, suggested validation, and tenant/global role metadata
-- [ ] T266 [US15] Add local/global dreaming role resolver and input builder with strict evidence filters
-- [ ] T267 [US15] Add proposal validators for skill, CI/CD, test-gap, routing, cost, training, and architecture proposal types
+- [x] T265 [US15] Extend dreaming proposal DTOs with proposal type, affected feature ids, conversion target, expected benefit, forbidden direct actions, suggested validation, and tenant/global role metadata
+- [x] T266 [US15] Add local/global dreaming role resolver and input builder with strict evidence filters
+- [x] T267 [US15] Add proposal validators for skill, CI/CD, test-gap, routing, cost, training, and architecture proposal types
 - [ ] T268 [US15] Add conversion helpers that create downstream candidates only after judge/operator approval
 - [ ] T269 [US15] Add dashboard/observability DTOs for dreaming proposal review and approval history
 - [ ] T270 [US15] Add CLI/API-compatible surfaces for `hermes memory dream proposals --json`, `hermes memory dream convert --json`, and proposal status filtering

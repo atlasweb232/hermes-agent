@@ -410,6 +410,12 @@ Tenant-local learning:
 - dreaming proposals
 - policy audits
 
+Dreaming proposals follow the tenant/local and global role boundaries in
+[`dreaming-integration-architecture.md`](./dreaming-integration-architecture.md)
+and the
+[`dreaming-integration.md`](../specs/001-learning-memory-runtime/contracts/dreaming-integration.md)
+contract.
+
 Global learning:
 
 - only redacted, approved, shareable lessons

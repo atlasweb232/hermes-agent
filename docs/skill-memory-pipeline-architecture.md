@@ -266,6 +266,13 @@ Feedback should be attached to the task/session and skill version.
 - Global skill publication requires approval and validation.
 - Tenants opt into global skill ingestion.
 
+Dreaming can propose skill candidates and repairs, but it remains proposal-only
+and follows the
+[`dreaming-integration-architecture.md`](./dreaming-integration-architecture.md)
+and
+[`dreaming-integration.md`](../specs/001-learning-memory-runtime/contracts/dreaming-integration.md)
+contracts before any skill pipeline conversion.
+
 ## E2E Tests
 
 Minimum tests:

@@ -13,7 +13,23 @@ from hermes_cli.config import load_config
 from hermes_state import SessionDB
 
 
-PROPOSAL_TYPES = {"playbook", "test", "routing", "policy", "cleanup", "architecture", "training"}
+LEGACY_PROPOSAL_TYPES = {"playbook", "test", "routing", "policy", "cleanup", "architecture", "training"}
+PHASE18_PROPOSAL_TYPES = {
+    "skill_candidate",
+    "skill_repair",
+    "test_gap",
+    "ci_cd_hardening",
+    "memory_wiki_update",
+    "routing_improvement",
+    "allocator_policy_candidate",
+    "observability_gap",
+    "tenant_onboarding_improvement",
+    "toolset_recommendation",
+    "cost_optimization",
+    "training_corpus_candidate",
+    "architecture_review_item",
+}
+PROPOSAL_TYPES = LEGACY_PROPOSAL_TYPES | PHASE18_PROPOSAL_TYPES
 RISK_LEVELS = {"low", "medium", "high"}
 TRIGGERS = {"manual", "sidecar_interval", "service_start"}
 PROPOSAL_SCHEMA_KEYS = {
@@ -26,6 +42,17 @@ PROPOSAL_SCHEMA_KEYS = {
     "trigger",
     "requested_action",
     "runtime_effect",
+}
+PHASE18_PROPOSAL_SCHEMA_KEYS = PROPOSAL_SCHEMA_KEYS | {
+    "affected_feature_ids",
+    "conversion_target",
+    "expected_benefit",
+    "forbidden_direct_actions",
+    "suggested_validation",
+    "role_metadata",
+    "evidence_packets",
+    "judge_state",
+    "operator_state",
 }
 SECRET_PATTERNS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -46,7 +73,47 @@ FORBIDDEN_DIRECT_EFFECT_PATTERNS = [
     re.compile(r"\binject\s+(into\s+)?prompt\b", re.I),
     re.compile(r"\bapply\s+config\b", re.I),
     re.compile(r"\benforce\b", re.I),
+    re.compile(r"\bpublish\s+skills?\b", re.I),
+    re.compile(r"\bupdate\s+wiki\b", re.I),
+    re.compile(r"\bchange\s+config\b", re.I),
+    re.compile(r"\bedit\s+repos?\b", re.I),
+    re.compile(r"\bdeploy\s+code\b", re.I),
 ]
+RAW_OR_UNBOUNDED_PATTERNS = [
+    re.compile(r"\braw\s+transcript\b", re.I),
+    re.compile(r"\bfull\s+transcript\b", re.I),
+    re.compile(r"\bunbounded\s+logs?\b", re.I),
+]
+FORBIDDEN_DIRECT_ACTIONS = {
+    "inject_prompts",
+    "publish_skill",
+    "publish_skills",
+    "update_wiki",
+    "change_config",
+    "queue_goal",
+    "enforce_policy",
+    "edit_repo",
+    "deploy_code",
+    "export_training_data",
+}
+CONVERSION_TARGETS = {
+    "memory_candidate",
+    "memory_wiki_update",
+    "global_memory_wiki",
+    "skill_candidate",
+    "test_backlog_item",
+    "spec_task",
+    "ci_cd_task",
+    "policy_candidate",
+    "allocator_policy_candidate",
+    "routing_advisory",
+    "observability_task",
+    "tenant_onboarding_task",
+    "toolset_recommendation",
+    "cost_review_item",
+    "training_corpus_candidate",
+    "architecture_review_item",
+}
 
 
 class DreamingParseError(ValueError):
@@ -123,6 +190,51 @@ class DreamingConfig:
 
 
 @dataclass
+class DreamingEvidencePacket:
+    packet_id: str
+    source_ref: str
+    content_summary: str = ""
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
+    scope: str = "local"
+    approved: bool = False
+    redacted: bool = False
+    shareable: bool = False
+    kind: str = "memory"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DreamingInputPacket:
+    role_metadata: Dict[str, Any]
+    evidence_packets: List[DreamingEvidencePacket]
+    skipped: List[Dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "role_metadata": self.role_metadata,
+            "evidence_packets": [packet.to_dict() for packet in self.evidence_packets],
+            "skipped": self.skipped,
+        }
+
+
+@dataclass
+class DreamingValidatorOutput:
+    accepted: bool
+    proposal_id: str
+    proposal_type: str
+    error_codes: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    conversion_target: Optional[str] = None
+    required_gates: List[str] = field(default_factory=lambda: ["deterministic_validator", "judge", "operator"])
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class DreamingProposal:
     id: str
     proposal_type: str
@@ -134,6 +246,15 @@ class DreamingProposal:
     trigger: str
     requested_action: str
     runtime_effect: bool = False
+    affected_feature_ids: List[str] = field(default_factory=list)
+    conversion_target: str = "memory_candidate"
+    expected_benefit: str = ""
+    forbidden_direct_actions: List[str] = field(default_factory=list)
+    suggested_validation: List[str] = field(default_factory=list)
+    role_metadata: Dict[str, Any] = field(default_factory=dict)
+    evidence_packets: List[Dict[str, Any]] = field(default_factory=list)
+    judge_state: Dict[str, Any] = field(default_factory=lambda: {"status": "pending"})
+    operator_state: Dict[str, Any] = field(default_factory=lambda: {"status": "pending"})
     status: str = "proposed"
     tenant_id: Optional[str] = None
     repo_id: Optional[str] = None
@@ -232,6 +353,21 @@ def ensure_dreaming_schema(db: SessionDB) -> None:
             )
             """
         )
+        existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(hermes_dreaming_proposals)").fetchall()}
+        additive_columns = {
+            "affected_feature_ids_json": "TEXT",
+            "conversion_target": "TEXT",
+            "expected_benefit": "TEXT",
+            "forbidden_direct_actions_json": "TEXT",
+            "suggested_validation_json": "TEXT",
+            "role_metadata_json": "TEXT",
+            "evidence_packets_json": "TEXT",
+            "judge_state_json": "TEXT",
+            "operator_state_json": "TEXT",
+        }
+        for column, column_type in additive_columns.items():
+            if column not in existing_columns:
+                conn.execute(f"ALTER TABLE hermes_dreaming_proposals ADD COLUMN {column} {column_type}")
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_hermes_dreaming_proposals_scope
@@ -242,7 +378,106 @@ def ensure_dreaming_schema(db: SessionDB) -> None:
     db._execute_write(_do)
 
 
+def resolve_dreaming_role(
+    *,
+    mode: str,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    normalized = str(mode or "").strip().lower()
+    if normalized == "local":
+        if not tenant_id or not repo_id:
+            raise ValueError("local dreaming requires tenant_id and repo_id")
+        return {
+            "role": "local_dreaming",
+            "mode": "local",
+            "tenant_id": tenant_id,
+            "repo_id": repo_id,
+            "visibility": "tenant_repo",
+            "can_publish_global": False,
+            "input_policy": "tenant_repo_approved_evidence_only",
+        }
+    if normalized == "global":
+        return {
+            "role": "global_dreaming",
+            "mode": "global",
+            "tenant_id": None,
+            "repo_id": None,
+            "visibility": "global",
+            "can_publish_global": False,
+            "input_policy": "redacted_approved_shareable_global_only",
+        }
+    raise ValueError(f"invalid dreaming role mode: {mode}")
+
+
+def _record_bool(record: Dict[str, Any], *keys: str) -> bool:
+    return any(bool(record.get(key)) for key in keys)
+
+
+def _record_scope(record: Dict[str, Any]) -> str:
+    scope = record.get("scope")
+    if isinstance(scope, dict):
+        return str(scope.get("visibility") or scope.get("scope") or "").strip().lower()
+    return str(scope or record.get("visibility") or "").strip().lower()
+
+
+def _packet_from_record(record: Dict[str, Any], *, default_scope: str) -> DreamingEvidencePacket:
+    packet_id = str(record.get("packet_id") or record.get("id") or record.get("record_id") or record.get("source_ref") or "")
+    return DreamingEvidencePacket(
+        packet_id=packet_id,
+        source_ref=str(record.get("source_ref") or record.get("evidence_uri") or packet_id),
+        content_summary=str(record.get("content_summary") or record.get("summary") or record.get("content") or "")[:2000],
+        tenant_id=record.get("tenant_id"),
+        repo_id=record.get("repo_id"),
+        scope=_record_scope(record) or default_scope,
+        approved=_record_bool(record, "approved", "is_approved") or record.get("status") == "approved",
+        redacted=_record_bool(record, "redacted", "is_redacted"),
+        shareable=_record_bool(record, "shareable", "global_shareable", "is_shareable"),
+        kind=str(record.get("kind") or record.get("source_type") or "memory"),
+    )
+
+
+def build_dreaming_input_packet(role_metadata: Dict[str, Any], records: Iterable[Dict[str, Any]]) -> DreamingInputPacket:
+    role = str(role_metadata.get("role") or "")
+    packets: List[DreamingEvidencePacket] = []
+    skipped: List[Dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            skipped.append({"reason": "invalid_record"})
+            continue
+        packet = _packet_from_record(record, default_scope="global" if role == "global_dreaming" else "local")
+        if not packet.packet_id:
+            skipped.append({"reason": "missing_packet_id"})
+            continue
+        if _contains_secret(packet.to_dict()) or _matches_any(RAW_OR_UNBOUNDED_PATTERNS, packet.content_summary):
+            skipped.append({"packet_id": packet.packet_id, "reason": "unsafe_content"})
+            continue
+        if role == "local_dreaming":
+            if packet.tenant_id != role_metadata.get("tenant_id") or packet.repo_id != role_metadata.get("repo_id"):
+                skipped.append({"packet_id": packet.packet_id, "reason": "outside_local_scope"})
+                continue
+            packets.append(packet)
+            continue
+        if role == "global_dreaming":
+            if packet.scope != "global" or not (packet.approved and packet.redacted and packet.shareable):
+                skipped.append({"packet_id": packet.packet_id, "reason": "not_redacted_approved_shareable_global"})
+                continue
+            packet.tenant_id = None
+            packet.repo_id = None
+            packets.append(packet)
+            continue
+        skipped.append({"packet_id": packet.packet_id, "reason": "unknown_role"})
+    return DreamingInputPacket(role_metadata=dict(role_metadata), evidence_packets=packets, skipped=skipped)
+
+
 def _row_to_proposal(row: Any) -> DreamingProposal:
+    scope = _json_loads(row["scope_json"])
+    def _row_value(key: str, default: Any = None) -> Any:
+        try:
+            return row[key]
+        except Exception:
+            return default
+
     return DreamingProposal(
         id=row["id"],
         tenant_id=row["tenant_id"],
@@ -251,11 +486,22 @@ def _row_to_proposal(row: Any) -> DreamingProposal:
         summary=row["summary"],
         rationale=row["rationale"],
         evidence_refs=[str(item) for item in _list_loads(row["evidence_refs_json"])],
-        scope=_json_loads(row["scope_json"]),
+        scope=scope,
         risk=row["risk"],
         trigger=row["trigger"],
         requested_action=row["requested_action"],
         runtime_effect=bool(row["runtime_effect"]),
+        affected_feature_ids=[str(item) for item in _list_loads(_row_value("affected_feature_ids_json"))],
+        conversion_target=str(_row_value("conversion_target") or scope.get("conversion_target") or "memory_candidate"),
+        expected_benefit=str(_row_value("expected_benefit") or ""),
+        forbidden_direct_actions=[str(item) for item in _list_loads(_row_value("forbidden_direct_actions_json"))],
+        suggested_validation=[str(item) for item in _list_loads(_row_value("suggested_validation_json"))],
+        role_metadata=_json_loads(_row_value("role_metadata_json")) or scope.get("role_metadata", {}),
+        evidence_packets=[
+            item for item in _list_loads(_row_value("evidence_packets_json")) if isinstance(item, dict)
+        ],
+        judge_state=_json_loads(_row_value("judge_state_json")) or {"status": "pending"},
+        operator_state=_json_loads(_row_value("operator_state_json")) or {"status": "pending"},
         status=row["status"],
         interval_due_at=row["interval_due_at"],
         job_id=row["job_id"],
@@ -285,7 +531,9 @@ def parse_dreaming_proposal_output(raw: str, *, trigger: Optional[str] = None) -
             raise DreamingParseError(f"dreaming output was not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise DreamingParseError("dreaming output must be a JSON object")
-    extra = set(payload) - PROPOSAL_SCHEMA_KEYS
+    has_phase18_fields = bool(set(payload) & (PHASE18_PROPOSAL_SCHEMA_KEYS - PROPOSAL_SCHEMA_KEYS))
+    allowed_keys = PHASE18_PROPOSAL_SCHEMA_KEYS if has_phase18_fields else PROPOSAL_SCHEMA_KEYS
+    extra = set(payload) - allowed_keys
     missing = PROPOSAL_SCHEMA_KEYS - set(payload)
     if extra:
         raise DreamingParseError(f"unexpected proposal fields: {sorted(extra)}")
@@ -315,6 +563,26 @@ def parse_dreaming_proposal_output(raw: str, *, trigger: Optional[str] = None) -
     requested_action = str(payload["requested_action"] or "").strip()
     if not summary or not rationale or not requested_action:
         raise DreamingParseError("summary, rationale, and requested_action are required")
+    affected_feature_ids = payload.get("affected_feature_ids", [])
+    forbidden_direct_actions = payload.get("forbidden_direct_actions", [])
+    suggested_validation = payload.get("suggested_validation", [])
+    evidence_packets = payload.get("evidence_packets", [])
+    for field_name, value in (
+        ("affected_feature_ids", affected_feature_ids),
+        ("forbidden_direct_actions", forbidden_direct_actions),
+        ("suggested_validation", suggested_validation),
+        ("evidence_packets", evidence_packets),
+    ):
+        if not isinstance(value, list):
+            raise DreamingParseError(f"{field_name} must be a list")
+    role_metadata = payload.get("role_metadata", {})
+    judge_state = payload.get("judge_state", {"status": "pending"})
+    operator_state = payload.get("operator_state", {"status": "pending"})
+    for field_name, value in (("role_metadata", role_metadata), ("judge_state", judge_state), ("operator_state", operator_state)):
+        if not isinstance(value, dict):
+            raise DreamingParseError(f"{field_name} must be an object")
+    conversion_target = str(payload.get("conversion_target") or _default_conversion_target(proposal_type)).strip()
+    expected_benefit = str(payload.get("expected_benefit") or "").strip()
     proposal_id = _stable_id(
         "dream",
         proposal_type,
@@ -335,7 +603,41 @@ def parse_dreaming_proposal_output(raw: str, *, trigger: Optional[str] = None) -
         trigger=proposal_trigger,
         requested_action=requested_action,
         runtime_effect=runtime_effect,
+        affected_feature_ids=[str(item) for item in affected_feature_ids if str(item).strip()],
+        conversion_target=conversion_target,
+        expected_benefit=expected_benefit,
+        forbidden_direct_actions=[str(item) for item in forbidden_direct_actions if str(item).strip()],
+        suggested_validation=[str(item) for item in suggested_validation if str(item).strip()],
+        role_metadata=role_metadata,
+        evidence_packets=[item for item in evidence_packets if isinstance(item, dict)],
+        judge_state=judge_state,
+        operator_state=operator_state,
     )
+
+
+def _default_conversion_target(proposal_type: str) -> str:
+    return {
+        "playbook": "memory_candidate",
+        "test": "test_backlog_item",
+        "routing": "routing_advisory",
+        "policy": "policy_candidate",
+        "cleanup": "memory_candidate",
+        "architecture": "architecture_review_item",
+        "training": "training_corpus_candidate",
+        "skill_candidate": "skill_candidate",
+        "skill_repair": "skill_candidate",
+        "test_gap": "test_backlog_item",
+        "ci_cd_hardening": "ci_cd_task",
+        "memory_wiki_update": "memory_wiki_update",
+        "routing_improvement": "routing_advisory",
+        "allocator_policy_candidate": "allocator_policy_candidate",
+        "observability_gap": "observability_task",
+        "tenant_onboarding_improvement": "tenant_onboarding_task",
+        "toolset_recommendation": "toolset_recommendation",
+        "cost_optimization": "cost_review_item",
+        "training_corpus_candidate": "training_corpus_candidate",
+        "architecture_review_item": "architecture_review_item",
+    }.get(proposal_type, "memory_candidate")
 
 
 def validate_dreaming_proposal(
@@ -344,6 +646,19 @@ def validate_dreaming_proposal(
     config: Optional[DreamingConfig] = None,
     known_evidence_refs: Optional[Iterable[str]] = None,
 ) -> List[str]:
+    return validate_dreaming_proposal_details(
+        proposal,
+        config=config,
+        known_evidence_refs=known_evidence_refs,
+    ).error_codes
+
+
+def validate_dreaming_proposal_details(
+    proposal: DreamingProposal,
+    *,
+    config: Optional[DreamingConfig] = None,
+    known_evidence_refs: Optional[Iterable[str]] = None,
+) -> DreamingValidatorOutput:
     cfg = config or DreamingConfig()
     errors: List[str] = []
     if not proposal.evidence_refs:
@@ -357,15 +672,55 @@ def validate_dreaming_proposal(
         errors.append("runtime_effect_not_allowed")
     if proposal.proposal_type == "policy" and not cfg.allow_policy_proposals:
         errors.append("policy_proposals_disabled")
+    if proposal.proposal_type == "allocator_policy_candidate" and not cfg.allow_policy_proposals:
+        errors.append("policy_proposals_disabled")
     if proposal.scope.get("cross_tenant_shareable") and not cfg.allow_cross_tenant:
         errors.append("cross_tenant_sharing_disabled")
+    role = proposal.role_metadata or {}
+    if role.get("role") == "local_dreaming":
+        if proposal.scope.get("tenant_id") and proposal.scope.get("tenant_id") != role.get("tenant_id"):
+            errors.append("tenant_scope_mismatch")
+        if proposal.scope.get("repo_id") and proposal.scope.get("repo_id") != role.get("repo_id"):
+            errors.append("repo_scope_mismatch")
+        if proposal.scope.get("visibility") == "global" or proposal.conversion_target == "global_memory_wiki":
+            errors.append("local_cannot_publish_global")
+    if role.get("role") == "global_dreaming":
+        for packet in proposal.evidence_packets:
+            if packet.get("tenant_id") or packet.get("repo_id"):
+                errors.append("global_evidence_contains_private_scope")
+            if packet.get("scope") != "global":
+                errors.append("global_evidence_not_global")
+            if not (packet.get("approved") and packet.get("redacted") and packet.get("shareable")):
+                errors.append("global_evidence_not_redacted_approved_shareable")
+    if proposal.conversion_target and proposal.conversion_target not in CONVERSION_TARGETS:
+        errors.append("unsupported_conversion_target")
+    forbidden_actions = {str(item).strip().lower() for item in proposal.forbidden_direct_actions}
+    if forbidden_actions & FORBIDDEN_DIRECT_ACTIONS:
+        # Listing forbidden actions is expected. Requesting them is caught by text patterns below.
+        pass
     if _contains_secret(proposal.to_dict()):
         errors.append("secret_pattern_detected")
     if _matches_any(DESTRUCTIVE_PATTERNS, proposal.summary, proposal.requested_action, proposal.rationale):
         errors.append("destructive_command_detected")
     if _matches_any(FORBIDDEN_DIRECT_EFFECT_PATTERNS, proposal.summary, proposal.requested_action, proposal.rationale):
         errors.append("forbidden_direct_runtime_effect")
-    return sorted(set(errors))
+    if _matches_any(RAW_OR_UNBOUNDED_PATTERNS, proposal.summary, proposal.requested_action, proposal.rationale, proposal.to_dict()):
+        errors.append("raw_transcript_or_unbounded_log_detected")
+    if proposal.proposal_type in PHASE18_PROPOSAL_TYPES:
+        if not proposal.conversion_target:
+            errors.append("missing_conversion_target")
+        if not proposal.expected_benefit:
+            errors.append("missing_expected_benefit")
+        if not proposal.suggested_validation:
+            errors.append("missing_suggested_validation")
+    unique_errors = sorted(set(errors))
+    return DreamingValidatorOutput(
+        accepted=not unique_errors,
+        proposal_id=proposal.id,
+        proposal_type=proposal.proposal_type,
+        error_codes=unique_errors,
+        conversion_target=proposal.conversion_target,
+    )
 
 
 def _proposal_from_wiki_claim(claim: Any, *, trigger: str, interval_due_at: Optional[float]) -> DreamingProposal:
@@ -486,8 +841,12 @@ def upsert_dreaming_proposal(db: SessionDB, proposal: DreamingProposal) -> Dream
                 evidence_refs_json, scope_json, risk, trigger, requested_action,
                 runtime_effect, status, interval_due_at, job_id,
                 validator_errors_json, judge_decision_json, operator_decision_json,
-                converted_candidate_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                converted_candidate_id, created_at, updated_at,
+                affected_feature_ids_json, conversion_target, expected_benefit,
+                forbidden_direct_actions_json, suggested_validation_json,
+                role_metadata_json, evidence_packets_json, judge_state_json,
+                operator_state_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 tenant_id = excluded.tenant_id,
                 repo_id = excluded.repo_id,
@@ -511,6 +870,15 @@ def upsert_dreaming_proposal(db: SessionDB, proposal: DreamingProposal) -> Dream
                 judge_decision_json = excluded.judge_decision_json,
                 operator_decision_json = excluded.operator_decision_json,
                 converted_candidate_id = COALESCE(hermes_dreaming_proposals.converted_candidate_id, excluded.converted_candidate_id),
+                affected_feature_ids_json = excluded.affected_feature_ids_json,
+                conversion_target = excluded.conversion_target,
+                expected_benefit = excluded.expected_benefit,
+                forbidden_direct_actions_json = excluded.forbidden_direct_actions_json,
+                suggested_validation_json = excluded.suggested_validation_json,
+                role_metadata_json = excluded.role_metadata_json,
+                evidence_packets_json = excluded.evidence_packets_json,
+                judge_state_json = excluded.judge_state_json,
+                operator_state_json = excluded.operator_state_json,
                 updated_at = excluded.updated_at
             """
             ,
@@ -536,6 +904,15 @@ def upsert_dreaming_proposal(db: SessionDB, proposal: DreamingProposal) -> Dream
                 proposal.converted_candidate_id,
                 now,
                 now,
+                json.dumps(proposal.affected_feature_ids, sort_keys=True),
+                proposal.conversion_target,
+                proposal.expected_benefit,
+                json.dumps(proposal.forbidden_direct_actions, sort_keys=True),
+                json.dumps(proposal.suggested_validation, sort_keys=True),
+                _json_dumps(proposal.role_metadata),
+                json.dumps(proposal.evidence_packets, sort_keys=True),
+                _json_dumps(proposal.judge_state),
+                _json_dumps(proposal.operator_state),
             ),
         )
 
@@ -677,12 +1054,41 @@ def build_dreaming_prompt(
     evidence["candidates"] = db.list_meta_candidates(tenant_id=tenant_id, repo_id=repo_id, status="proposed", limit=20)
     return (
         "You are the Hermes dreaming sidecar. Propose exactly one offline, proposal-only improvement.\n"
-        "Return only strict JSON with exactly these fields: proposal_type, summary, rationale, "
-        "evidence_refs, scope, risk, trigger, requested_action, runtime_effect.\n"
+        "Return only strict JSON with these fields: proposal_type, summary, rationale, "
+        "evidence_refs, scope, risk, trigger, requested_action, runtime_effect, affected_feature_ids, "
+        "conversion_target, expected_benefit, forbidden_direct_actions, suggested_validation, "
+        "role_metadata, evidence_packets, judge_state, operator_state.\n"
         "Rules: use only evidence_refs from known_evidence_refs; runtime_effect must be false; "
-        "do not request direct wiki writes, training exports, goal queueing, config changes, prompt injection, or enforcement.\n\n"
+        "do not request direct skill publication, wiki writes, training exports, goal queueing, "
+        "config changes, prompt injection, policy enforcement, repo edits, or deployments.\n\n"
         f"Evidence JSON:\n{json.dumps(evidence, indent=2, ensure_ascii=False)}\n"
     )
+
+
+def build_dreaming_dashboard_dto(proposal: DreamingProposal) -> Dict[str, Any]:
+    return {
+        "id": proposal.id,
+        "tenant_id": proposal.tenant_id,
+        "repo_id": proposal.repo_id,
+        "proposal_type": proposal.proposal_type,
+        "risk": proposal.risk,
+        "status": proposal.status,
+        "summary": proposal.summary,
+        "evidence_refs": proposal.evidence_refs,
+        "expected_benefit": proposal.expected_benefit,
+        "affected_feature_ids": proposal.affected_feature_ids,
+        "conversion_target": proposal.conversion_target,
+        "forbidden_direct_actions": proposal.forbidden_direct_actions,
+        "suggested_validation": proposal.suggested_validation,
+        "role_metadata": proposal.role_metadata,
+        "judge_state": proposal.judge_state or {"status": "pending"},
+        "operator_state": proposal.operator_state or {"status": "pending"},
+        "judge_decision": proposal.judge_decision,
+        "operator_decision": proposal.operator_decision,
+        "validator_errors": proposal.validator_errors,
+        "created_at": proposal.created_at,
+        "updated_at": proposal.updated_at,
+    }
 
 
 def list_dreaming_proposals(
@@ -738,6 +1144,13 @@ def judge_dreaming_proposal(
         "rationale": rationale or f"judge decision: {decision}",
         "created_at": _now(),
     }
+    proposal.judge_state = {
+        "status": "approved" if decision == "approve" else decision,
+        "decision": decision,
+        "confidence": float(confidence),
+        "rationale": rationale or f"judge decision: {decision}",
+        "created_at": proposal.judge_decision["created_at"],
+    }
     proposal.status = "judged" if decision == "approve" else ("rejected" if decision == "reject" else "needs_human")
     saved = upsert_dreaming_proposal(db, proposal)
     return DreamingActionResult(proposal_id=proposal_id, status=saved.status, proposal=saved.to_dict())
@@ -760,6 +1173,12 @@ def approve_dreaming_proposal(
         "decision": "approve",
         "operator": operator,
         "created_at": _now(),
+    }
+    proposal.operator_state = {
+        "status": "approved",
+        "decision": "approve",
+        "operator": operator,
+        "created_at": proposal.operator_decision["created_at"],
     }
     proposal.status = "approved"
     converted_id = None
@@ -790,6 +1209,12 @@ def reject_dreaming_proposal(
         "reason": reason,
         "created_at": _now(),
     }
+    proposal.operator_state = {
+        "status": "rejected",
+        "decision": "reject",
+        "reason": reason,
+        "created_at": proposal.operator_decision["created_at"],
+    }
     proposal.status = "rejected"
     saved = upsert_dreaming_proposal(db, proposal)
     return DreamingActionResult(proposal_id=proposal_id, status=saved.status, proposal=saved.to_dict())
@@ -816,6 +1241,13 @@ def convert_dreaming_proposal_to_candidate(db: SessionDB, proposal: DreamingProp
             "judge_decision": proposal.judge_decision,
             "operator_decision": proposal.operator_decision,
             "runtime_effect": False,
+            "affected_feature_ids": proposal.affected_feature_ids,
+            "conversion_target": proposal.conversion_target,
+            "expected_benefit": proposal.expected_benefit,
+            "forbidden_direct_actions": proposal.forbidden_direct_actions,
+            "suggested_validation": proposal.suggested_validation,
+            "role_metadata": proposal.role_metadata,
+            "evidence_packets": proposal.evidence_packets,
         },
         score=0.7 if proposal.risk == "low" else 0.5,
         status="proposed",
