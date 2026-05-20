@@ -659,24 +659,24 @@
 
 ### Tests For Training Corpus MLOps
 
-- [ ] T275 [P] [US16] Add failure/repair training record schema tests covering lesser-model attempt summary, failure classification, evidence refs, strong-model diagnosis, correction refs, validation refs, distilled lesson, forbidden behavior, redaction, and approval provenance
-- [ ] T276 [P] [US16] Add SFT message record tests and preference-pair tests for chosen validated repair vs rejected lesser-model failure
-- [ ] T277 [P] [US16] Add local JSONL bundle tests for stable manifest, hashes, redaction report, approval provenance, dataset-family filters, tenant/shareability boundaries, and no raw transcript/secret export
-- [ ] T278 [P] [US16] Add Delta/Iceberg-compatible destination layout metadata tests using local fake paths only, proving partition fields and schema versions are stable without requiring production services
-- [ ] T279 [P] [US16] Add external training hint tests for target base model family, recommended method, corpus refs, eval refs, and approval state without creating Hermes-owned training jobs
-- [ ] T280 [P] [US16] Add remittance receipt tests for destination URI, bundle hash, schema version, approval refs, external pipeline id, submitted_at, and immutable audit status
-- [ ] T281 [P] [US16] Add boundary tests proving Hermes cannot register, deploy, promote, or route to a fine-tuned model from corpus remittance output alone
+- [x] T275 [P] [US16] Add failure/repair training record schema tests covering lesser-model attempt summary, failure classification, evidence refs, strong-model diagnosis, correction refs, validation refs, distilled lesson, forbidden behavior, redaction, and approval provenance
+- [x] T276 [P] [US16] Add SFT message record tests and preference-pair tests for chosen validated repair vs rejected lesser-model failure
+- [x] T277 [P] [US16] Add local JSONL bundle tests for stable manifest, hashes, redaction report, approval provenance, dataset-family filters, tenant/shareability boundaries, and no raw transcript/secret export
+- [x] T278 [P] [US16] Add Delta/Iceberg-compatible destination layout metadata tests using local fake paths only, proving partition fields and schema versions are stable without requiring production services
+- [x] T279 [P] [US16] Add external training hint tests for target base model family, recommended method, corpus refs, eval refs, and approval state without creating Hermes-owned training jobs
+- [x] T280 [P] [US16] Add remittance receipt tests for destination URI, bundle hash, schema version, approval refs, external pipeline id, submitted_at, and immutable audit status
+- [x] T281 [P] [US16] Add boundary tests proving Hermes cannot register, deploy, promote, or route to a fine-tuned model from corpus remittance output alone
 
 ### Implementation For Training Corpus MLOps
 
-- [ ] T282 [US16] Implement MLOps training corpus DTOs for failure/repair records, SFT records, preference pairs, manifests, redaction reports, and approval provenance
-- [ ] T283 [US16] Implement local JSONL bundle writer with deterministic ordering, stable hashes, schema version, and reproducibility metadata
-- [ ] T284 [US16] Implement Delta/Iceberg-compatible destination layout planner without adding production storage dependencies
-- [ ] T285 [US16] Implement external training hint builder for SFT, DPO/ORPO, LoRA, QLoRA, and full fine-tune recommendations without scheduling jobs
-- [ ] T286 [US16] Implement remittance receipt writer for local/dev audit records after bundle handoff to configured storage
-- [ ] T287 [US16] Implement external MLOps handoff validator proving required approval, redaction, tenant/shareability, schema, and hash fields are present before remittance
-- [ ] T288 [US16] Add CLI/API-compatible surfaces for `hermes mlops corpus export`, `hermes mlops corpus remit`, `hermes mlops corpus receipts`, and `hermes mlops corpus validate --json`
-- [ ] T289 [US16] Add E2E fixture proving a Gemma-class lesser-model failure plus Codex/strong-model rectification can produce approved local training records and a remittance receipt, while Hermes remains unable to train or deploy a model
+- [x] T282 [US16] Implement MLOps training corpus DTOs for failure/repair records, SFT records, preference pairs, manifests, redaction reports, and approval provenance
+- [x] T283 [US16] Implement local JSONL bundle writer with deterministic ordering, stable hashes, schema version, and reproducibility metadata
+- [x] T284 [US16] Implement Delta/Iceberg-compatible destination layout planner without adding production storage dependencies
+- [x] T285 [US16] Implement external training hint builder for SFT, DPO/ORPO, LoRA, QLoRA, and full fine-tune recommendations without scheduling jobs
+- [x] T286 [US16] Implement remittance receipt writer for local/dev audit records after bundle handoff to configured storage
+- [x] T287 [US16] Implement external MLOps handoff validator proving required approval, redaction, tenant/shareability, schema, and hash fields are present before remittance
+- [x] T288 [US16] Add CLI/API-compatible surfaces for `hermes mlops corpus export`, `hermes mlops corpus remit`, `hermes mlops corpus receipts`, and `hermes mlops corpus validate --json`
+- [x] T289 [US16] Add E2E fixture proving a Gemma-class lesser-model failure plus Codex/strong-model rectification can produce approved local training records and a remittance receipt, while Hermes remains unable to train or deploy a model
 
 **Checkpoint**: Hermes can create and remit high-quality offline training data for cheaper coding models while keeping runtime memory, corpus export, external training, registry, and deployment separate.
 

@@ -9733,7 +9733,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
-        "kanban", "login", "logout", "logs", "lsp", "mcp", "memory",
+        "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "mlops",
         "model", "pairing", "plugins", "postinstall", "profile", "proxy",
         "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
@@ -11624,6 +11624,85 @@ Examples:
             store.close()
 
     tenant_parser.set_defaults(func=cmd_tenant)
+
+    # =========================================================================
+    # mlops command — local corpus export/remittance boundary
+    # =========================================================================
+    mlops_parser = subparsers.add_parser(
+        "mlops",
+        help="Local MLOps corpus export and remittance helpers",
+        description=(
+            "Create deterministic local training-corpus bundles and immutable "
+            "remittance receipts. This command does not train, register, deploy, "
+            "promote, or route models."
+        ),
+    )
+    mlops_sub = mlops_parser.add_subparsers(dest="mlops_command")
+    mlops_corpus = mlops_sub.add_parser("corpus", help="Export and remit local corpus bundles")
+    mlops_corpus_sub = mlops_corpus.add_subparsers(dest="mlops_corpus_command")
+
+    mlops_export = mlops_corpus_sub.add_parser("export", help="Export a deterministic local JSONL corpus bundle")
+    mlops_export.add_argument("--artifact-root", default="", help="Local artifact root")
+    mlops_export.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    mlops_validate = mlops_corpus_sub.add_parser("validate", help="Validate a local corpus bundle before handoff")
+    mlops_validate.add_argument("--bundle-path", required=True, help="Bundle directory")
+    mlops_validate.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    mlops_remit = mlops_corpus_sub.add_parser("remit", help="Write an immutable local remittance receipt")
+    mlops_remit.add_argument("--bundle-path", required=True, help="Bundle directory")
+    mlops_remit.add_argument("--destination-uri", required=True, help="Configured storage URI")
+    mlops_remit.add_argument("--external-pipeline-id", default="", help="External pipeline id")
+    mlops_remit.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    mlops_receipts = mlops_corpus_sub.add_parser("receipts", help="List local remittance receipts")
+    mlops_receipts.add_argument("--artifact-root", default="", help="Local artifact root")
+    mlops_receipts.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    def cmd_mlops(args):
+        import json as _json
+        from hermes_constants import get_hermes_home
+        from hermes_cli.mlops_corpus import (
+            export_fixture_bundle,
+            list_receipts,
+            remit_bundle,
+            validate_handoff,
+        )
+
+        def _emit(payload):
+            print(_json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
+
+        if getattr(args, "mlops_command", None) != "corpus":
+            mlops_parser.print_help()
+            return
+        command = getattr(args, "mlops_corpus_command", None)
+        artifact_root = (
+            Path(getattr(args, "artifact_root"))
+            if getattr(args, "artifact_root", "")
+            else get_hermes_home() / "training-corpus"
+        )
+        try:
+            if command == "export":
+                _emit(export_fixture_bundle(artifact_root))
+                return
+            if command == "validate":
+                _emit(validate_handoff(Path(getattr(args, "bundle_path"))))
+                return
+            if command == "remit":
+                _emit(remit_bundle(
+                    Path(getattr(args, "bundle_path")),
+                    destination_uri=getattr(args, "destination_uri"),
+                    external_pipeline_id=getattr(args, "external_pipeline_id", ""),
+                ))
+                return
+            if command == "receipts":
+                _emit(list_receipts(artifact_root))
+                return
+        except (FileExistsError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        mlops_corpus.print_help()
+
+    mlops_parser.set_defaults(func=cmd_mlops)
 
     # =========================================================================
     # runtime command — supervisor orchestration packets and gates
