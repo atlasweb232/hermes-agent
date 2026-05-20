@@ -774,3 +774,12 @@ judge/operator review
 This keeps the global wiki useful for both runtime improvement and future
 training-corpus construction while preventing noisy, speculative, or
 tenant-inappropriate memories from spreading across devices.
+
+## Skill Pipeline Boundary
+
+The global memory wiki can provide evidence for skill candidates, but it does
+not publish procedural skills directly. Skill creation, repair, validation, and
+optional SkillClaw sync are governed by
+[`skill-memory-pipeline-architecture.md`](./skill-memory-pipeline-architecture.md)
+and the contract in
+[`../specs/001-learning-memory-runtime/contracts/skill-memory-pipeline.md`](../specs/001-learning-memory-runtime/contracts/skill-memory-pipeline.md).

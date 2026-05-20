@@ -574,8 +574,8 @@
 ### Spec And Architecture Artifacts
 
 - [x] T233 [US14] Add `docs/skill-memory-pipeline-architecture.md` defining memory vs skill boundaries, retrieval, injection points, authority, evolution, tenant/global libraries, SkillClaw modes, and E2E tests
-- [ ] T234 [US14] Add skill pipeline contract covering skill metadata, retrieval query, packet schema, outcome feedback, candidate state, and SkillClaw adapter interface
-- [ ] T235 [US14] Link skill pipeline architecture from tenant platform, memory wiki, dreaming, and E2E feature testing docs
+- [x] T234 [US14] Add skill pipeline contract covering skill metadata, retrieval query, packet schema, outcome feedback, candidate state, and SkillClaw adapter interface
+- [x] T235 [US14] Link skill pipeline architecture from tenant platform, memory wiki, dreaming, and E2E feature testing docs
 
 ### Tests For Skill Retrieval And Injection
 

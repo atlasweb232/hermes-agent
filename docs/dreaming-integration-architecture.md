@@ -210,6 +210,11 @@ Dreaming may propose:
 Dreaming does not write `SKILL.md` directly. A skill compiler or SkillClaw
 adapter may turn approved proposals into skill candidates.
 
+Skill candidate conversion must follow
+[`skill-memory-pipeline-architecture.md`](./skill-memory-pipeline-architecture.md)
+and
+[`../specs/001-learning-memory-runtime/contracts/skill-memory-pipeline.md`](../specs/001-learning-memory-runtime/contracts/skill-memory-pipeline.md).
+
 ## CI/CD And Test Integration
 
 Dreaming may propose:

@@ -307,6 +307,11 @@ Toolset profiles define:
 - approval requirements
 - fallback workers
 
+Skills are part of the toolset boundary. Tenant toolset profiles should declare
+which skill scopes are available to each role, and should follow the skill
+retrieval and bounded-injection rules in
+[`skill-memory-pipeline-architecture.md`](./skill-memory-pipeline-architecture.md).
+
 ## CI/CD And Deployment Automation
 
 CI/CD is a first-class toolset, not an afterthought. Hermes must be able to

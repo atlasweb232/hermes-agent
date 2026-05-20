@@ -97,6 +97,7 @@ The E2E suite must include at least these line items:
 | Task graph parallel dispatch | Ready nodes dispatch through allocator with owned paths | Parallel dispatch unavailable, sequential fallback used | task graph, owned paths |
 | Memory wiki | Approved memory compiles to scoped wiki claim | Wiki remains unchanged | wiki claim, evidence refs |
 | Dreaming | Offline proposal is created and held for approval | No proposal is created or injected | dreaming proposal, judge gate |
+| Skill retrieval and injection | Matching approved skill appears as bounded packet for the right role | No skill packet is injected | skill packet, skill refs, feedback |
 | Global memory and hot/warm/cold hydration | Scoped global lesson hydrates hot memory for task | Local-only retrieval runs | memory tier transitions |
 | Urgent notifications | Blocked/degraded task posts to urgent Slack route | No notification sent and status records skipped-by-toggle | notification event |
 | Telemetry and cost/context metrics | Token/cost/latency/context path metrics recorded | Task still runs with telemetry skipped | telemetry records |
@@ -143,6 +144,9 @@ Each test case result must include:
 - Test fixtures may use synthetic secrets and synthetic provider responses.
 - Live provider tests must be opt-in and tagged separately from deterministic
   CI tests.
+- Skill tests must follow
+  [`skill-memory-pipeline.md`](./skill-memory-pipeline.md), including tenant
+  isolation, bounded packet injection, and disabled shared sync by default.
 - Deterministic local runs must create an isolated `HERMES_HOME` and artifact
   root for each run. Persisted records may store paths, ids, bounded summaries,
   and evidence refs, but not raw transcripts, secrets, or unbounded logs.
