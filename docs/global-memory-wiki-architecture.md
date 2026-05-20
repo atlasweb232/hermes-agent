@@ -15,6 +15,15 @@ Tenant boundaries come from the tenant platform contract:
 Global memory may consume only redacted, approved, shareable tenant evidence;
 tenant-private memory namespaces from runtime cell assignments remain private.
 
+Production Azure deployment links for global memory are captured in
+[`contracts/azure-production-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-production-deployment.md)
+and
+[`docs/azure-production-deployment-architecture.md`](azure-production-deployment-architecture.md).
+Those profiles define the ADLS/Blob containers, PostgreSQL/Cosmos state store,
+Event Hubs Kafka or Redpanda/Kafka bus, Key Vault references, observability
+workspace, and Terraform artifact refs used to host the global wiki without
+placing raw secrets or transcripts in deployment artifacts.
+
 ## Storage Model
 
 Use separate stores for raw evidence, canonical state, and indexes:
@@ -60,6 +69,12 @@ deployments:
 - vector: pgvector/Qdrant/Weaviate/Pinecone
 - graph: Neo4j/Postgres graph tables/Neptune
 - audit: append-only Delta/Iceberg/Postgres tables
+
+On Azure, the Phase 20 scaffold starts with private `hermes-artifacts`,
+`hermes-memory`, `hermes-corpus`, and `hermes-audit` containers under
+[`infra/azure/terraform/hermes-platform`](../infra/azure/terraform/hermes-platform).
+The global wiki may reference those containers through deployment profile refs,
+but production apply and promotion stay behind operator approval.
 
 ## Configurable Storage
 

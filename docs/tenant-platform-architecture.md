@@ -16,6 +16,15 @@ That contract is the source of truth for registry, repo, connector, toolset,
 runtime cell, budget, smoke, normalized message, connector verification, and
 CI/CD packet shapes.
 
+Azure production deployment orchestration is specified separately in
+[`contracts/azure-production-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-production-deployment.md)
+and
+[`docs/azure-production-deployment-architecture.md`](azure-production-deployment-architecture.md).
+Tenant runtime cell fields remain the compatibility boundary; Azure profiles
+map them to Container Apps, Event Hubs Kafka, ADLS/Blob containers,
+PostgreSQL/Cosmos state, Key Vault, Azure Monitor/Application Insights, and
+network/DNS resources through the gated plan/preflight/approval workflow.
+
 ## Goals
 
 - Onboard enterprise tenants and power users safely.
@@ -520,6 +529,13 @@ contract: `hermes_home`, `worktree_root`, `secret_namespace`,
 `cost_ledger_namespace`. Production orchestration can map those fields to
 containers, volumes, schemas, and secret managers, but the local/dev contract
 remains the compatibility boundary.
+
+For the Azure target, that mapping is driven by the Phase 20 deployment
+profile and the Terraform scaffold at
+[`infra/azure/terraform/hermes-platform`](../infra/azure/terraform/hermes-platform).
+Apply, production promotion, destroy, DNS cutover, and secret rotation remain
+operator-approved operations; the tenant platform may request plans and
+preflight reports but must not bypass those gates.
 
 Scale-out shape:
 

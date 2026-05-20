@@ -13,6 +13,15 @@ Harness workloads that exercise tenant onboarding should report statuses and
 evidence refs for repo access, connector routing, toolsets, budgets, runtime
 cell isolation, and CI/CD packets without storing raw transcripts or secrets.
 
+Azure staging/production deployment orchestration is defined in
+[`contracts/azure-production-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-production-deployment.md)
+and
+[`docs/azure-production-deployment-architecture.md`](azure-production-deployment-architecture.md).
+The evaluation harness treats Azure deployment as a gated workload: plan and
+preflight may run against fake/local adapters by default, while live apply,
+promotion, DNS, destroy, and secret rotation require explicit operator
+approval and separate live-provider opt-in.
+
 ## Architecture
 
 ```text
@@ -178,3 +187,7 @@ Minimum gate:
 - sidecar overhead below budget
 - urgent alerts reliable
 - no memory promotion without judge/operator approval
+- Azure promotion evidence, when an Azure profile is under test, must include
+  staging health, event bus, sidecar, memory retrieval, urgent alert,
+  cost/latency, soak, and no-foreground-blocking checks before production
+  promotion is eligible.

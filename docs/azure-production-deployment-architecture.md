@@ -8,6 +8,13 @@ mutation. The operator experience can feel one-click after prerequisites are
 configured, but the platform must preserve plan, preflight, approval, smoke,
 soak, promote, and rollback gates.
 
+This architecture is linked from the tenant platform, production evaluation
+harness, global memory wiki, and runtime learning docs. The normative contract
+is
+[`specs/001-learning-memory-runtime/contracts/azure-production-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-production-deployment.md);
+the runtime behavior contract remains
+[`contracts/azure-runtime-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-runtime-deployment.md).
+
 ## Deployment Modes
 
 ### Local/Dev
@@ -266,3 +273,6 @@ Promotion gate:
 10. CLI/API JSON surfaces.
 
 No live Azure resources should be created by default tests.
+The first testable slice uses fake/local Azure adapters and the Terraform
+scaffold only; live apply is explicitly out of scope until a later
+operator-approved implementation phase.

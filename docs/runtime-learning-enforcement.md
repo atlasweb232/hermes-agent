@@ -2,6 +2,16 @@
 
 This branch records how the VM Hermes runtime enforces the learning architecture from the atlas `128-hermes-agent-platform` spec.
 
+Azure production deployment orchestration for this runtime is documented in
+[`specs/001-learning-memory-runtime/contracts/azure-production-deployment.md`](../specs/001-learning-memory-runtime/contracts/azure-production-deployment.md)
+and
+[`docs/azure-production-deployment-architecture.md`](azure-production-deployment-architecture.md).
+The runtime learning contract remains the behavior source of truth; Azure
+plans, preflight checks, Terraform artifacts, smoke/soak evidence, promotion,
+status, and rollback reports are deployment wrappers around that behavior and
+must not introduce live apply or production traffic changes without explicit
+operator approval.
+
 ## Runtime Branch
 
 - VM repo: `/home/rakib/.hermes/hermes-agent`
@@ -591,6 +601,10 @@ Result:
   the programmatic path instead of an LLM sidecar.
 - Live provider/Azure results are not claimed here; they remain blocked until
   the required Azure config and explicit live-smoke opt-in are present.
+- Phase 20 Azure deployment orchestration keeps that boundary: fake/local
+  adapters are the default for plan and preflight tests, SQLite remains the
+  default bus spool/fallback, and live Azure apply is outside the default
+  runtime learning validation path.
 
 ## Enforced Today
 

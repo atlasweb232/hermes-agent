@@ -692,16 +692,16 @@
 
 - [x] T290 [US17] Add `contracts/azure-production-deployment.md` defining Azure deployment profiles, plan/preflight/apply/status/promote/rollback outputs, approval gates, and non-goals
 - [x] T291 [US17] Add `docs/azure-production-deployment-architecture.md` covering local/dev, Azure staging, Azure production, chat orchestration, Event Hubs vs Redpanda choices, Azure object/state/secrets/observability resource targets, scalability, readiness gates, and first implementation slice
-- [ ] T292 [US17] Link Azure deployment orchestration from tenant platform, production evaluation harness, global memory wiki, runtime learning, and deployment docs
+- [x] T292 [US17] Link Azure deployment orchestration from tenant platform, production evaluation harness, global memory wiki, runtime learning, and deployment docs
 
 ### Tests For Azure Deployment Orchestration
 
-- [ ] T293 [P] [US17] Add deployment profile schema tests for dev/staging/production, runtime-cell mode, bus backend, ADLS/Blob object storage containers, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, network/DNS, IaC format, and approval requirements
-- [ ] T294 [P] [US17] Add plan/preflight tests with fake Azure adapters covering subscription visibility, quota, resource providers, Key Vault, object storage, state store, bus, observability workspace, DNS/network, required secret refs, cost estimate, IaC artifact refs, and rollback path
-- [ ] T295 [P] [US17] Add approval gate tests proving apply/promote/destroy/DNS/secret-rotation operations fail closed without explicit operator approval
-- [ ] T296 [P] [US17] Add bus deployment readiness tests for Event Hubs Kafka protocol and Redpanda/Kafka helper templates, broker health, topic verification, dead-letter/replay, lag metrics, TLS/SASL config shape, and SQLite spool fallback
-- [ ] T297 [P] [US17] Add smoke/soak/promotion tests proving staging must pass health, event bus, sidecar, memory retrieval, urgent alert, cost/latency, and no-foreground-blocking checks before production promotion
-- [ ] T298 [P] [US17] Add rollback/status tests proving a failed deployment produces sanitized status, rollback refs, and operator action items without leaking secrets
+- [x] T293 [P] [US17] Add deployment profile schema tests for dev/staging/production, runtime-cell mode, bus backend, ADLS/Blob object storage containers, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, network/DNS, IaC format, and approval requirements
+- [x] T294 [P] [US17] Add plan/preflight tests with fake Azure adapters covering subscription visibility, quota, resource providers, Key Vault, object storage, state store, bus, observability workspace, DNS/network, required secret refs, cost estimate, IaC artifact refs, and rollback path
+- [x] T295 [P] [US17] Add approval gate tests proving apply/promote/destroy/DNS/secret-rotation operations fail closed without explicit operator approval
+- [x] T296 [P] [US17] Add bus deployment readiness tests for Event Hubs Kafka protocol and Redpanda/Kafka helper templates, broker health, topic verification, dead-letter/replay, lag metrics, TLS/SASL config shape, and SQLite spool fallback
+- [x] T297 [P] [US17] Add smoke/soak/promotion tests proving staging must pass health, event bus, sidecar, memory retrieval, urgent alert, cost/latency, and no-foreground-blocking checks before production promotion
+- [x] T298 [P] [US17] Add rollback/status tests proving a failed deployment produces sanitized status, rollback refs, and operator action items without leaking secrets
 
 ### Implementation For Azure Deployment Orchestration
 
