@@ -423,6 +423,11 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **FR-122**: Hermes MUST record immutable remittance receipts for exported bundles, including destination URI, bundle hash, schema version, approval refs, external pipeline id when available, submitted_at, and audit status.
 - **FR-123**: Fine-tuning, model registry, model evaluation gates, serving, and rollout decisions MUST be owned by external MLOps infrastructure, not by Hermes runtime or sidecars.
 - **FR-124**: Runtime sidecars MAY create training candidates and approved corpus bundles but MUST NOT train, register, deploy, route to, or promote fine-tuned models directly.
+- **FR-125**: System MUST support Azure production deployment planning for Hermes platform infrastructure through a gated plan/preflight/apply/status/rollback workflow.
+- **FR-126**: Azure deployment planning MUST include runtime cells, sidecars, event bus backend, object/state storage, secrets, observability, communication connectors, network/DNS, quota, and cost estimate checks.
+- **FR-127**: Hermes chat MAY orchestrate Azure deployment workflows, but MUST require explicit operator approval before creating paid resources, changing DNS, rotating secrets, enabling production traffic, deleting infrastructure, or promoting staging to production.
+- **FR-128**: Azure deployment helpers MUST keep SQLite as the default local spool/fallback and MUST NOT block foreground runtime when Azure Event Hubs, Kafka, Redpanda, storage, or sidecar infrastructure is unavailable.
+- **FR-129**: Azure production deployment MUST support staging first, production promotion only after smoke/soak gates pass, and rollback to the prior known-good deployment profile.
 
 ### Key Entities
 
@@ -447,6 +452,11 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **External Training Hint**: Non-executing metadata emitted by Hermes that recommends target model family, training method, corpus refs, evaluation refs, and approval refs for an external MLOps pipeline.
 - **Corpus Remittance Receipt**: Immutable Hermes audit record showing an approved corpus bundle was handed off to configured storage or an external MLOps endpoint.
 - **External MLOps Platform**: Separate infrastructure that owns batch or streaming fine-tuning, model registry, evaluation gates, serving, and rollout decisions.
+- **Azure Deployment Profile**: Versioned deployment intent for dev, staging, or production containing region, subscription, resource group, runtime-cell mode, bus backend, storage, secrets, observability, network, DNS, connector, and cost settings.
+- **Deployment Plan**: Read-only artifact showing resources to create/change, estimated cost, risks, required secrets, approval gates, smoke tests, and rollback path.
+- **Deployment Preflight Report**: Validation result for Azure login, subscription, quotas, resource providers, DNS, Key Vault, storage, network, container/runtime capacity, and optional bus availability.
+- **Deployment Apply Run**: Operator-approved execution record for Azure resource creation or update, with step status, artifacts, logs, and rollback refs.
+- **Deployment Promotion Gate**: Staging-to-production decision requiring smoke tests, soak metrics, health checks, cost/latency checks, and operator approval.
 - **Retrieval Run**: Audit record for a retrieval request, including filters, lexical/vector/graph candidates, rerank scores, and packet output.
 - **Feature Toggle**: Runtime configuration switch that controls whether a platform capability can affect foreground behavior, sidecar behavior, observability, or enforcement.
 - **E2E Feature Test Case**: One executable feature-level scenario with required toggle state, workload fixture, expected artifacts, telemetry assertions, validation commands, and pass/fail classification.

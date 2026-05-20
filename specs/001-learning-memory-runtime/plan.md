@@ -166,6 +166,12 @@ See [../../docs/lesser-model-mlops-architecture.md](../../docs/lesser-model-mlop
 
 This phase separates offline model improvement from runtime memory. Hermes captures lesser-model failures, strong-model rectifications, validation evidence, and distilled lessons into approved training records, then remits reproducible bundles to configured storage for an external MLOps platform. The external MLOps platform owns batch or streaming fine-tuning, model registry, evaluation gates, serving, and rollout decisions.
 
+## Phase 20: Azure Production Deployment Orchestration
+
+See [contracts/azure-production-deployment.md](./contracts/azure-production-deployment.md) and [../../docs/azure-production-deployment-architecture.md](../../docs/azure-production-deployment-architecture.md).
+
+This phase adds a production-safe Azure deployment workflow for Hermes platform infrastructure. Hermes chat can orchestrate deployment planning, preflight, apply, status, smoke, promote, and rollback, but paid or dangerous operations require explicit operator approval. The default path remains local/SQLite; Azure Event Hubs Kafka protocol, Redpanda/Kafka, storage, Key Vault, runtime cells, sidecars, and observability are introduced through staged deployment profiles and smoke/soak gates.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
@@ -177,3 +183,4 @@ This phase separates offline model improvement from runtime memory. Hermes captu
 | Skill evolution boundary | Required to turn repeated lessons into reusable procedures without making raw session data authoritative | Injecting whole skill libraries or auto-publishing generated skills would create context bloat and unsafe hidden policy |
 | Proposal-only dreaming | Required to capture long-horizon improvement ideas without letting speculative synthesis mutate runtime | Letting dreaming write skills, config, goals, or policy directly would create unsafe autonomous drift |
 | Corpus remittance for external MLOps | Required to improve cheaper coding models without allowing live runtime sidecars to train, register, or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
+| Gated Azure deployment orchestration | Required to let Hermes chat assist production rollout without blindly creating paid resources or mutating production traffic | Raw one-click deployment would be unsafe for cost, DNS, secrets, tenant data, and rollback correctness |
