@@ -705,15 +705,15 @@
 
 ### Implementation For Azure Deployment Orchestration
 
-- [ ] T299 [US17] Implement Azure deployment profile DTOs and local profile loader with explicit compute/bus/object-storage/state-store/secrets/observability/network/IaC sections and redacted JSON serialization
-- [ ] T300 [US17] Implement fake Azure adapter interfaces for plan/preflight tests without live Azure dependency
-- [ ] T301 [US17] Implement deployment plan builder with resource diff, Terraform-first artifact refs, cost estimate placeholder, required secret refs, risk list, smoke/soak plan, and rollback plan
-- [ ] T302 [US17] Implement preflight evaluator for Azure account/subscription/quota/provider/object-storage/state-store/Key Vault/bus/observability/network/DNS checks using fake adapters by default
-- [ ] T303 [US17] Implement approval-gated apply/promote/destroy decision helpers and immutable deployment run records
-- [ ] T304 [US17] Implement Event Hubs Kafka, Redpanda/Kafka, ADLS/Blob object storage, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, ingress/network, and SQLite spool fallback deployment helper templates, without creating live resources by default
-- [ ] T305 [US17] Implement smoke/soak checklist generator and production promotion gate evaluator
-- [ ] T306 [US17] Add CLI/API JSON surfaces for `hermes deploy plan/preflight/apply/status/smoke/soak/promote/rollback --target azure`
-- [ ] T307 [US17] Add E2E fixture proving chat/API can orchestrate Azure staging deployment flow with fake adapters, explicit approval, smoke/soak evidence, and blocked production promotion without approval
+- [x] T299 [US17] Implement Azure deployment profile DTOs and local profile loader with explicit compute/bus/object-storage/state-store/secrets/observability/network/IaC sections and redacted JSON serialization
+- [x] T300 [US17] Implement fake Azure adapter interfaces for plan/preflight tests without live Azure dependency
+- [x] T301 [US17] Implement deployment plan builder with resource diff, Terraform-first artifact refs, cost estimate placeholder, required secret refs, risk list, smoke/soak plan, and rollback plan
+- [x] T302 [US17] Implement preflight evaluator for Azure account/subscription/quota/provider/object-storage/state-store/Key Vault/bus/observability/network/DNS checks using fake adapters by default
+- [x] T303 [US17] Implement approval-gated apply/promote/destroy decision helpers and immutable deployment run records
+- [x] T304 [US17] Implement Event Hubs Kafka, Redpanda/Kafka, ADLS/Blob object storage, PostgreSQL/Cosmos state store, Key Vault, Azure Monitor/Application Insights, ingress/network, and SQLite spool fallback deployment helper templates, without creating live resources by default
+- [x] T305 [US17] Implement smoke/soak checklist generator and production promotion gate evaluator
+- [x] T306 [US17] Add CLI/API JSON surfaces for `hermes deploy plan/preflight/apply/status/smoke/soak/promote/rollback --target azure`
+- [x] T307 [US17] Add E2E fixture proving chat/API can orchestrate Azure staging deployment flow with fake adapters, explicit approval, smoke/soak evidence, and blocked production promotion without approval
 
 **Checkpoint**: Hermes can safely orchestrate Azure deployment workflows through gated artifacts while keeping live production resource creation, DNS changes, secret rotation, traffic promotion, and rollback under explicit operator control.
 

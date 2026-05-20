@@ -9732,7 +9732,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "acp", "auth", "backup", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
-        "dump", "fallback", "gateway", "hooks", "import", "insights",
+        "deploy", "dump", "fallback", "gateway", "hooks", "import", "insights",
         "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "mlops",
         "model", "pairing", "plugins", "postinstall", "profile", "proxy",
         "send", "sessions", "setup",
@@ -9827,6 +9827,40 @@ def _plugin_cli_discovery_needed() -> bool:
     return True
 
 
+def cmd_deploy(args):
+    """Safe deployment orchestration command surface."""
+    if getattr(args, "target", None) != "azure":
+        print(json.dumps({"ok": False, "error": "only azure target is supported"}))
+        return
+
+    from hermes_cli.azure_deployment import (
+        azure_deploy_json,
+        default_azure_profile,
+        load_deployment_profile,
+    )
+
+    profile = (
+        load_deployment_profile(args.profile)
+        if getattr(args, "profile", None)
+        else default_azure_profile(getattr(args, "environment", "staging"))
+    )
+    evidence = {}
+    for item in getattr(args, "evidence", None) or []:
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        evidence[key] = value
+    payload = azure_deploy_json(
+        args.deploy_command,
+        profile=profile,
+        approval_id=getattr(args, "approval_id", None),
+        evidence=evidence,
+        run_id=getattr(args, "run_id", None),
+        live=getattr(args, "live", False),
+    )
+    print(json.dumps(payload, sort_keys=True))
+
+
 def main():
     """Main entry point for hermes CLI."""
     # Force UTF-8 stdio on Windows before anything prints.  No-op elsewhere.
@@ -9848,6 +9882,50 @@ def main():
 
     parser, subparsers, chat_parser = build_top_level_parser()
     chat_parser.set_defaults(func=cmd_chat)
+
+    # =========================================================================
+    # deploy command
+    # =========================================================================
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="Plan and gate deployment workflows",
+        description="Safe deployment orchestration. Azure defaults to fake/local adapters.",
+    )
+    deploy_sub = deploy_parser.add_subparsers(dest="deploy_command", required=True)
+    for deploy_action in (
+        "plan",
+        "preflight",
+        "apply",
+        "status",
+        "smoke",
+        "soak",
+        "promote",
+        "rollback",
+    ):
+        action_parser = deploy_sub.add_parser(deploy_action, help=f"Run deploy {deploy_action}")
+        action_parser.add_argument("--target", choices=["azure"], required=True)
+        action_parser.add_argument("--profile", help="Path to a JSON/YAML Azure deployment profile")
+        action_parser.add_argument(
+            "--environment",
+            choices=["dev", "staging", "production"],
+            default="staging",
+            help="Default profile environment when --profile is omitted",
+        )
+        action_parser.add_argument("--approval-id", help="Explicit operator approval id")
+        action_parser.add_argument("--run-id", help="Deployment run id for status/rollback")
+        action_parser.add_argument(
+            "--evidence",
+            action="append",
+            default=[],
+            metavar="CHECK=STATUS",
+            help="Promotion evidence item; may be repeated",
+        )
+        action_parser.add_argument(
+            "--live",
+            action="store_true",
+            help="Opt in to live behavior; currently returns a safe blocked response",
+        )
+    deploy_parser.set_defaults(func=cmd_deploy)
 
     # =========================================================================
     # model command
