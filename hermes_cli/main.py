@@ -12608,8 +12608,18 @@ Examples:
     dream_status.add_argument("--tenant-id", default="", help="Tenant scope")
     dream_status.add_argument("--repo-id", default="", help="Repository scope")
     dream_status.add_argument("--status", default="", help="Proposal status filter")
+    dream_status.add_argument("--proposal-type", default="", help="Proposal type filter")
+    dream_status.add_argument("--risk", default="", help="Risk filter")
     dream_status.add_argument("--limit", type=int, default=50, help="Maximum rows")
     dream_status.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_proposals = dream_sub.add_parser("proposals", help="List dashboard-ready dreaming proposals")
+    dream_proposals.add_argument("--tenant-id", default="", help="Tenant scope")
+    dream_proposals.add_argument("--repo-id", default="", help="Repository scope")
+    dream_proposals.add_argument("--status", default="", help="Proposal status filter")
+    dream_proposals.add_argument("--proposal-type", default="", help="Proposal type filter")
+    dream_proposals.add_argument("--risk", default="", help="Risk filter")
+    dream_proposals.add_argument("--limit", type=int, default=50, help="Maximum rows")
+    dream_proposals.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     dream_judge = dream_sub.add_parser("judge", help="Record a judge decision for a dreaming proposal")
     dream_judge.add_argument("proposal_id", help="Dreaming proposal id")
     dream_judge.add_argument("--decision", choices=["approve", "reject", "needs_human"], required=True)
@@ -12619,8 +12629,12 @@ Examples:
     dream_approve = dream_sub.add_parser("approve", help="Operator-approve a judge-approved dreaming proposal")
     dream_approve.add_argument("proposal_id", help="Dreaming proposal id")
     dream_approve.add_argument("--operator", default="operator", help="Operator id/name")
+    dream_approve.add_argument("--approver-role", choices=["operator", "tenant-admin"], default="operator")
     dream_approve.add_argument("--convert-candidate", action="store_true", help="Convert to proposed meta-candidate after approval")
     dream_approve.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    dream_convert = dream_sub.add_parser("convert", help="Convert a fully approved dreaming proposal to a bounded candidate")
+    dream_convert.add_argument("proposal_id", help="Dreaming proposal id")
+    dream_convert.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     dream_reject = dream_sub.add_parser("reject", help="Operator-reject a dreaming proposal")
     dream_reject.add_argument("proposal_id", help="Dreaming proposal id")
     dream_reject.add_argument("--reason", default="operator rejected")
@@ -13254,6 +13268,8 @@ Examples:
                 elif sub == "dream":
                     from hermes_cli.memory_dreaming import (
                         approve_dreaming_proposal,
+                        build_dreaming_dashboard_dto,
+                        convert_dreaming_proposal,
                         judge_dreaming_proposal,
                         list_dreaming_proposals,
                         reject_dreaming_proposal,
@@ -13297,7 +13313,18 @@ Examples:
                             db,
                             proposal_id=getattr(args, "proposal_id"),
                             operator=getattr(args, "operator", "operator"),
+                            approver_role=getattr(args, "approver_role", "operator"),
                             convert_candidate=getattr(args, "convert_candidate", False),
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            extra = f" candidate={result.converted_candidate_id}" if result.converted_candidate_id else ""
+                            print(f"\n  dreaming proposal {result.proposal_id}: {result.status}{extra}\n")
+                    elif dream_cmd == "convert":
+                        result = convert_dreaming_proposal(
+                            db,
+                            proposal_id=getattr(args, "proposal_id"),
                         )
                         if getattr(args, "json", False):
                             print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
@@ -13320,9 +13347,15 @@ Examples:
                             tenant_id=getattr(args, "tenant_id", "") or None,
                             repo_id=getattr(args, "repo_id", "") or None,
                             status=getattr(args, "status", "") or None,
+                            proposal_type=getattr(args, "proposal_type", "") or None,
+                            risk=getattr(args, "risk", "") or None,
                             limit=getattr(args, "limit", 50),
                         )
-                        data = [row.to_dict() for row in rows]
+                        data = (
+                            [build_dreaming_dashboard_dto(row) for row in rows]
+                            if dream_cmd == "proposals"
+                            else [row.to_dict() for row in rows]
+                        )
                         if getattr(args, "json", False):
                             print(json.dumps(data, indent=2, ensure_ascii=False))
                         else:

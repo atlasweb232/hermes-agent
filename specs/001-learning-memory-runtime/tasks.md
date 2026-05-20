@@ -626,20 +626,20 @@
 - [x] T258 [P] [US15] Add local dreaming tests proving proposals remain tenant/repo scoped and cannot publish globally
 - [x] T259 [P] [US15] Add global dreaming tests proving only redacted approved shareable global memory/wiki evidence is consumed
 - [x] T260 [P] [US15] Add proposal schema tests for skill candidate, skill repair, test gap, CI/CD hardening, memory wiki update, routing improvement, allocator policy candidate, observability gap, tenant onboarding improvement, toolset recommendation, cost optimization, training corpus candidate, and architecture review item
-- [ ] T261 [P] [US15] Add conversion-gate tests proving dreaming proposals require deterministic validation, judge review, and operator or tenant-admin approval before becoming memory/wiki/skill/test/policy/goal/training candidates
-- [ ] T262 [P] [US15] Add negative tests proving dreaming cannot inject prompts, publish skills, update wiki, change config, queue goals, enforce policy, edit repos, deploy code, or export training data directly
-- [ ] T263 [P] [US15] Add dashboard/API tests for listing proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history
-- [ ] T264 [P] [US15] Add feature-toggle tests proving disabled dreaming records skipped-by-toggle and produces no proposal
+- [x] T261 [P] [US15] Add conversion-gate tests proving dreaming proposals require deterministic validation, judge review, and operator or tenant-admin approval before becoming memory/wiki/skill/test/policy/goal/training candidates
+- [x] T262 [P] [US15] Add negative tests proving dreaming cannot inject prompts, publish skills, update wiki, change config, queue goals, enforce policy, edit repos, deploy code, or export training data directly
+- [x] T263 [P] [US15] Add dashboard/API tests for listing proposals by tenant, repo, proposal type, risk, status, evidence refs, expected benefit, judge decision, and operator action history
+- [x] T264 [P] [US15] Add feature-toggle tests proving disabled dreaming records skipped-by-toggle and produces no proposal
 
 ### Implementation For Dreaming Integration
 
 - [x] T265 [US15] Extend dreaming proposal DTOs with proposal type, affected feature ids, conversion target, expected benefit, forbidden direct actions, suggested validation, and tenant/global role metadata
 - [x] T266 [US15] Add local/global dreaming role resolver and input builder with strict evidence filters
 - [x] T267 [US15] Add proposal validators for skill, CI/CD, test-gap, routing, cost, training, and architecture proposal types
-- [ ] T268 [US15] Add conversion helpers that create downstream candidates only after judge/operator approval
-- [ ] T269 [US15] Add dashboard/observability DTOs for dreaming proposal review and approval history
-- [ ] T270 [US15] Add CLI/API-compatible surfaces for `hermes memory dream proposals --json`, `hermes memory dream convert --json`, and proposal status filtering
-- [ ] T271 [US15] Add E2E fixture proving dreaming can propose a SkillClaw skill repair and CI/CD hardening task without mutating runtime until approved
+- [x] T268 [US15] Add conversion helpers that create downstream candidates only after judge/operator approval
+- [x] T269 [US15] Add dashboard/observability DTOs for dreaming proposal review and approval history
+- [x] T270 [US15] Add CLI/API-compatible surfaces for `hermes memory dream proposals --json`, `hermes memory dream convert --json`, and proposal status filtering
+- [x] T271 [US15] Add E2E fixture proving dreaming can propose a SkillClaw skill repair and CI/CD hardening task without mutating runtime until approved
 
 **Checkpoint**: Dreaming can generate valuable improvement work while remaining isolated, reviewable, tenant-scoped, and non-authoritative.
 

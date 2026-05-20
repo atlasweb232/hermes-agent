@@ -96,6 +96,18 @@ FORBIDDEN_DIRECT_ACTIONS = {
     "deploy_code",
     "export_training_data",
 }
+DIRECT_MUTATION_ERROR_CODES = {
+    "inject_prompts": "direct_prompt_injection_rejected",
+    "publish_skill": "direct_skill_publish_rejected",
+    "publish_skills": "direct_skill_publish_rejected",
+    "update_wiki": "direct_wiki_update_rejected",
+    "change_config": "direct_config_change_rejected",
+    "queue_goal": "direct_goal_queue_rejected",
+    "enforce_policy": "direct_policy_enforcement_rejected",
+    "edit_repo": "direct_repo_edit_rejected",
+    "deploy_code": "direct_deploy_rejected",
+    "export_training_data": "direct_training_export_rejected",
+}
 CONVERSION_TARGETS = {
     "memory_candidate",
     "memory_wiki_update",
@@ -280,6 +292,7 @@ class DreamingRunResult:
     proposals_updated: int
     proposals: List[DreamingProposal] = field(default_factory=list)
     rejected: List[Dict[str, Any]] = field(default_factory=list)
+    skipped: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     config: Dict[str, Any] = field(default_factory=dict)
 
@@ -723,6 +736,46 @@ def validate_dreaming_proposal_details(
     )
 
 
+def evaluate_dreaming_direct_mutation_request(
+    requested_action: str,
+    *,
+    proposal_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Classify direct runtime mutation requests as rejected no-ops."""
+    normalized = str(requested_action or "").strip().lower().replace("-", " ")
+    action_aliases = {
+        "inject_prompts": ("inject prompt", "inject prompts", "prompt injection"),
+        "publish_skill": ("publish skill", "publish skills"),
+        "update_wiki": ("update wiki", "write wiki", "modify wiki"),
+        "change_config": ("change config", "apply config", "modify config"),
+        "queue_goal": ("queue goal", "queue goals"),
+        "enforce_policy": ("enforce policy", "policy enforcement"),
+        "edit_repo": ("edit repo", "edit repos", "repo edit", "repository edit"),
+        "deploy_code": ("deploy code", "deployment", "deploy"),
+        "export_training_data": ("export training data", "training export"),
+    }
+    error_codes = [
+        DIRECT_MUTATION_ERROR_CODES[action]
+        for action, aliases in action_aliases.items()
+        if any(alias in normalized for alias in aliases)
+    ]
+    if not error_codes and _matches_any(FORBIDDEN_DIRECT_EFFECT_PATTERNS, requested_action):
+        error_codes.append("direct_runtime_mutation_rejected")
+    if not error_codes:
+        return {
+            "proposal_id": proposal_id,
+            "status": "noop",
+            "effect": "noop",
+            "error_codes": [],
+        }
+    return {
+        "proposal_id": proposal_id,
+        "status": "rejected",
+        "effect": "noop",
+        "error_codes": sorted(set(error_codes)),
+    }
+
+
 def _proposal_from_wiki_claim(claim: Any, *, trigger: str, interval_due_at: Optional[float]) -> DreamingProposal:
     scope = {
         "tenant_id": claim.tenant_id,
@@ -860,7 +913,11 @@ def upsert_dreaming_proposal(db: SessionDB, proposal: DreamingProposal) -> Dream
                 requested_action = excluded.requested_action,
                 runtime_effect = excluded.runtime_effect,
                 status = CASE
-                    WHEN hermes_dreaming_proposals.status IN ('approved', 'rejected', 'converted', 'archived')
+                    WHEN hermes_dreaming_proposals.status IN ('rejected', 'converted', 'archived')
+                    THEN hermes_dreaming_proposals.status
+                    WHEN excluded.status = 'converted'
+                    THEN excluded.status
+                    WHEN hermes_dreaming_proposals.status = 'approved'
                     THEN hermes_dreaming_proposals.status
                     ELSE excluded.status
                 END,
@@ -940,11 +997,12 @@ def run_dreaming(
         raise ValueError(f"invalid dreaming trigger: {trigger}")
     if not cfg.enabled and not force:
         return DreamingRunResult(
-            status="disabled",
+            status="skipped",
             trigger=trigger,
             scanned=0,
             proposals_created=0,
             proposals_updated=0,
+            skipped=[{"reason": "skipped_by_toggle", "toggle": "supervisor.dreaming.enabled"}],
             config=cfg.to_dict(),
         )
     known_refs = _collect_known_evidence_refs(db, tenant_id=tenant_id, repo_id=repo_id)
@@ -1066,6 +1124,13 @@ def build_dreaming_prompt(
 
 
 def build_dreaming_dashboard_dto(proposal: DreamingProposal) -> Dict[str, Any]:
+    operator_history: List[Dict[str, Any]] = []
+    if proposal.operator_decision:
+        operator_history.append(dict(proposal.operator_decision))
+    if proposal.operator_state and proposal.operator_state != proposal.operator_decision:
+        state = dict(proposal.operator_state)
+        if state not in operator_history:
+            operator_history.append(state)
     return {
         "id": proposal.id,
         "tenant_id": proposal.tenant_id,
@@ -1085,9 +1150,48 @@ def build_dreaming_dashboard_dto(proposal: DreamingProposal) -> Dict[str, Any]:
         "operator_state": proposal.operator_state or {"status": "pending"},
         "judge_decision": proposal.judge_decision,
         "operator_decision": proposal.operator_decision,
+        "operator_action_history": operator_history,
         "validator_errors": proposal.validator_errors,
         "created_at": proposal.created_at,
         "updated_at": proposal.updated_at,
+    }
+
+
+def build_dreaming_observability_summary(
+    db: SessionDB,
+    *,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    status: Optional[str] = None,
+    proposal_type: Optional[str] = None,
+    risk: Optional[str] = None,
+) -> Dict[str, Any]:
+    rows = list_dreaming_proposals(
+        db,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        status=status,
+        proposal_type=proposal_type,
+        risk=risk,
+        limit=1000,
+    )
+
+    def _counts(attr: str) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for row in rows:
+            key = str(getattr(row, attr) or "unknown")
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
+
+    return {
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "total": len(rows),
+        "by_status": _counts("status"),
+        "by_proposal_type": _counts("proposal_type"),
+        "by_risk": _counts("risk"),
+        "pending_review": sum(1 for row in rows if row.status in {"proposed", "judged", "needs_human"}),
+        "converted": sum(1 for row in rows if row.status == "converted"),
     }
 
 
@@ -1097,12 +1201,20 @@ def list_dreaming_proposals(
     tenant_id: Optional[str] = None,
     repo_id: Optional[str] = None,
     status: Optional[str] = None,
+    proposal_type: Optional[str] = None,
+    risk: Optional[str] = None,
     limit: int = 50,
 ) -> List[DreamingProposal]:
     ensure_dreaming_schema(db)
     clauses: List[str] = []
     params: List[Any] = []
-    for key, value in (("tenant_id", tenant_id), ("repo_id", repo_id), ("status", status)):
+    for key, value in (
+        ("tenant_id", tenant_id),
+        ("repo_id", repo_id),
+        ("status", status),
+        ("proposal_type", proposal_type),
+        ("risk", risk),
+    ):
         if value is not None:
             clauses.append(f"{key} = ?")
             params.append(value)
@@ -1161,6 +1273,7 @@ def approve_dreaming_proposal(
     *,
     proposal_id: str,
     operator: str = "operator",
+    approver_role: str = "operator",
     convert_candidate: bool = False,
 ) -> DreamingActionResult:
     proposal = get_dreaming_proposal(db, proposal_id)
@@ -1172,12 +1285,14 @@ def approve_dreaming_proposal(
     proposal.operator_decision = {
         "decision": "approve",
         "operator": operator,
+        "role": approver_role,
         "created_at": _now(),
     }
     proposal.operator_state = {
         "status": "approved",
         "decision": "approve",
         "operator": operator,
+        "role": approver_role,
         "created_at": proposal.operator_decision["created_at"],
     }
     proposal.status = "approved"
@@ -1220,11 +1335,50 @@ def reject_dreaming_proposal(
     return DreamingActionResult(proposal_id=proposal_id, status=saved.status, proposal=saved.to_dict())
 
 
-def convert_dreaming_proposal_to_candidate(db: SessionDB, proposal: DreamingProposal) -> str:
+def _validate_conversion_gates(proposal: DreamingProposal) -> None:
+    if proposal.validator_errors:
+        raise ValueError("deterministic validator acceptance required before conversion")
+    validation = validate_dreaming_proposal_details(proposal, known_evidence_refs=proposal.evidence_refs)
+    if not validation.accepted:
+        raise ValueError("deterministic validator acceptance required before conversion")
     if proposal.judge_decision.get("decision") != "approve":
         raise ValueError("judge approval required before conversion")
     if proposal.operator_decision.get("decision") != "approve":
         raise ValueError("operator approval required before conversion")
+    role = str(proposal.operator_decision.get("role") or "operator").strip().lower()
+    if role not in {"operator", "tenant-admin"}:
+        raise ValueError("operator or tenant-admin approval required before conversion")
+
+
+def convert_dreaming_proposal(
+    db: SessionDB,
+    *,
+    proposal_id: str,
+) -> DreamingActionResult:
+    proposal = get_dreaming_proposal(db, proposal_id)
+    if proposal is None:
+        raise ValueError(f"unknown dreaming proposal: {proposal_id}")
+    _validate_conversion_gates(proposal)
+    converted_id = convert_dreaming_proposal_to_candidate(db, proposal)
+    proposal.converted_candidate_id = converted_id
+    proposal.status = "converted"
+    proposal.operator_state = {
+        **(proposal.operator_state or {}),
+        "status": "converted",
+        "converted_candidate_id": converted_id,
+        "converted_at": _now(),
+    }
+    saved = upsert_dreaming_proposal(db, proposal)
+    return DreamingActionResult(
+        proposal_id=proposal_id,
+        status=saved.status,
+        converted_candidate_id=converted_id,
+        proposal=saved.to_dict(),
+    )
+
+
+def convert_dreaming_proposal_to_candidate(db: SessionDB, proposal: DreamingProposal) -> str:
+    _validate_conversion_gates(proposal)
     candidate_id = _stable_id("dreamcand", proposal.id, proposal.proposal_type)
     db.upsert_meta_candidate(
         candidate_id=candidate_id,

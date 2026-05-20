@@ -8,9 +8,12 @@ import pytest
 from hermes_cli.memory_dreaming import (
     DreamingConfig,
     DreamingProposal,
+    build_dreaming_observability_summary,
     build_dreaming_input_packet,
     approve_dreaming_proposal,
     build_dreaming_dashboard_dto,
+    convert_dreaming_proposal,
+    evaluate_dreaming_direct_mutation_request,
     get_dreaming_proposal,
     judge_dreaming_proposal,
     list_dreaming_proposals,
@@ -89,6 +92,15 @@ def _phase18_proposal_json(**overrides):
     }
     payload.update(overrides)
     return json.dumps(payload)
+
+
+def _upsert_phase18_proposal(db: SessionDB, **overrides) -> DreamingProposal:
+    from hermes_cli.memory_dreaming import upsert_dreaming_proposal
+
+    proposal = parse_dreaming_proposal_output(_phase18_proposal_json(**overrides))
+    details = validate_dreaming_proposal_details(proposal, known_evidence_refs=set(proposal.evidence_refs))
+    proposal.validator_errors = details.error_codes
+    return upsert_dreaming_proposal(db, proposal)
 
 
 def test_parse_dreaming_proposal_output_accepts_strict_schema():
@@ -421,6 +433,124 @@ def test_dreaming_judge_operator_conversion_requires_both_gates(tmp_path):
         db.close()
 
 
+def test_dreaming_conversion_rejects_missing_validator_judge_or_operator_gate(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        invalid = _upsert_phase18_proposal(
+            db,
+            summary="Repair SkillClaw skill from invalid raw transcript",
+            requested_action="Create proposal-only skill repair.",
+            evidence_packets=[
+                {
+                    "packet_id": "packet_1",
+                    "source_ref": "wikiclaim_1",
+                    "content_summary": "raw transcript",
+                }
+            ],
+        )
+        judge_dreaming_proposal(db, proposal_id=invalid.id, decision="approve")
+        approve_dreaming_proposal(db, proposal_id=invalid.id, operator="tenant-admin", approver_role="tenant-admin")
+
+        with pytest.raises(ValueError, match="deterministic validator"):
+            convert_dreaming_proposal(db, proposal_id=invalid.id)
+
+        proposal = _upsert_phase18_proposal(db, summary="Repair SkillClaw skill after validation failure")
+        with pytest.raises(ValueError, match="judge approval"):
+            convert_dreaming_proposal(db, proposal_id=proposal.id)
+
+        judge_dreaming_proposal(db, proposal_id=proposal.id, decision="approve")
+        with pytest.raises(ValueError, match="operator approval"):
+            convert_dreaming_proposal(db, proposal_id=proposal.id)
+
+        approve_dreaming_proposal(db, proposal_id=proposal.id, operator="viewer", approver_role="viewer")
+        with pytest.raises(ValueError, match="operator or tenant-admin"):
+            convert_dreaming_proposal(db, proposal_id=proposal.id)
+
+        assert db.list_meta_candidates(kind="dreaming_skill_candidate", status="proposed", limit=10) == []
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "action,error_code",
+    [
+        ("inject prompts", "direct_prompt_injection_rejected"),
+        ("publish skills", "direct_skill_publish_rejected"),
+        ("update wiki", "direct_wiki_update_rejected"),
+        ("change config", "direct_config_change_rejected"),
+        ("queue goals", "direct_goal_queue_rejected"),
+        ("enforce policy", "direct_policy_enforcement_rejected"),
+        ("edit repos", "direct_repo_edit_rejected"),
+        ("deploy code", "direct_deploy_rejected"),
+        ("export training data", "direct_training_export_rejected"),
+    ],
+)
+def test_dreaming_direct_mutation_requests_are_rejected_noop(action, error_code):
+    result = evaluate_dreaming_direct_mutation_request(action, proposal_id="dream_direct")
+
+    assert result["status"] == "rejected"
+    assert result["effect"] == "noop"
+    assert error_code in result["error_codes"]
+    assert result["proposal_id"] == "dream_direct"
+
+
+def test_dreaming_dashboard_and_observability_dtos_include_filters_and_history(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        skill = _upsert_phase18_proposal(db, proposal_type="skill_repair", conversion_target="skill_candidate")
+        cicd = _upsert_phase18_proposal(
+            db,
+            proposal_type="ci_cd_hardening",
+            conversion_target="ci_cd_task",
+            risk="medium",
+            summary="Harden CI against flaky SkillClaw fixture regressions",
+        )
+        judge_dreaming_proposal(db, proposal_id=skill.id, decision="approve", rationale="validated")
+        approve_dreaming_proposal(db, proposal_id=skill.id, operator="rakib", approver_role="operator")
+
+        rows = list_dreaming_proposals(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            proposal_type="ci_cd_hardening",
+            risk="medium",
+        )
+        assert [row.id for row in rows] == [cicd.id]
+
+        dto = build_dreaming_dashboard_dto(get_dreaming_proposal(db, skill.id))
+        assert dto["operator_action_history"][-1]["decision"] == "approve"
+        assert dto["judge_decision"]["rationale"] == "validated"
+
+        summary = build_dreaming_observability_summary(db, tenant_id="atlas", repo_id="hermes-agent")
+        assert summary["total"] == 2
+        assert summary["by_proposal_type"]["skill_repair"] == 1
+        assert summary["by_risk"]["medium"] == 1
+        assert summary["by_status"]["approved"] == 1
+    finally:
+        db.close()
+
+
+def test_dreaming_disabled_toggle_records_skipped_by_toggle_without_proposal(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        _seed_wiki_claim(db)
+
+        result = run_dreaming(
+            db,
+            tenant_id="atlas",
+            repo_id="hermes-agent",
+            config={"supervisor": {"dreaming": {"enabled": False, "allow_llm": False}}},
+            trigger="manual",
+        )
+
+        assert result.status == "skipped"
+        assert result.proposals_created == 0
+        assert result.skipped == [{"reason": "skipped_by_toggle", "toggle": "supervisor.dreaming.enabled"}]
+        assert list_dreaming_proposals(db, tenant_id="atlas", repo_id="hermes-agent") == []
+    finally:
+        db.close()
+
+
 def test_dreaming_reject_marks_proposal_rejected(tmp_path):
     db = _make_db(tmp_path)
     try:
@@ -489,6 +619,102 @@ def test_dreaming_cli_run_status_and_conversion_json_smoke(tmp_path, monkeypatch
     ):
         hermes_main.main()
     assert json.loads(capsys.readouterr().out)["status"] == "converted"
+
+
+def test_dreaming_cli_proposals_filters_and_convert_json(tmp_path, monkeypatch, capsys):
+    home = tmp_path / ".hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    import hermes_state
+
+    monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", home / "state.db")
+    db = SessionDB()
+    try:
+        proposal = _upsert_phase18_proposal(db, proposal_type="skill_repair", conversion_target="skill_candidate")
+        _upsert_phase18_proposal(
+            db,
+            proposal_type="ci_cd_hardening",
+            conversion_target="ci_cd_task",
+            risk="medium",
+            summary="Harden CI fixture",
+        )
+        judge_dreaming_proposal(db, proposal_id=proposal.id, decision="approve")
+        approve_dreaming_proposal(db, proposal_id=proposal.id, operator="tenant-admin", approver_role="tenant-admin")
+    finally:
+        db.close()
+
+    from hermes_cli import main as hermes_main
+
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "hermes",
+            "memory",
+            "dream",
+            "proposals",
+            "--tenant-id",
+            "atlas",
+            "--repo-id",
+            "hermes-agent",
+            "--proposal-type",
+            "skill_repair",
+            "--risk",
+            "low",
+            "--json",
+        ],
+    ):
+        hermes_main.main()
+    proposal_rows = json.loads(capsys.readouterr().out)
+    assert [row["id"] for row in proposal_rows] == [proposal.id]
+
+    with patch.object(sys, "argv", ["hermes", "memory", "dream", "convert", proposal.id, "--json"]):
+        hermes_main.main()
+    converted = json.loads(capsys.readouterr().out)
+    assert converted["status"] == "converted"
+    assert converted["converted_candidate_id"].startswith("dreamcand_")
+
+
+def test_dreaming_e2e_fixture_skillclaw_repair_and_cicd_hardening_are_proposal_only_until_approved(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        skill = _upsert_phase18_proposal(
+            db,
+            proposal_type="skill_repair",
+            conversion_target="skill_candidate",
+            summary="Repair SkillClaw release-triage skill validation",
+            expected_benefit="SkillClaw repair proposal can be reviewed without publishing a skill.",
+            suggested_validation=["Run local SkillClaw adapter validation fixture."],
+            forbidden_direct_actions=["publish_skill", "edit_repo", "deploy_code", "change_config"],
+        )
+        cicd = _upsert_phase18_proposal(
+            db,
+            proposal_type="ci_cd_hardening",
+            conversion_target="ci_cd_task",
+            risk="medium",
+            summary="Add CI/CD hardening task for SkillClaw repair fixture",
+            expected_benefit="CI hardening proposal remains a bounded task until approved.",
+            suggested_validation=["Run deterministic runtime E2E fixture before CI task conversion."],
+            forbidden_direct_actions=["edit_repo", "deploy_code", "change_config"],
+        )
+
+        rows = list_dreaming_proposals(db, tenant_id="atlas", repo_id="hermes-agent")
+        assert {row.proposal_type for row in rows} == {"skill_repair", "ci_cd_hardening"}
+        assert all(row.status == "proposed" for row in rows)
+        assert all(row.evidence_refs and row.suggested_validation for row in rows)
+        assert db.list_meta_candidates(status="proposed", tenant_id="atlas", repo_id="hermes-agent", limit=10) == []
+
+        judge_dreaming_proposal(db, proposal_id=skill.id, decision="approve")
+        approve_dreaming_proposal(db, proposal_id=skill.id, operator="rakib", approver_role="operator")
+        converted = convert_dreaming_proposal(db, proposal_id=skill.id)
+
+        assert converted.status == "converted"
+        candidates = db.list_meta_candidates(status="proposed", tenant_id="atlas", repo_id="hermes-agent", limit=10)
+        assert [candidate["id"] for candidate in candidates] == [converted.converted_candidate_id]
+        assert candidates[0]["kind"] == "dreaming_skill_repair"
+        assert candidates[0]["evidence_json"]["runtime_effect"] is False
+        assert get_dreaming_proposal(db, cicd.id).status == "proposed"
+    finally:
+        db.close()
 
 
 def test_learning_sidecar_skips_dreaming_by_default(tmp_path):
