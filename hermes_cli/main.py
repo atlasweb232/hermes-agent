@@ -12759,6 +12759,17 @@ Examples:
     global_retrieve.add_argument("--event-json", required=True, help="JSON object containing event metadata")
     global_retrieve.add_argument("--limit", type=int, default=5, help="Maximum global lessons")
     global_retrieve.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    global_profile = global_sub.add_parser("profile", help="Preview compact task-memory retrieval profile")
+    global_profile.add_argument("--event-json", required=True, help="JSON object containing event metadata")
+    global_profile.add_argument("--profile", default="low_cost_worker", help="Retrieval profile name")
+    global_profile.add_argument("--top-k", type=int, default=3, help="Requested maximum matches")
+    global_profile.add_argument("--token-budget", type=int, default=240, help="Estimated token budget")
+    global_profile.add_argument(
+        "--no-semantic-fallback",
+        action="store_true",
+        help="Disable deterministic local fallback when no exact match exists",
+    )
+    global_profile.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     global_hydrate = global_sub.add_parser("hydrate", help="Hydrate task memory from hot cache and global lessons")
     global_hydrate.add_argument("--event-json", required=True, help="JSON object containing event metadata")
     global_hydrate.add_argument("--local-claims-json", default="[]", help="JSON array of local claims to merge")
@@ -13295,6 +13306,7 @@ Examples:
                         persist_global_lesson,
                         retrieve_global_lessons_for_event,
                     )
+                    from hermes_cli.task_memory_profiles import build_task_memory_retrieval_profile
 
                     def _json_object(raw: str, label: str) -> dict:
                         try:
@@ -13355,6 +13367,26 @@ Examples:
                             print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
                         else:
                             print(f"\n  global lessons retrieved: {len(result.lessons)}\n")
+                    elif global_cmd == "profile":
+                        result = build_task_memory_retrieval_profile(
+                            db,
+                            _json_object(getattr(args, "event_json", "{}"), "--event-json"),
+                            profile=getattr(args, "profile", "low_cost_worker"),
+                            top_k=getattr(args, "top_k", 3),
+                            token_budget=getattr(args, "token_budget", 240),
+                            semantic_fallback=not bool(getattr(args, "no_semantic_fallback", False)),
+                            config=config,
+                        )
+                        if getattr(args, "json", False):
+                            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+                        else:
+                            payload = result.to_dict()
+                            print(
+                                f"\n  task memory profile: {payload['profile']}"
+                                f"  matches={len(payload['matches'])}"
+                                f"  tokens≈{payload['estimated_tokens']}"
+                                f"  exact_hit={payload['exact_hit']}\n"
+                            )
                     elif global_cmd == "hydrate":
                         result = hydrate_task_memory_from_global(
                             db,
@@ -13401,7 +13433,7 @@ Examples:
                                 f"  skipped_curator={report.get('skipped_curator_count')}\n"
                             )
                     else:
-                        print("  Use: hermes memory global lesson|retrieve|hydrate|value\n")
+                        print("  Use: hermes memory global lesson|retrieve|profile|hydrate|value\n")
                 elif sub == "learn":
                     result = rollup_learning_candidates(
                         db,

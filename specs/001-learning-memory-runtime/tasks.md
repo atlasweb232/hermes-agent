@@ -330,7 +330,7 @@
 ### Implementation for Production Runtime Surfaces
 
 - [x] T106 [US8] Implement a low-end model eval runner that records baseline vs memory-assisted metrics: task success, tool error count, repeated error signatures, validation completeness, token estimate, wall time, and escalation count
-- [ ] T107 [US8] Implement compact task-memory retrieval profiles for low-cost workers, including strict top-k caps, exact metadata filters, command/error signature matching, semantic fallback, and negative-feedback demotion
+- [x] T107 [US8] Implement compact task-memory retrieval profiles for low-cost workers, including strict top-k caps, exact metadata filters, command/error signature matching, semantic fallback, and negative-feedback demotion
 - [ ] T108 [US8] Implement richer observability frontend/backend surfaces for active/historical jobs: tenant, repo, task description, worker, model, Spec Kit refs, architecture refs, task list refs, blocker status, completion status, evidence bundle, and scoped Ask analysis
 - [ ] T109 [US8] Implement realtime voice transport behind the existing `voice.realtime` config, with provider adapters for OpenAI realtime first and MiniMax/xAI-compatible extension points
 - [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend

@@ -740,6 +740,8 @@ claim may be globally proposed only when evidence and approval support it.
 17. Add live failure-lesson learn smoke after restart.
 18. Add cost/value observability for memory hits, token estimates, skipped
     sidecars, repeated errors, and low-end worker outcomes.
+19. Add compact task-memory retrieval profiles for low-cost worker task
+    packets.
 
 Do not implement production Kafka/Redpanda, production vector/graph backends,
 large training export, realtime voice, or a full dashboard until steps 14-18
@@ -787,6 +789,41 @@ The wiki may supply only approved, redacted, shareable evidence for Hermes
 corpus bundles. Hermes collects, curates, exports, validates, and remits those
 bundles; external MLOps owns fine-tuning, model registry, evaluation gates,
 serving, and rollout.
+
+## Compact Worker Retrieval Profiles
+
+`build_task_memory_retrieval_profile(...)` is the low-cost worker packet
+builder for approved global lessons. The default `low_cost_worker` profile
+uses the existing SQLite-backed canonical lesson store and remains
+programmatic by default:
+
+- Apply exact tenant, repo, tool, task type, and worker kind filters when the
+  event supplies those fields.
+- Normalize command/error signature inputs into failure/success signature
+  matching so worker events can use `command_signature` and `error_signature`
+  without changing the global lesson schema.
+- Cap low-cost retrieval to at most three matches, even when callers request a
+  larger `top_k`.
+- Sort deterministically by match priority, feedback demotion, score
+  descending, and lesson id.
+- Estimate tokens deterministically and skip injection items that would exceed
+  the caller's token budget while reporting `budget_exhausted`.
+- Return only bounded advisory fields and evidence refs; never return raw
+  transcripts, secrets, logs, or payload JSON.
+- Demote, but do not mutate, lessons whose negative reuse feedback exceeds
+  positive/helped feedback.
+
+Exact approved profile hits are terminal for the cheap retrieval step:
+`llm_calls` stays empty and no curator, judge, dreaming, vector, or graph
+backend is requested. On a scoped exact miss, the optional semantic fallback is
+a deterministic `local_fake` advisory item that tells the worker no approved
+task memory matched. It is a placeholder, not a production vector dependency.
+
+Operators and dashboards can inspect the JSON packet through:
+
+```bash
+hermes memory global profile --event-json '<event-json>' --top-k 3 --token-budget 240 --json
+```
 
 ## Skill Pipeline Boundary
 

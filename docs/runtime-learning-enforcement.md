@@ -623,6 +623,36 @@ for table in ["hermes_memory_records", "hermes_memory_evidence", "hermes_learnin
 PY
 ```
 
+## Compact Task-Memory Profiles
+
+Low-cost worker packets can preview persisted task memory through the
+programmatic profile surface:
+
+```bash
+python3 -m hermes_cli.main memory global profile --event-json '{"event_id":"evt","tenant_id":"atlas","repo_id":"hermes-agent","tool":"terminal","task_type":"implementation","worker_kind":"low_cost_worker","command_signature":"cmd:pytest","error_signature":"err:sqlite"}' --top-k 3 --token-budget 240 --json
+```
+
+The default `low_cost_worker` profile is intentionally LLM-free. It reads
+approved SQLite global lessons, applies exact metadata filters for tenant,
+repo, tool, task type, and worker kind when those event fields are present,
+then matches command/error signature aliases against existing
+failure/success/scope/evidence signatures. Exact approved hits return
+`llm_calls: []`; they do not request curator, judge, or dreaming sidecars.
+
+The profile caps requested `top_k` to three, estimates packet cost with the
+same deterministic token estimator used by task hydration, and only injects
+bounded advisory fields: ids, source, match kind, score/confidence, evidence
+refs, compact advisory text, token estimate, and demotion status. It does not
+include raw transcripts, payload JSON, logs, or secrets. If no exact scoped
+signature match exists, the optional semantic fallback is a deterministic
+`local_fake` advisory placeholder. It does not call a production vector index,
+graph backend, or LLM.
+
+Reuse feedback is read-only in this preview path. Lessons whose negative
+feedback counters exceed positive/helped counters are score-demoted below
+positive matches and reported in `demoted`; preview does not delete, rewrite,
+or mutate the lesson.
+
 ## Still Not Enforced
 
 The full memory-wiki compiler and dreaming/DGM loop are not part of this enforcement pass. They remain separate follow-up work after the task outcome capture and learning sidecar are proven with the branch-118 validation test.
