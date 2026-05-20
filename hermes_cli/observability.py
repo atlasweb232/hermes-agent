@@ -25,6 +25,28 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*\S+"),
 ]
 
+SENSITIVE_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "credential",
+    "authorization",
+    "cookie",
+)
+RAW_TEXT_KEY_PARTS = (
+    "raw_transcript",
+    "transcript",
+    "raw_log",
+    "raw_logs",
+    "provider_log",
+    "provider_logs",
+    "messages",
+    "conversation",
+    "worker_stream",
+)
+
 
 def _now() -> float:
     return time.time()
@@ -49,7 +71,9 @@ class ObservabilityFilters:
     repo_id: Optional[str] = None
     task_id: Optional[str] = None
     worker_id: Optional[str] = None
+    worker_status: Optional[str] = None
     status: Optional[str] = None
+    completion_status: Optional[str] = None
     item_type: Optional[str] = None
     job_type: Optional[str] = None
     candidate_kind: Optional[str] = None
@@ -79,6 +103,19 @@ class ObservabilityLineItem:
     started_at: Optional[float]
     updated_at: Optional[float]
     summary_json: Dict[str, Any] = field(default_factory=dict)
+    worker_kind: Optional[str] = None
+    worker_status: Optional[str] = None
+    blocker_status: str = "none"
+    completion_status: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    route: Optional[str] = None
+    speckit_refs: List[str] = field(default_factory=list)
+    architecture_refs: List[str] = field(default_factory=list)
+    task_list_refs: List[str] = field(default_factory=list)
+    memory_refs: List[Dict[str, Any]] = field(default_factory=list)
+    cost_summary: Dict[str, Any] = field(default_factory=dict)
+    latency_summary: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -122,6 +159,7 @@ class ScopedAnalysisResult:
     repo_query_mode: str
     answer: str
     citations: List[str]
+    llm_calls: List[Dict[str, Any]] = field(default_factory=list)
     mutation_allowed: bool = False
     created_at: float = field(default_factory=_now)
 
@@ -129,11 +167,23 @@ class ScopedAnalysisResult:
         return asdict(self)
 
 
+@dataclass
+class RuntimeObservabilityDetail:
+    line_item: Dict[str, Any]
+    evidence_bundle: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = {"line_item": self.line_item, "evidence_bundle": self.evidence_bundle}
+        data.update(self.evidence_bundle)
+        return data
+
+
 def _job_to_line_item(job: LearningJobRecord) -> ObservabilityLineItem:
     metrics = job.metrics_json if isinstance(job.metrics_json, dict) else {}
     error = job.error_json if isinstance(job.error_json, dict) else {}
-    blocker = error.get("message") or metrics.get("blocker")
+    blocker = error.get("message") or metrics.get("blocker") or metrics.get("blocker_reason")
     validation_state = str(metrics.get("validation_state") or "unknown")
+    completion_status = str(metrics.get("completion_status") or metrics.get("completion_state") or "")
     if job.status == "completed":
         completion_state = "completed"
     elif job.status in {"failed", "dead"}:
@@ -144,7 +194,10 @@ def _job_to_line_item(job: LearningJobRecord) -> ObservabilityLineItem:
         completion_state = "running"
     else:
         completion_state = "not_started"
+    if not completion_status:
+        completion_status = completion_state
     title = _safe_text(metrics.get("title") or metrics.get("summary") or f"{job.job_type} job {job.id}")
+    started_at = job.started_at or job.created_at
     return ObservabilityLineItem(
         id=f"obs_job_{job.id}",
         tenant_id=job.tenant_id,
@@ -158,24 +211,101 @@ def _job_to_line_item(job: LearningJobRecord) -> ObservabilityLineItem:
         blocker=_safe_text(blocker, max_chars=240) if blocker else None,
         completion_state=completion_state,
         validation_state=validation_state,
-        started_at=job.started_at or job.created_at,
+        started_at=started_at,
         updated_at=job.updated_at,
         summary_json={
             "job_type": job.job_type,
             "metrics": _redacted_json(metrics),
             "error": _redacted_json(error),
         },
+        worker_kind=_safe_text(metrics.get("worker_kind"), max_chars=120) or None,
+        worker_status=_safe_text(metrics.get("worker_status") or metrics.get("worker_state") or job.status, max_chars=120),
+        blocker_status=_safe_text(metrics.get("blocker_status") or ("blocked" if blocker or job.status == "blocked" else "none"), max_chars=120),
+        completion_status=completion_status,
+        model=_safe_text(metrics.get("model") or metrics.get("worker_model"), max_chars=160) or None,
+        provider=_safe_text(metrics.get("provider") or metrics.get("worker_provider"), max_chars=160) or None,
+        route=_safe_text(metrics.get("route") or metrics.get("model_route"), max_chars=160) or None,
+        speckit_refs=_as_str_list(metrics.get("speckit_refs") or metrics.get("spec_kit_refs")),
+        architecture_refs=_as_str_list(metrics.get("architecture_refs") or metrics.get("arch_refs")),
+        task_list_refs=_as_str_list(metrics.get("task_list_refs") or metrics.get("tasks_refs")),
+        memory_refs=_as_list_of_dicts(metrics.get("memory_refs")),
+        cost_summary=_cost_summary(metrics),
+        latency_summary=_latency_summary(
+            metrics,
+            started_at=started_at,
+            updated_at=job.updated_at,
+            finished_at=job.finished_at,
+        ),
     )
 
 
 def _redacted_json(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(k): _redacted_json(v) for k, v in value.items()}
+        redacted: Dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            lowered = key.casefold()
+            if lowered in {"raw_transcript_included", "secret_safe"}:
+                redacted[key] = _redacted_json(v)
+                continue
+            if any(part in lowered for part in RAW_TEXT_KEY_PARTS):
+                continue
+            if any(part in lowered for part in SENSITIVE_KEY_PARTS):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redacted_json(v)
+        return redacted
     if isinstance(value, list):
         return [_redacted_json(v) for v in value]
     if isinstance(value, str):
         return _safe_text(value, max_chars=1000)
     return value
+
+
+def _cost_summary(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    source = metrics.get("cost_summary") if isinstance(metrics.get("cost_summary"), dict) else {}
+    token_source = metrics.get("token_estimate") if isinstance(metrics.get("token_estimate"), dict) else {}
+
+    def _num(*keys: str, default: Any = 0) -> Any:
+        for key in keys:
+            if key in source:
+                return source.get(key)
+            if key in token_source:
+                return token_source.get(key)
+            if key in metrics:
+                return metrics.get(key)
+        return default
+
+    return {
+        "token_estimate": _num("token_estimate", "estimated_tokens", default=0),
+        "input_tokens": _num("input_tokens", "prompt_tokens", default=0),
+        "output_tokens": _num("output_tokens", "completion_tokens", default=0),
+        "total_tokens": _num("total_tokens", "tokens", default=0),
+        "cost_usd": _num("cost_usd", "usd", default=0),
+        "estimated": bool(source.get("estimated") or token_source.get("estimated") or metrics.get("estimated_tokens")),
+    }
+
+
+def _latency_summary(
+    metrics: Dict[str, Any],
+    *,
+    started_at: Optional[float],
+    updated_at: Optional[float],
+    finished_at: Optional[float],
+) -> Dict[str, Any]:
+    source = metrics.get("latency_summary") if isinstance(metrics.get("latency_summary"), dict) else {}
+    duration_seconds = None
+    if started_at is not None and finished_at is not None:
+        duration_seconds = max(0.0, float(finished_at) - float(started_at))
+    return {
+        "wall_time_ms": source.get("wall_time_ms", metrics.get("wall_time_ms")),
+        "latency_ms": source.get("latency_ms", metrics.get("latency_ms")),
+        "duration_ms": source.get("duration_ms", metrics.get("duration_ms")),
+        "duration_seconds": source.get("duration_seconds", metrics.get("duration_seconds", duration_seconds)),
+        "started_at": source.get("started_at", started_at),
+        "updated_at": source.get("updated_at", updated_at),
+        "finished_at": source.get("finished_at", finished_at),
+    }
 
 
 def list_observability_items(db: SessionDB, filters: ObservabilityFilters) -> List[ObservabilityLineItem]:
@@ -239,6 +369,16 @@ def list_observability_items(db: SessionDB, filters: ObservabilityFilters) -> Li
             if needle in (item.blocker or "").casefold()
             or needle in json.dumps(item.summary_json, sort_keys=True, ensure_ascii=False).casefold()
         ]
+    if filters.worker_status:
+        needle = str(filters.worker_status).casefold()
+        items = [item for item in items if needle == str(item.worker_status or "").casefold()]
+    if filters.completion_status:
+        needle = str(filters.completion_status).casefold()
+        items = [
+            item
+            for item in items
+            if needle in {str(item.completion_status or "").casefold(), str(item.completion_state or "").casefold()}
+        ]
     items.sort(key=lambda item: item.updated_at or item.started_at or 0, reverse=True)
     return items[: max(1, int(filters.limit or 100))]
 
@@ -271,6 +411,9 @@ def _candidate_to_line_item(candidate: Dict[str, Any]) -> ObservabilityLineItem:
             "score": candidate.get("score"),
             "evidence": _redacted_json(evidence),
         },
+        worker_status=status,
+        blocker_status="blocked" if evidence.get("blocker") else "none",
+        completion_status="completed" if status in {"approved", "applied"} else "pending",
     )
 
 
@@ -278,6 +421,7 @@ def _supervisor_task_to_line_item(task: Any) -> ObservabilityLineItem:
     blocker = None
     if task.state in {"blocked", "reclaimed", "validation_failed", "needs_operator"}:
         blocker = task.state
+    metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
     return ObservabilityLineItem(
         id=f"obs_supervisor_task_{task.task_id}",
         tenant_id=task.tenant_id,
@@ -309,6 +453,19 @@ def _supervisor_task_to_line_item(task: Any) -> ObservabilityLineItem:
             } if task.goal_json else {},
             "metadata": _redacted_json(task.metadata_json),
         },
+        worker_kind=task.worker_kind,
+        worker_status=task.state,
+        blocker_status=_safe_text(metadata.get("blocker_status") or (blocker or "none"), max_chars=120),
+        completion_status=_safe_text(metadata.get("completion_status") or ("completed" if task.state == "completed" else ("failed" if task.state in {"abandoned", "validation_failed"} else task.state)), max_chars=120),
+        model=_safe_text(metadata.get("model") or metadata.get("worker_model"), max_chars=160) or None,
+        provider=_safe_text(metadata.get("provider") or metadata.get("worker_provider"), max_chars=160) or None,
+        route=_safe_text(metadata.get("route") or metadata.get("model_route"), max_chars=160) or None,
+        speckit_refs=task.spec_kit_refs,
+        architecture_refs=_as_str_list(metadata.get("architecture_refs") or metadata.get("arch_refs")),
+        task_list_refs=_as_str_list(metadata.get("task_list_refs") or metadata.get("tasks_refs")),
+        memory_refs=_as_list_of_dicts(metadata.get("memory_refs")),
+        cost_summary=_cost_summary(metadata),
+        latency_summary=_latency_summary(metadata, started_at=task.created_at, updated_at=task.updated_at, finished_at=None),
     )
 
 
@@ -366,6 +523,7 @@ def build_evidence_bundle(
     error = job.error_json if isinstance(job.error_json, dict) else {}
     evidence = _collect_related_evidence(db, job)
     task_description = _safe_text(metrics.get("task_description") or metrics.get("title") or metrics.get("summary") or f"{job.job_type} job {job.id}")
+    memory_refs = evidence["memory_refs"] + _as_list_of_dicts(metrics.get("memory_refs"))
     bundle = ObservabilityEvidenceBundle(
         id=f"obs_bundle_{uuid.uuid4().hex[:16]}",
         tenant_id=job.tenant_id,
@@ -373,18 +531,18 @@ def build_evidence_bundle(
         task_id=job.task_id,
         line_item_id=line_item_id,
         task_description=task_description,
-        supervisor_packet_ref=metrics.get("supervisor_packet_ref"),
+        supervisor_packet_ref=_safe_text(metrics.get("supervisor_packet_ref"), max_chars=400) or None,
         initial_assignment=_redacted_json(metrics.get("initial_assignment") or {}),
         agent_refs=_as_list_of_dicts(metrics.get("agent_refs")),
-        speckit_refs=_as_str_list(metrics.get("speckit_refs")),
+        speckit_refs=_as_str_list(metrics.get("speckit_refs") or metrics.get("spec_kit_refs")),
         branch_refs=_as_str_list(metrics.get("branch_refs")),
         validation_refs=_as_list_of_dicts(metrics.get("validation_refs")),
-        memory_refs=evidence["memory_refs"],
+        memory_refs=memory_refs,
         event_refs=evidence["event_refs"],
         artifact_refs=_as_list_of_dicts(metrics.get("artifact_refs")) + _artifact_refs_from_job(job, error),
         raw_transcript_included=False,
-        secret_safe=_secret_safe({"metrics": metrics, "error": error, "evidence": evidence}),
     )
+    bundle.secret_safe = _secret_safe(bundle.to_dict())
     return bundle
 
 
@@ -411,14 +569,18 @@ def _supervisor_task_evidence_bundle(
         assessment = assess_task_convergence(db, task_id=source_id).to_dict()
     except Exception as exc:
         assessment = {"status": "error", "error": str(exc)}
-    return ObservabilityEvidenceBundle(
+    memory_refs = _as_list_of_dicts(task.metadata_json.get("memory_refs"))
+    for hb in heartbeats:
+        if hb.metadata_json.get("memory_packet_id"):
+            memory_refs.append({"kind": "memory_packet", "id": _safe_text(hb.metadata_json.get("memory_packet_id"), max_chars=240)})
+    bundle = ObservabilityEvidenceBundle(
         id=f"obs_bundle_{uuid.uuid4().hex[:16]}",
         tenant_id=task.tenant_id,
         repo_id=task.repo_id,
         task_id=task.task_id,
         line_item_id=line_item_id,
         task_description=_safe_text(task.task_description or f"supervisor task {source_id}"),
-        supervisor_packet_ref=task.metadata_json.get("supervisor_packet_ref"),
+        supervisor_packet_ref=_safe_text(task.metadata_json.get("supervisor_packet_ref"), max_chars=400) or None,
         initial_assignment={
             "worker_id": task.worker_id,
             "worker_kind": task.worker_kind,
@@ -454,7 +616,7 @@ def _supervisor_task_evidence_bundle(
                 "recommended_action": assessment.get("recommended_action"),
             }
         ],
-        memory_refs=[],
+        memory_refs=memory_refs,
         event_refs=[
             {
                 "kind": "worker_heartbeat",
@@ -470,8 +632,9 @@ def _supervisor_task_evidence_bundle(
         ],
         artifact_refs=[],
         raw_transcript_included=False,
-        secret_safe=_secret_safe({"task": task.to_dict(), "heartbeats": [hb.to_dict() for hb in heartbeats]}),
     )
+    bundle.secret_safe = _secret_safe(bundle.to_dict())
+    return bundle
 
 
 def _candidate_evidence_bundle(
@@ -499,14 +662,14 @@ def _candidate_evidence_bundle(
     ]
     source_ref = evidence.get("source_record_id") or evidence.get("record_id") or evidence.get("evidence_uri")
     event_refs = [{"kind": "candidate_evidence", "id": str(source_ref)}] if source_ref else []
-    return ObservabilityEvidenceBundle(
+    bundle = ObservabilityEvidenceBundle(
         id=f"obs_bundle_{uuid.uuid4().hex[:16]}",
         tenant_id=candidate.get("tenant_id"),
         repo_id=candidate.get("repo_id"),
         task_id=str(task_id) if task_id else None,
         line_item_id=line_item_id,
         task_description=_safe_text(candidate.get("claim") or f"candidate {source_id}"),
-        supervisor_packet_ref=evidence.get("packet_id") or evidence.get("memory_packet_id"),
+        supervisor_packet_ref=_safe_text(evidence.get("packet_id") or evidence.get("memory_packet_id"), max_chars=400) or None,
         initial_assignment=_redacted_json(evidence.get("initial_assignment") or {}),
         agent_refs=_as_list_of_dicts(evidence.get("agent_refs")),
         speckit_refs=_as_str_list(evidence.get("speckit_refs")),
@@ -516,8 +679,9 @@ def _candidate_evidence_bundle(
         event_refs=event_refs,
         artifact_refs=_as_list_of_dicts(evidence.get("artifact_refs")),
         raw_transcript_included=False,
-        secret_safe=_secret_safe({"candidate": candidate}),
     )
+    bundle.secret_safe = _secret_safe(bundle.to_dict())
+    return bundle
 
 
 def _assert_scope(
@@ -627,20 +791,148 @@ def _collect_related_evidence(db: SessionDB, job: LearningJobRecord) -> Dict[str
     return {"memory_refs": memory_refs, "event_refs": event_refs}
 
 
+def _line_item_to_runtime_dict(item: ObservabilityLineItem) -> Dict[str, Any]:
+    task_description = item.summary_json.get("metrics", {}).get("task_description") if isinstance(item.summary_json.get("metrics"), dict) else None
+    return {
+        "id": item.id,
+        "line_item_id": item.id,
+        "item_type": item.item_type,
+        "item_id": item.item_id,
+        "job_id": item.item_id if item.item_type == "job" else None,
+        "task_id": item.task_id,
+        "tenant_id": item.tenant_id,
+        "repo_id": item.repo_id,
+        "title": item.title,
+        "task_description": _safe_text(task_description or item.title, max_chars=500),
+        "status": item.status,
+        "worker_id": item.worker_id,
+        "worker": {
+            "id": item.worker_id,
+            "kind": item.worker_kind,
+            "status": item.worker_status or item.status,
+        },
+        "model": {
+            "provider": item.provider,
+            "model": item.model,
+            "route": item.route,
+        },
+        "spec_kit_refs": item.speckit_refs,
+        "architecture_refs": item.architecture_refs,
+        "task_list_refs": item.task_list_refs,
+        "blocker": item.blocker,
+        "blocker_status": item.blocker_status,
+        "completion_state": item.completion_state,
+        "completion_status": item.completion_status or item.completion_state,
+        "validation_state": item.validation_state,
+        "evidence_bundle_id": f"obs_bundle_for_{item.id}",
+        "memory_refs": item.memory_refs,
+        "cost_summary": item.cost_summary or _cost_summary({}),
+        "latency_summary": item.latency_summary or _latency_summary({}, started_at=item.started_at, updated_at=item.updated_at, finished_at=None),
+        "started_at": item.started_at,
+        "updated_at": item.updated_at,
+        "summary_json": _redacted_json(item.summary_json),
+    }
+
+
+def list_runtime_observability_snapshot(db: SessionDB, filters: ObservabilityFilters) -> Dict[str, Any]:
+    rows = list_observability_items(db, filters)
+    items = [_line_item_to_runtime_dict(row) for row in rows]
+    return {
+        "filters": filters.to_dict(),
+        "items": items,
+        "count": len(items),
+        "active_count": sum(1 for item in items if item["status"] in {"queued", "running", "ready"}),
+        "historical_count": sum(1 for item in items if item["status"] in {"completed", "failed", "blocked", "dead", "abandoned", "validation_failed"}),
+        "raw_transcripts_included": False,
+    }
+
+
+def resolve_observability_line_item_id(
+    db: SessionDB,
+    *,
+    line_item_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+) -> str:
+    if line_item_id:
+        return line_item_id
+    if job_id:
+        if get_learning_job(db, job_id) is None:
+            raise ValueError(f"unknown learning job: {job_id}")
+        return f"obs_job_{job_id}"
+    if task_id:
+        try:
+            from hermes_cli.supervisor_control_plane import get_task_ledger_entry
+
+            if get_task_ledger_entry(db, task_id) is not None:
+                return f"obs_supervisor_task_{task_id}"
+        except Exception:
+            pass
+        jobs = list_learning_jobs(db, task_id=task_id, limit=1)
+        if jobs:
+            return f"obs_job_{jobs[0].id}"
+        raise ValueError(f"unknown observability task: {task_id}")
+    raise ValueError("line_item_id, job_id, or task_id is required")
+
+
+def _line_item_for_id(db: SessionDB, line_item_id: str) -> ObservabilityLineItem:
+    item_type, source_id = _parse_line_item_id(line_item_id)
+    if item_type == "job":
+        job = get_learning_job(db, source_id)
+        if job is None:
+            raise ValueError(f"unknown learning job: {source_id}")
+        return _job_to_line_item(job)
+    if item_type == "supervisor_task":
+        from hermes_cli.supervisor_control_plane import get_task_ledger_entry
+
+        task = get_task_ledger_entry(db, source_id)
+        if task is None:
+            raise ValueError(f"unknown supervisor task: {source_id}")
+        return _supervisor_task_to_line_item(task)
+    if item_type == "candidate":
+        candidate = db.get_meta_candidate(source_id)
+        if candidate is None:
+            raise ValueError(f"unknown memory candidate: {source_id}")
+        return _candidate_to_line_item(candidate)
+    raise ValueError(f"unsupported observability item type: {item_type}")
+
+
+def build_observability_detail(
+    db: SessionDB,
+    *,
+    line_item_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+) -> RuntimeObservabilityDetail:
+    resolved_id = resolve_observability_line_item_id(db, line_item_id=line_item_id, job_id=job_id, task_id=task_id)
+    bundle = build_evidence_bundle(db, line_item_id=resolved_id, tenant_id=tenant_id, repo_id=repo_id)
+    item = _line_item_for_id(db, resolved_id)
+    _assert_scope(item.tenant_id, item.repo_id, tenant_id=tenant_id, repo_id=repo_id)
+    return RuntimeObservabilityDetail(
+        line_item=_line_item_to_runtime_dict(item),
+        evidence_bundle=_redacted_json(bundle.to_dict()),
+    )
+
+
 def scoped_analysis(
     db: SessionDB,
     *,
-    line_item_id: str,
-    question: str,
+    line_item_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    question: str = "",
     tenant_id: Optional[str] = None,
     repo_id: Optional[str] = None,
     repo_query_allowed: bool = False,
     repo_path: Optional[str] = None,
     model_call: Optional[Callable[[str, ObservabilityEvidenceBundle], str]] = None,
 ) -> ScopedAnalysisResult:
+    resolved_id = resolve_observability_line_item_id(db, line_item_id=line_item_id, job_id=job_id, task_id=task_id)
     bundle = build_evidence_bundle(
         db,
-        line_item_id=line_item_id,
+        line_item_id=resolved_id,
         tenant_id=tenant_id,
         repo_id=repo_id,
     )
@@ -649,14 +941,14 @@ def scoped_analysis(
     if model_call is not None:
         answer = model_call(prompt, bundle)
     else:
-        answer = _deterministic_analysis_answer(question, bundle, repo_context)
+        answer = _deterministic_analysis_answer(question, bundle, repo_context, _line_item_for_id(db, resolved_id))
     citations = _bundle_citations(bundle)
     return ScopedAnalysisResult(
         id=f"analysis_{uuid.uuid4().hex[:16]}",
         tenant_id=bundle.tenant_id,
         repo_id=bundle.repo_id,
         task_id=bundle.task_id,
-        line_item_id=line_item_id,
+        line_item_id=resolved_id,
         question=_safe_text(question, max_chars=1000),
         evidence_bundle_id=bundle.id,
         repo_query_allowed=bool(repo_query_allowed),
@@ -683,6 +975,7 @@ def _deterministic_analysis_answer(
     question: str,
     bundle: ObservabilityEvidenceBundle,
     repo_context: Dict[str, Any],
+    line_item: Optional[ObservabilityLineItem] = None,
 ) -> str:
     parts = [
         f"Task/job summary: {bundle.task_description}.",
@@ -691,9 +984,29 @@ def _deterministic_analysis_answer(
     if bundle.validation_refs:
         parts.append(f"Validation refs available: {len(bundle.validation_refs)}.")
     if bundle.memory_refs:
-        parts.append(f"Memory/candidate refs available: {len(bundle.memory_refs)}.")
+        memory_ids = [str(ref.get("id")) for ref in bundle.memory_refs if isinstance(ref, dict) and ref.get("id")]
+        parts.append(f"Memory/candidate refs available: {len(bundle.memory_refs)} ({', '.join(memory_ids[:5])}).")
     if bundle.event_refs:
         parts.append(f"Event refs available: {len(bundle.event_refs)}.")
+    if line_item is not None:
+        parts.append(f"Status: blocker={line_item.blocker or 'none'} completion={line_item.completion_status or line_item.completion_state}.")
+        cost = line_item.cost_summary or {}
+        if cost:
+            parts.append(
+                "Cost summary: "
+                f"total_tokens={cost.get('total_tokens', 0)} "
+                f"input_tokens={cost.get('input_tokens', 0)} "
+                f"output_tokens={cost.get('output_tokens', 0)} "
+                f"cost_usd={cost.get('cost_usd', 0)}."
+            )
+        latency = line_item.latency_summary or {}
+        if latency:
+            parts.append(
+                "Latency summary: "
+                f"wall_time_ms={latency.get('wall_time_ms')} "
+                f"latency_ms={latency.get('latency_ms')} "
+                f"duration_ms={latency.get('duration_ms')}."
+            )
     if repo_context:
         parts.append(f"Read-only repo context included: {', '.join(repo_context.keys())}.")
     parts.append("Mutation authority: disabled.")

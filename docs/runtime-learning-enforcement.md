@@ -481,6 +481,16 @@ This path is programmatic. It calls persisted retrieval, pre-curation, and
 hydration, but it does not call curator, judge, dreaming, or any other
 LLM-backed sidecar on exact approved lesson hits.
 
+Runtime job observability uses the same deterministic posture. The
+`hermes memory observe` JSON surfaces expose active and historical jobs through
+bounded DTOs with tenant/repo/date, worker id/status, job status, completion
+status, and blocker filters. Detail can be loaded by canonical line item id or
+direct `--job-id`/`--task-id`, and returns evidence refs for Spec Kit artifacts,
+architecture docs, task-list entries, validation, events, and memory without raw
+transcripts or provider logs. Scoped Ask is local metadata summarization by
+default: it reports blocker/completion state, evidence counts, memory refs,
+cost/latency summaries, citations, `mutation_allowed=false`, and `llm_calls=[]`.
+
 ## Phase 11 T115 Deterministic VM/Local Smoke
 
 T115 validation completed on branch `132-learning-memory-runtime` at HEAD

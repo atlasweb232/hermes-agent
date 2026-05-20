@@ -934,16 +934,24 @@ Implemented Phase 8 surfaces:
 
 - `hermes memory jobs list/status --json` exposes filtered learning job records
   by tenant, repo, task, worker, job type, status, date window, and blocker text.
-- `hermes memory observe list --json` returns dashboard line-item DTOs for
-  learning jobs and memory/policy candidates. The list shape is intentionally
-  compact so large tenants can page through active and historical work.
+- `hermes memory observe list --json` returns richer runtime line-item DTOs for
+  active and historical learning jobs, supervisor tasks, and memory/policy
+  candidates. Rows include tenant, repo, job/task id, task description, worker
+  id/kind/status, provider/model/route metadata when stored, Spec Kit refs,
+  architecture refs, task-list refs, blocker status, completion status, memory
+  refs, and cost/latency summaries when available. Tenant, repo, task, worker,
+  worker status, completion/status, blocker, and date-window filters are applied
+  before the bounded JSON payload is returned.
 - `hermes memory observe detail <line_item_id> --json` builds a scoped evidence
   bundle from refs: task summary, assignment metadata, Spec Kit refs, branch
-  refs, validation refs, memory refs, event refs, and artifact refs.
-- `hermes memory observe ask <line_item_id> --question ... --json` returns a
-  read-only scoped analysis result. The deterministic fallback can answer from
-  the evidence bundle without a model; a future backend can inject an analysis
-  LLM while preserving the same no-mutation contract.
+  refs, validation refs, memory refs, event refs, and artifact refs. Operators
+  can also drill down directly with `--job-id` or `--task-id`; the API resolves
+  those ids to the canonical line item before loading detail.
+- `hermes memory observe ask <line_item_id|--job-id|--task-id> --question ...
+  --json` returns a read-only scoped analysis result. The default implementation
+  is deterministic and uses only stored metadata: blocker/completion status,
+  evidence counts, memory refs, citations, and cost/latency summaries. It emits
+  `llm_calls: []` unless a future caller explicitly injects an analysis model.
 - Dashboard plugin endpoints under `/api/plugins/kanban/observability/...`
   expose the same list, detail, and Ask DTOs for a lean tenant/repo/task view.
 - The first frontend is embedded in the Kanban dashboard plugin as a collapsible
@@ -956,6 +964,12 @@ frontend-heavy screens: Overview is the line item, Agents/Spec Kit/Memory/
 Validation/Events are lazy evidence-bundle collections, and Ask is a separate
 read-only analysis response. This keeps observability cheap while leaving room
 for a richer UI later.
+
+Runtime observability payloads are metadata DTOs, not transcript exports. The
+redaction pass strips raw transcript/log/message fields, redacts secret-looking
+keys and values, caps free text, and keeps `raw_transcript_included=false` on
+evidence bundles. Cost fields default to zeros and latency fields default to
+`null`/stored timestamps when provider metrics are unavailable.
 
 ## Supervisor Convergence Control Plane
 

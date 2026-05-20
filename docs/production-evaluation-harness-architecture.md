@@ -87,6 +87,16 @@ Metrics are recorded per model, provider, task, session, workload, tenant, and
 repo. If provider token counts are unavailable, deterministic estimates are
 stored with `estimated=true`.
 
+The runtime observability DTOs surface those fields without requiring a full
+dashboard. `hermes memory observe list --json` provides active/historical job
+rows with worker/model metadata, completion and blocker state, Spec Kit and
+architecture refs, memory refs, and cost/latency summaries. Operators can filter
+by tenant, repo, date window, worker id/status, status, completion status, and
+blocker text, then drill into a line item by id, job id, or task id. Scoped Ask
+is deterministic by default and summarizes only persisted metadata with
+citations and `llm_calls=[]`; raw transcripts, secrets, tokens, and provider
+logs stay out of observability payloads.
+
 ## Sidecar Verification
 
 The harness must prove that sidecars add value without dragging the runtime:
