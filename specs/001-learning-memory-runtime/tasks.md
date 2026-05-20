@@ -643,18 +643,18 @@
 
 **Checkpoint**: Dreaming can generate valuable improvement work while remaining isolated, reviewable, tenant-scoped, and non-authoritative.
 
-## Phase 19: Lesser-Model Training Corpus And MLOps Loop (Priority: P16)
+## Phase 19: Lesser-Model Corpus Remittance For External MLOps (Priority: P16)
 
-**Goal**: Create an offline MLOps loop where lesser-model failures and stronger-model rectifications become approved training corpus records for fine-tuning smaller coding models such as Gemma-class workers.
+**Goal**: Create the Hermes-owned corpus collection, curation, approval, and remittance layer where lesser-model failures and stronger-model rectifications become approved training records for an external MLOps platform.
 
-**Independent Test**: Export approved failure/repair and preference-pair records into a reproducible local JSONL bundle with manifest, redaction report, approval provenance, and model-training metadata. Verify no raw transcript, secret, or unapproved tenant data is exported, then produce a model-registry candidate record that remains undeployed until evaluation gates pass.
+**Independent Test**: Export approved failure/repair and preference-pair records into a reproducible local JSONL bundle with manifest, redaction report, approval provenance, destination metadata, remittance receipt, and external training hints. Verify no raw transcript, secret, or unapproved tenant data is exported. Verify Hermes does not create training jobs, model registry entries, deployment gates, or model rollout decisions.
 
-**Boundary**: Runtime sidecars may create training candidates, but they must not train, register, deploy, or promote models. Fine-tuning runs only in the offline MLOps pipeline.
+**Boundary**: Runtime sidecars may create training candidates and corpus bundles, but they must not train, register, deploy, promote, or schedule model jobs. Fine-tuning, model registry, validation gates, serving, and canary rollout run only in external MLOps infrastructure.
 
 ### Spec And Architecture Artifacts
 
-- [x] T272 [US16] Add `docs/lesser-model-mlops-architecture.md` defining failure/repair corpus, SFT and preference data shapes, LoRA/QLoRA/fine-tune stages, Delta/Iceberg storage layout, model registry, evaluation gate, and staged deployment
-- [ ] T273 [US16] Add MLOps training corpus contract covering failure/repair records, preference pairs, fine-tune job metadata, model registry metadata, deployment gate reports, and storage layouts
+- [x] T272 [US16] Add `docs/lesser-model-mlops-architecture.md` defining Hermes-owned failure/repair corpus collection, curation, remittance, external MLOps handoff, destination storage layout, and external training/evaluation responsibilities
+- [x] T273 [US16] Add MLOps corpus remittance contract covering failure/repair records, preference pairs, destination metadata, external training hints, remittance receipts, and storage layouts
 - [ ] T274 [US16] Link MLOps architecture from training corpus, global memory wiki, benchmark harness, sidecar model-tier, and tenant platform docs
 
 ### Tests For Training Corpus MLOps
@@ -662,23 +662,23 @@
 - [ ] T275 [P] [US16] Add failure/repair training record schema tests covering lesser-model attempt summary, failure classification, evidence refs, strong-model diagnosis, correction refs, validation refs, distilled lesson, forbidden behavior, redaction, and approval provenance
 - [ ] T276 [P] [US16] Add SFT message record tests and preference-pair tests for chosen validated repair vs rejected lesser-model failure
 - [ ] T277 [P] [US16] Add local JSONL bundle tests for stable manifest, hashes, redaction report, approval provenance, dataset-family filters, tenant/shareability boundaries, and no raw transcript/secret export
-- [ ] T278 [P] [US16] Add Delta/Iceberg layout metadata tests using local fake paths only, proving partition fields and schema versions are stable without requiring production services
-- [ ] T279 [P] [US16] Add fine-tune job metadata tests for base model, training method, corpus refs, hyperparameter refs, artifact refs, eval refs, and approval state
-- [ ] T280 [P] [US16] Add model registry tests for base model, adapter/weights refs, tokenizer refs, training manifest, eval report, redaction report, approval record, rollout status, and rollback target
-- [ ] T281 [P] [US16] Add deployment gate tests proving a fine-tuned model cannot become a worker tier until held-out benchmarks, safety, tenant-boundary, false-completion, tool-misuse, and cost/latency gates pass
+- [ ] T278 [P] [US16] Add Delta/Iceberg-compatible destination layout metadata tests using local fake paths only, proving partition fields and schema versions are stable without requiring production services
+- [ ] T279 [P] [US16] Add external training hint tests for target base model family, recommended method, corpus refs, eval refs, and approval state without creating Hermes-owned training jobs
+- [ ] T280 [P] [US16] Add remittance receipt tests for destination URI, bundle hash, schema version, approval refs, external pipeline id, submitted_at, and immutable audit status
+- [ ] T281 [P] [US16] Add boundary tests proving Hermes cannot register, deploy, promote, or route to a fine-tuned model from corpus remittance output alone
 
 ### Implementation For Training Corpus MLOps
 
 - [ ] T282 [US16] Implement MLOps training corpus DTOs for failure/repair records, SFT records, preference pairs, manifests, redaction reports, and approval provenance
 - [ ] T283 [US16] Implement local JSONL bundle writer with deterministic ordering, stable hashes, schema version, and reproducibility metadata
-- [ ] T284 [US16] Implement Delta/Iceberg-compatible layout planner without adding production storage dependencies
-- [ ] T285 [US16] Implement fine-tune job metadata builder for SFT, DPO/ORPO, LoRA, QLoRA, and full fine-tune methods
-- [ ] T286 [US16] Implement model registry metadata writer for local/dev registry records
-- [ ] T287 [US16] Implement deployment gate evaluator for model promotion decisions and canary eligibility
-- [ ] T288 [US16] Add CLI/API-compatible surfaces for `hermes mlops corpus export`, `hermes mlops finetune plan`, `hermes mlops registry add/status`, and `hermes mlops gate evaluate --json`
-- [ ] T289 [US16] Add E2E fixture proving a Gemma-class lesser-model failure plus Codex/strong-model rectification can produce approved local training records but cannot deploy a model without gate approval
+- [ ] T284 [US16] Implement Delta/Iceberg-compatible destination layout planner without adding production storage dependencies
+- [ ] T285 [US16] Implement external training hint builder for SFT, DPO/ORPO, LoRA, QLoRA, and full fine-tune recommendations without scheduling jobs
+- [ ] T286 [US16] Implement remittance receipt writer for local/dev audit records after bundle handoff to configured storage
+- [ ] T287 [US16] Implement external MLOps handoff validator proving required approval, redaction, tenant/shareability, schema, and hash fields are present before remittance
+- [ ] T288 [US16] Add CLI/API-compatible surfaces for `hermes mlops corpus export`, `hermes mlops corpus remit`, `hermes mlops corpus receipts`, and `hermes mlops corpus validate --json`
+- [ ] T289 [US16] Add E2E fixture proving a Gemma-class lesser-model failure plus Codex/strong-model rectification can produce approved local training records and a remittance receipt, while Hermes remains unable to train or deploy a model
 
-**Checkpoint**: Hermes can create high-quality offline training data for cheaper coding models while keeping runtime memory, training, registry, and deployment gates separate.
+**Checkpoint**: Hermes can create and remit high-quality offline training data for cheaper coding models while keeping runtime memory, corpus export, external training, registry, and deployment separate.
 
 ## Dependencies & Execution Order
 
@@ -833,11 +833,11 @@
 
 ### Phase 19 Order
 
-1. Add MLOps training corpus contract.
+1. Add MLOps corpus remittance contract.
 2. Add failure/repair, SFT, and preference-pair schemas.
 3. Add local JSONL bundle writer with manifest/redaction/approval metadata.
-4. Add Delta/Iceberg-compatible layout planner.
-5. Add fine-tune job metadata and model registry metadata.
-6. Add deployment gate evaluator.
+4. Add Delta/Iceberg-compatible destination layout planner.
+5. Add external training hint metadata and remittance receipts.
+6. Add boundary tests proving Hermes does not train, register, deploy, or promote models.
 7. Add CLI/API surfaces.
-8. Add E2E fixture for lesser-model failure -> strong-model repair -> training record -> blocked deployment until gate pass.
+8. Add E2E fixture for lesser-model failure -> strong-model repair -> training record -> external remittance receipt.

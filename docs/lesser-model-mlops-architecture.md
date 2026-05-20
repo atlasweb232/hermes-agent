@@ -1,15 +1,18 @@
-# Lesser-Model MLOps Architecture
+# Lesser-Model Corpus Remittance Architecture
 
 ## Purpose
 
 Hermes should not only remember mistakes. It should convert validated
-failure/repair experience into training data for smaller, cheaper coding
-models. The goal is to make configurable lesser models, such as a future
-Gemma-class coding worker, gradually behave more like the stronger teacher
-models on recurring enterprise coding workflows.
+failure/repair experience into approved training data for smaller, cheaper
+coding models. The goal is to let an external MLOps platform fine-tune
+configurable lesser models, such as a future Gemma-class coding worker, so
+they gradually behave more like stronger teacher models on recurring
+enterprise coding workflows.
 
-This is an offline MLOps loop. It must remain separate from live runtime
-memory, sidecar execution, and policy enforcement.
+Hermes owns corpus collection, curation, approval, packaging, and remittance
+to configured storage. Hermes does not own training execution, model registry,
+model serving, or rollout decisions. Those belong to external MLOps
+infrastructure.
 
 ## Target Loop
 
@@ -19,17 +22,19 @@ lesser worker attempts task
   -> stronger model diagnoses and repairs
   -> supervisor validates corrected output
   -> approved failure/repair record
-  -> training corpus table
-  -> fine-tune job
-  -> held-out evaluation
-  -> model registry
-  -> staged deployment as optional worker tier
+  -> Hermes corpus bundle
+  -> Hermes remittance receipt
+  -> external storage / Delta or Iceberg table
+  -> external MLOps fine-tune job
+  -> external held-out evaluation
+  -> external model registry
+  -> external staged deployment as optional worker tier
 ```
 
 ## Separation From Runtime Memory
 
 Runtime memory helps the next task immediately. The training corpus feeds
-offline model improvement.
+external model improvement. Hermes must keep these concerns separate.
 
 The training corpus must not contain:
 
@@ -42,7 +47,7 @@ The training corpus must not contain:
 
 It should contain compact, validated, approved learning examples.
 
-## Storage Layout
+## Storage And Remittance Layout
 
 ### Local/Dev
 
@@ -56,12 +61,15 @@ It should contain compact, validated, approved learning examples.
         manifest.json
         redaction_report.json
         approval_provenance.json
+        external_training_hints.json
+        remittance_receipt.json
         hashes.json
 ```
 
 ### Production
 
-Use object storage plus a table format:
+Use object storage plus a table format owned by the external MLOps/storage
+environment:
 
 - Azure Data Lake / S3 / GCS
 - Delta Lake or Apache Iceberg
@@ -80,7 +88,13 @@ training_corpus/
     preference_pairs.parquet
     manifest.json
     redaction_report.json
+    external_training_hints.json
+    remittance_receipt.json
 ```
+
+Hermes may write to local disk, object storage, or a configured remittance
+endpoint. It must not require Kafka, Spark, Ray, Kubernetes, vLLM, a model
+registry, or GPU infrastructure to create corpus bundles.
 
 ## Dataset Families
 
@@ -161,7 +175,10 @@ failed lesser-model response.
 }
 ```
 
-## Fine-Tuning Methods
+## External Fine-Tuning Methods
+
+These methods are recommendations for the external MLOps platform. Hermes
+records them as non-executing hints.
 
 ### Stage 1: SFT
 
@@ -193,28 +210,44 @@ Use LoRA or QLoRA for Gemma-class models first. It is cheaper and allows:
 Only consider full fine-tuning when the corpus, evaluation, and cost justify
 it.
 
-## MLOps Pipeline
+## Hermes Responsibilities
 
-Pipeline stages:
+Hermes-owned stages:
 
 1. corpus build
 2. redaction and approval verification
-3. train/validation split
-4. SFT job
-5. optional preference tuning job
-6. held-out Hermes benchmark
-7. regression and safety evaluation
-8. model package creation
-9. model registry registration
-10. canary deployment
-11. telemetry comparison
+3. deterministic JSONL bundle creation
+4. stable hashes and manifest creation
+5. external training hint creation
+6. remittance to configured storage or endpoint
+7. immutable remittance receipt creation
+8. audit and observability metadata
 
-The runtime platform should trigger or observe these jobs, but training itself
-belongs in the MLOps pipeline.
+Hermes must not create training jobs, register models, evaluate deployment
+eligibility, or route traffic to a fine-tuned model based on corpus remittance.
 
-## Model Registry
+## External MLOps Responsibilities
 
-Registry layout:
+External MLOps-owned stages:
+
+1. corpus ingestion from remitted storage
+2. train/validation split
+3. SFT job
+4. optional preference tuning job
+5. held-out Hermes benchmark
+6. regression and safety evaluation
+7. model package creation
+8. model registry registration
+9. canary deployment
+10. telemetry comparison
+
+These stages may run end-of-day, hourly, event-triggered, or near-real-time,
+depending on budget and infrastructure. Hermes only emits corpus bundles and
+receipts.
+
+## External Model Registry
+
+Registry layout, owned outside Hermes:
 
 ```text
 model_registry/
@@ -230,7 +263,7 @@ model_registry/
       deployment_status.json
 ```
 
-Registry metadata:
+Recommended registry metadata:
 
 - base model
 - adapter type
@@ -243,7 +276,7 @@ Registry metadata:
 - rollout status
 - rollback target
 
-## Deployment Gate
+## External Deployment Gate
 
 A fine-tuned model cannot be promoted automatically. It must pass:
 
@@ -256,7 +289,8 @@ A fine-tuned model cannot be promoted automatically. It must pass:
 - tenant boundary tests
 - regression suite vs base model
 
-Only then can it become an optional worker model:
+Only the external MLOps control plane can decide that it becomes an optional
+worker model. Hermes may later consume an operator-approved model config like:
 
 ```yaml
 worker_models:
@@ -269,7 +303,8 @@ worker_models:
 
 ## Integration With Sidecars
 
-Sidecars produce training candidates but do not train models.
+Sidecars produce training candidates and corpus evidence but do not train
+models.
 
 - health sidecar detects failures
 - progress summarizer distills evidence
@@ -277,17 +312,20 @@ Sidecars produce training candidates but do not train models.
 - judge validates candidate quality
 - supervisor validates repairs
 - training corpus writer exports approved examples
-- MLOps pipeline trains and evaluates
+- remittance writer stores the bundle and receipt
+- external MLOps pipeline trains and evaluates
 
 ## First Implementation Slice
 
-1. MLOps training corpus contract.
+1. MLOps corpus remittance contract.
 2. Failure/repair and preference-pair schemas.
 3. Delta/Iceberg-compatible manifest fields.
-4. Model registry metadata schema.
-5. Fine-tune job metadata schema.
-6. Evaluation gate report schema.
+4. External training hint schema.
+5. Remittance receipt schema.
+6. Boundary tests proving Hermes does not train, register, deploy, or promote
+   models.
 7. Local JSONL export only.
 
-Production training execution, GPU scheduling, and model serving should follow
-only after corpus quality and offline eval are proven.
+Production training execution, GPU scheduling, model registry, model serving,
+and rollout automation belong to the external MLOps platform and should be
+implemented outside Hermes after corpus quality is proven.

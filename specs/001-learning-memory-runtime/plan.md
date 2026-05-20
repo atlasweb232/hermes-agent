@@ -160,11 +160,11 @@ See [../../docs/dreaming-integration-architecture.md](../../docs/dreaming-integr
 
 This phase revises dreaming for the tenant and skill platform. Dreaming stays proposal-only but can now explicitly propose skill candidates, skill repairs, CI/CD hardening, test gaps, routing improvements, cost optimizations, and architecture review items. Local dreaming remains tenant/repo scoped; global dreaming reads only redacted approved shareable memory/wiki evidence.
 
-## Phase 19: Lesser-Model Training Corpus And MLOps Loop
+## Phase 19: Lesser-Model Corpus Remittance For External MLOps
 
 See [../../docs/lesser-model-mlops-architecture.md](../../docs/lesser-model-mlops-architecture.md).
 
-This phase separates offline model improvement from runtime memory. Hermes captures lesser-model failures, strong-model rectifications, validation evidence, and distilled lessons into approved training records. The MLOps pipeline can fine-tune adapters or models, evaluate them against held-out Hermes benchmarks, register them, and deploy them as optional worker tiers only after gates pass.
+This phase separates offline model improvement from runtime memory. Hermes captures lesser-model failures, strong-model rectifications, validation evidence, and distilled lessons into approved training records, then remits reproducible bundles to configured storage for an external MLOps platform. The external MLOps platform owns batch or streaming fine-tuning, model registry, evaluation gates, serving, and rollout decisions.
 
 ## Complexity Tracking
 
@@ -176,4 +176,4 @@ This phase separates offline model improvement from runtime memory. Hermes captu
 | Tenant runtime cells | Required to isolate enterprise repos, secrets, worktrees, memory, connectors, and cost ledgers | One shared always-on Hermes process would make tenant leakage and cost attribution too risky |
 | Skill evolution boundary | Required to turn repeated lessons into reusable procedures without making raw session data authoritative | Injecting whole skill libraries or auto-publishing generated skills would create context bloat and unsafe hidden policy |
 | Proposal-only dreaming | Required to capture long-horizon improvement ideas without letting speculative synthesis mutate runtime | Letting dreaming write skills, config, goals, or policy directly would create unsafe autonomous drift |
-| Offline lesser-model MLOps loop | Required to improve cheaper coding models without allowing live runtime sidecars to train or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
+| Corpus remittance for external MLOps | Required to improve cheaper coding models without allowing live runtime sidecars to train, register, or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
