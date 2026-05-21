@@ -17,6 +17,22 @@ closing several cross-cutting gaps that do not belong to only one subsystem.
 
 ## Remaining Gaps
 
+### Phase 21 Closure
+
+Phase 21 adds `hermes_cli/platform_hardening.py` as the shared deterministic
+control-plane surface for the gaps below. The module provides redacted approval
+ledger records, effective runtime profile resolution, canonical bus envelopes,
+sidecar budget decisions, worker context-gate compliance checks, memory quality
+lifecycle compaction, dreaming backlog summaries, Azure production hardening
+evaluation, and a local E2E hardening fixture. These helpers are advisory and
+local-testable; they do not enable enforcement or live provider mutations.
+
+Live Azure production `apply` and `promote` decisions now consult the hardening
+evaluator before returning the existing live-not-implemented block. Missing
+managed identity, RBAC, private endpoints, VNet integration, private ingress,
+diagnostics, storage lifecycle policy, Key Vault access, rollback artifacts, or
+explicit approval blocks fail closed with bounded JSON evidence.
+
 ### Approval Boundary
 
 Many features require operator approval, but approval refs are not yet backed

@@ -353,6 +353,12 @@ def plan_sidecar_route(
     confidence: Optional[float] = None,
     promotion_requested: bool = False,
     enforcement_requested: bool = False,
+    budget_limits: Any = None,
+    budget_usage: Any = None,
+    estimated_tokens: int = 0,
+    estimated_cost: float = 0.0,
+    tenant_id: str = "",
+    task_id: str = "",
 ) -> Dict[str, Any]:
     """Return the model tier policy decision for one sidecar role.
 
@@ -385,7 +391,7 @@ def plan_sidecar_route(
         call_llm = bool(tier.get("allow_llm", True))
         reason = "role_default"
     tier = get_model_tier(config, tier_name)
-    return {
+    result = {
         "role": role,
         "tier": tier["tier"],
         "provider": tier.get("provider", ""),
@@ -396,6 +402,33 @@ def plan_sidecar_route(
         "requires_operator": needs_approval,
         "enforcement_allowed": False,
     }
+    if budget_limits is not None and budget_usage is not None:
+        from hermes_cli.platform_hardening import SidecarBudgetRequest, evaluate_sidecar_budget
+
+        budget = evaluate_sidecar_budget(
+            SidecarBudgetRequest(
+                tenant_id=tenant_id,
+                task_id=task_id,
+                sidecar_role=role,
+                llm_backed=call_llm,
+                exact_memory_hit=retrieval in {"exact", "exact_persisted_lesson", "exact_hit"},
+                estimated_tokens=estimated_tokens,
+                estimated_cost=estimated_cost,
+                escalation_reason=reason,
+                degrade_tier="programmatic" if call_llm else None,
+            ),
+            limits=budget_limits,
+            usage=budget_usage,
+        )
+        result["budget"] = budget.to_dict()
+        if not budget.allowed:
+            result["call_llm"] = False
+            result["budget_status"] = budget.status
+            if budget.degraded_to:
+                result["tier"] = budget.degraded_to
+                result["provider"] = "none"
+                result["model"] = "none"
+    return result
 
 
 _OPERATOR_CONTROL_ACTIONS = {

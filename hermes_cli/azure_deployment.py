@@ -704,6 +704,7 @@ def decide_deployment_action(
     approval: Mapping[str, Any] | None = None,
     evidence_refs: list[str] | None = None,
     live: bool = False,
+    hardening_evidence: Mapping[str, Any] | None = None,
 ) -> DeploymentDecision:
     gate_action = "destroy" if action == "rollback_destroy" else action
     gate = evaluate_approval_gate(profile, operation=gate_action, approval=approval)
@@ -712,7 +713,16 @@ def decide_deployment_action(
     reason = gate.reason
     if gate.allowed and live:
         status = "blocked"
-        reason = "live_apply_not_implemented"
+        if profile.environment == "production" and action in {"apply", "promote"}:
+            from hermes_cli.platform_hardening import evaluate_azure_production_hardening
+
+            hardening = evaluate_azure_production_hardening(hardening_evidence)
+            if not hardening.allowed:
+                reason = "azure_production_hardening_blocked"
+            else:
+                reason = f"live_{action}_not_implemented"
+        else:
+            reason = f"live_{action}_not_implemented"
     record = DeploymentRunRecord(
         run_id=run_id,
         profile_id=profile.profile_id,

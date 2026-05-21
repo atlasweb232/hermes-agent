@@ -732,26 +732,26 @@
 
 ### Tests For Platform Hardening
 
-- [ ] T310 [P] [US18] Add shared approval ledger tests for memory promotion, dreaming conversion, deployment apply/promote/destroy, corpus remittance, policy enforcement, and protected CI/CD actions, proving approvals are actor/role/tenant/action/target-hash bound, expiring, non-replayable, and audit-linked
-- [ ] T311 [P] [US18] Add effective runtime profile tests proving feature toggles, sidecar tiers, tenant/repo policy, toolset profile, deployment profile, worker health, budgets, and memory retrieval mode merge into one explainable read-only view
-- [ ] T312 [P] [US18] Add canonical bus envelope/redrive tests for SQLite and Kafka-compatible paths, proving event id, idempotency key, partition key, redaction state, replay attempt, dead-letter reason, and consumer idempotency semantics
-- [ ] T313 [P] [US18] Add sidecar budget governor tests proving LLM-backed sidecars are denied or degraded when tenant/task/day/token/cost budgets are exceeded while exact-memory-hit programmatic paths still run
-- [ ] T314 [P] [US18] Add worker-path context gate integration tests proving Claude, Codex, DeepSeek, browser/TinyFish, and generic worker wrappers cannot stream raw stdout/stderr/watch/log tails into supervisor context
-- [ ] T315 [P] [US18] Add memory quality lifecycle tests for stale suppression, confidence decay, harmful/ignored feedback demotion, retirement, compaction, and audit history preservation
-- [ ] T316 [P] [US18] Add dreaming backlog control tests for tenant quota, proposal-type quota, risk quota, duplicate suppression, max-age archival, and operator-visible backlog summary
-- [ ] T317 [P] [US18] Add Azure hardening gate tests proving live production apply/promote is blocked unless managed identity, RBAC, private endpoints, VNet integration, ingress, diagnostics, storage lifecycle policy, Key Vault access, rollback artifacts, and explicit approval are valid
+- [x] T310 [P] [US18] Add shared approval ledger tests for memory promotion, dreaming conversion, deployment apply/promote/destroy, corpus remittance, policy enforcement, and protected CI/CD actions, proving approvals are actor/role/tenant/action/target-hash bound, expiring, non-replayable, and audit-linked
+- [x] T311 [P] [US18] Add effective runtime profile tests proving feature toggles, sidecar tiers, tenant/repo policy, toolset profile, deployment profile, worker health, budgets, and memory retrieval mode merge into one explainable read-only view
+- [x] T312 [P] [US18] Add canonical bus envelope/redrive tests for SQLite and Kafka-compatible paths, proving event id, idempotency key, partition key, redaction state, replay attempt, dead-letter reason, and consumer idempotency semantics
+- [x] T313 [P] [US18] Add sidecar budget governor tests proving LLM-backed sidecars are denied or degraded when tenant/task/day/token/cost budgets are exceeded while exact-memory-hit programmatic paths still run
+- [x] T314 [P] [US18] Add worker-path context gate integration tests proving Claude, Codex, DeepSeek, browser/TinyFish, and generic worker wrappers cannot stream raw stdout/stderr/watch/log tails into supervisor context
+- [x] T315 [P] [US18] Add memory quality lifecycle tests for stale suppression, confidence decay, harmful/ignored feedback demotion, retirement, compaction, and audit history preservation
+- [x] T316 [P] [US18] Add dreaming backlog control tests for tenant quota, proposal-type quota, risk quota, duplicate suppression, max-age archival, and operator-visible backlog summary
+- [x] T317 [P] [US18] Add Azure hardening gate tests proving live production apply/promote is blocked unless managed identity, RBAC, private endpoints, VNet integration, ingress, diagnostics, storage lifecycle policy, Key Vault access, rollback artifacts, and explicit approval are valid
 
 ### Implementation For Platform Hardening
 
-- [ ] T318 [US18] Implement shared approval ledger DTOs/state helpers/CLI or API JSON inspection surface with redacted immutable approval records
-- [ ] T319 [US18] Implement effective runtime profile resolver and JSON surface for task dispatch and deployment preflight
-- [ ] T320 [US18] Implement canonical bus envelope helpers and idempotent redrive/dead-letter DTOs used by SQLite and Kafka-compatible adapters
-- [ ] T321 [US18] Implement sidecar budget governor integrated with sidecar role routing before LLM-backed sidecar calls
-- [ ] T322 [US18] Implement worker-path context gate audit helpers and wrapper compliance checks for all configured worker families
-- [ ] T323 [US18] Implement memory quality lifecycle compaction/demotion helpers and safe operator/status output
-- [ ] T324 [US18] Implement dreaming backlog controls and observability summaries
-- [ ] T325 [US18] Implement Azure production hardening evaluator and wire it into deployment preflight/promotion gates
-- [ ] T326 [US18] Add E2E hardening fixture proving all hardening gates fail closed and foreground runtime remains non-blocking
+- [x] T318 [US18] Implement shared approval ledger DTOs/state helpers/CLI or API JSON inspection surface with redacted immutable approval records
+- [x] T319 [US18] Implement effective runtime profile resolver and JSON surface for task dispatch and deployment preflight
+- [x] T320 [US18] Implement canonical bus envelope helpers and idempotent redrive/dead-letter DTOs used by SQLite and Kafka-compatible adapters
+- [x] T321 [US18] Implement sidecar budget governor integrated with sidecar role routing before LLM-backed sidecar calls
+- [x] T322 [US18] Implement worker-path context gate audit helpers and wrapper compliance checks for all configured worker families
+- [x] T323 [US18] Implement memory quality lifecycle compaction/demotion helpers and safe operator/status output
+- [x] T324 [US18] Implement dreaming backlog controls and observability summaries
+- [x] T325 [US18] Implement Azure production hardening evaluator and wire it into deployment preflight/promotion gates
+- [x] T326 [US18] Add E2E hardening fixture proving all hardening gates fail closed and foreground runtime remains non-blocking
 
 **Checkpoint**: Production hardening gates are shared, deterministic, observable, and fail closed without adding hidden loops or foreground drag.
 
