@@ -566,6 +566,9 @@ def _should_capture_delegated_worker_failure(
         "quota_exhausted",
         "auth_failed",
         "network_degraded",
+        "false_completion",
+        "hallucinated_completion",
+        "completion_blocked_hallucination",
     }:
         return True
     if route_substitution:

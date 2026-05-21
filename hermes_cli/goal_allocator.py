@@ -23,6 +23,9 @@ ATTEMPT_STATUSES = {
     "quota_exhausted",
     "auth_failed",
     "network_degraded",
+    "false_completion",
+    "hallucinated_completion",
+    "completion_blocked_hallucination",
     "blocked",
     "cancelled",
 }
@@ -35,6 +38,9 @@ DEGRADED_STATUSES = {
     "quota_exhausted",
     "auth_failed",
     "network_degraded",
+    "false_completion",
+    "hallucinated_completion",
+    "completion_blocked_hallucination",
     "blocked",
 }
 
@@ -381,11 +387,36 @@ def _capture_worker_attempt_runtime_failure(
             attempt_id=attempt.attempt_id,
             tenant_id=plan.tenant_id,
             repo_id=plan.repo_id,
+            expected_route=_expected_route_for_attempt(plan, attempt),
         )
     except Exception:
         # Failure capture is advisory telemetry and must not block allocator
         # state transitions or foreground goal turns.
         return
+
+
+def _expected_route_for_attempt(
+    plan: WorkerAllocationPlan,
+    attempt: WorkerAttemptResult,
+) -> Optional[str]:
+    """Return an expected route only when the attempt visibly used another worker.
+
+    Allocator routes can be wrappers (`worker-router codex`) or direct delegate
+    routes (`delegate_task:codex`), so this only marks substitution when the
+    actual route names a different candidate worker and omits the assigned one.
+    """
+    route_text = str(attempt.route or "").lower()
+    worker = str(attempt.worker_id or "").lower()
+    if not route_text or not worker or worker in route_text:
+        return None
+    other_worker_in_route = any(
+        str(candidate or "").lower() in route_text
+        for candidate in plan.candidate_workers
+        if str(candidate or "").lower() and str(candidate or "").lower() != worker
+    )
+    if not other_worker_in_route:
+        return None
+    return f"delegate_task:{attempt.worker_id}"
 
 
 def _list_state_meta_prefix(db: Any, prefix: str) -> List[Dict[str, str]]:

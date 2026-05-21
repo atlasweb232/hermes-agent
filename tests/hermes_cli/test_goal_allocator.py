@@ -266,6 +266,45 @@ def test_record_worker_attempt_captures_runtime_failure_before_sidecars(tmp_path
         db.close()
 
 
+def test_record_worker_attempt_captures_false_completion_and_route_substitution(tmp_path):
+    db = _db(tmp_path)
+    try:
+        plan = _plan(task_id="task_148_false", allocation_id="alloc_148_false")
+        save_allocation_plan(db, plan)
+        attempt = _attempt(
+            plan,
+            worker_id="claude-code",
+            route="worker-router codex",
+            status="false_completion",
+            stdout_excerpt="Done. token=sk-abc123456789XYZ",
+            stderr_excerpt="claimed done without artifact refs",
+            validation_status="failed",
+            error_signature="completion_gate_mismatch",
+            artifact_refs=["hermes:allocation:alloc_148_false:attempt_false"],
+        )
+
+        record_worker_attempt(db, plan, attempt, now=100)
+
+        records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+        payload = records[0]["payload_json"]
+        assert records[0]["task_id"] == "task_148_false"
+        assert payload["worker_id"] == "claude-code"
+        assert payload["route"] == "worker-router codex"
+        assert payload["command_family"] == "worker-router"
+        assert payload["status"] == "false_completion"
+        assert payload["route_substitution"] is True
+        assert payload["validation_mismatch"]["validation_status"] == "failed"
+        assert payload["validation_mismatch"]["error_signature"] == "completion_gate_mismatch"
+        assert payload["validation_mismatch"]["expected_route"] == "delegate_task:claude-code"
+        assert payload["validation_mismatch"]["actual_route"] == "worker-router codex"
+        assert payload["evidence_refs"] == ["hermes:allocation:alloc_148_false:attempt_false"]
+        assert payload["requires_judge"] is True
+        assert payload["operator_approval_required"] is True
+        assert "sk-abc" not in json.dumps(payload)
+    finally:
+        db.close()
+
+
 def test_choose_next_worker_selects_primary_before_attempts():
     plan = _plan()
 

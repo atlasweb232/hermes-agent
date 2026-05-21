@@ -442,6 +442,56 @@ def test_agent_delegate_task_result_captures_child_timeout_before_gate(tmp_path)
     assert "sk-abc" not in json.dumps(payload)
 
 
+def test_agent_delegate_task_captures_false_completion_as_validation_mismatch(tmp_path):
+    from run_agent import AIAgent
+
+    class FailedGate:
+        enabled = True
+        passed = False
+        status = "failed"
+
+        def to_dict(self):
+            return {
+                "enabled": True,
+                "passed": False,
+                "status": "failed",
+                "validation_mismatch": "claimed completion without test evidence",
+                "secret": "sk-abc123456789XYZ",
+            }
+
+    db = SessionDB(tmp_path / "state.db")
+    agent = object.__new__(AIAgent)
+    agent._session_db = db
+    agent.session_id = "session-delegate-false-completion"
+    agent._current_task_id = "task-delegate-false-completion"
+    result = json.dumps(
+        {
+            "results": [
+                {
+                    "task_index": 0,
+                    "status": "success",
+                    "summary": "Done. token=sk-abc123456789XYZ\n" + "raw completion log\n" * 200,
+                    "error": "",
+                }
+            ]
+        }
+    )
+
+    agent._capture_delegate_runtime_failures({"role": "codex"}, result, gate=FailedGate())
+
+    records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+    payload = records[0]["payload_json"]
+    assert records[0]["task_id"] == "task-delegate-false-completion"
+    assert payload["worker_id"] == "subagent-0"
+    assert payload["route"] == "delegate_task:codex"
+    assert payload["status"] == "success"
+    assert payload["validation_mismatch"]["validation_status"] == "failed"
+    assert "completion_gate" in payload["validation_mismatch"]
+    serialized = json.dumps(payload)
+    assert "sk-abc" not in serialized
+    assert len(payload["output_excerpt"]) < 900
+
+
 def test_agent_delegate_task_injects_bounded_empty_output_advisory(tmp_path, monkeypatch):
     from run_agent import AIAgent
 
