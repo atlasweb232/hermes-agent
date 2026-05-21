@@ -753,6 +753,42 @@
 
 **Checkpoint**: Production hardening gates are shared, deterministic, observable, and fail closed without adding hidden loops or foreground drag.
 
+## Phase 22: Operator Dashboard And Approval UI (Priority: P19)
+
+**Goal**: Build a lean production operator dashboard over existing Hermes observability, tenant, memory, sidecar, bus, benchmark, approval, and Azure deployment surfaces.
+
+**Independent Test**: Run a seeded dashboard fixture containing tenants, jobs, workers, sidecars, approvals, memory packets, corpus exports, bus events, benchmarks, and Azure deployment records. Verify list/detail/filter/approval/scoped-Ask flows return redacted bounded DTOs, perform no mutation without approval, and do not load raw transcripts into model context.
+
+**Boundary**: The dashboard is not a second agent or a raw-log browser. It consumes bounded DTOs and routes dangerous actions through existing approval/deployment/memory/feature APIs.
+
+### Spec And Architecture Artifacts
+
+- [x] T327 [US19] Add `contracts/operator-dashboard.md` covering jobs, job detail, approval inbox, sidecar health, cost/context, deployment, and scoped Ask DTO boundaries
+- [x] T328 [US19] Add `docs/operator-dashboard-architecture.md` defining lean UI principles, views, data flow, non-goals, and rollout order
+
+### Tests For Operator Dashboard
+
+- [ ] T329 [P] [US19] Add dashboard seed fixture tests covering tenants, repos, jobs, worker attempts, sidecars, memory packets, approvals, corpus exports, bus events, benchmarks, and Azure deployments
+- [ ] T330 [P] [US19] Add jobs table API/UI DTO tests for tenant/repo/date/status/worker/model/blocker/cost/deployment filters and redacted row summaries
+- [ ] T331 [P] [US19] Add job detail tests for lazy Overview, Agents, Spec Kit, Memory, Validation, Sidecars, Bus Events, Costs, Deployment, and Ask tabs
+- [ ] T332 [P] [US19] Add approval inbox tests proving memory, dreaming, corpus, deployment, CI/CD, and policy actions write through the shared approval ledger and reject replay/mismatched target hash
+- [ ] T333 [P] [US19] Add sidecar and bus health panel tests for role/tier/model/budget/backlog/lag/DLQ/spool/degraded state without secrets
+- [ ] T334 [P] [US19] Add cost/context panel tests for token, estimated cost, latency, context admitted, sidecar calls, memory hits, worker attempts, and benchmark attribution
+- [ ] T335 [P] [US19] Add scoped Ask dashboard tests proving only read-only bounded evidence bundles are sent to the LLM and mutation tools are unavailable
+- [ ] T336 [P] [US19] Add Azure deployment panel tests for plan/preflight/apply/smoke/soak/promote/rollback state, hardening failures, costs, and required operator actions
+
+### Implementation For Operator Dashboard
+
+- [ ] T337 [US19] Implement dashboard DTO aggregator using existing runtime observability, tenant, memory, sidecar, bus, benchmark, approval ledger, and Azure deployment surfaces
+- [ ] T338 [US19] Implement jobs list and lazy job-detail JSON routes or backend surfaces with strict tenant scoping and redaction
+- [ ] T339 [US19] Implement approval inbox backend surfaces backed by shared approval ledger actions
+- [ ] T340 [US19] Implement sidecar, bus, cost/context, and deployment dashboard summary surfaces
+- [ ] T341 [US19] Implement scoped Ask evidence-bundle builder for dashboard job analysis with read-only/no-mutation guarantees
+- [ ] T342 [US19] Implement minimal dashboard UI shell or existing-dashboard integration for jobs, detail drawer, approval inbox, sidecar/bus/cost/deployment panels, and scoped Ask
+- [ ] T343 [US19] Add E2E dashboard smoke fixture proving seeded state is visible, dangerous actions fail closed without approval, and raw logs/transcripts are never loaded
+
+**Checkpoint**: Operator can inspect active and historical work, approve high-risk actions, see platform health/cost, and ask scoped analytical questions without raw context bloat or unsafe mutation paths.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -772,6 +808,7 @@
 - User Story 14 depends on task classifier metadata, tenant scope, memory retrieval, feature toggles, and worker packet boundaries so skills can be injected safely.
 - User Story 15 depends on existing dreaming storage, tenant/global scope, skill candidates, feature toggles, and observability so proposals can be reviewed without runtime mutation.
 - User Story 16 depends on approved memory/wiki/training provenance, benchmark gates, and sidecar model-tier telemetry so offline fine-tuning data can be built safely.
+- User Story 19 depends on observability, tenant DTOs, approval ledger, sidecar/bus/cost telemetry, Azure deployment DTOs, and platform hardening gates so the UI can stay bounded and safe.
 
 ## Parallel Opportunities
 
@@ -788,6 +825,7 @@
 - Skill metadata, retrieval, packet building, feedback, and SkillClaw adapter tests can be developed in parallel after Phase 17 architecture lands.
 - Dreaming proposal-type validators, local/global input builders, dashboard DTOs, and conversion-gate tests can be developed in parallel after Phase 18 architecture lands.
 - MLOps corpus schemas, local bundle writer, external training hints, and remittance receipt tests can be developed in parallel after Phase 19 architecture lands.
+- Operator dashboard list, detail, approval inbox, sidecar/bus, cost, deployment, and scoped Ask tests can be developed in parallel after Phase 22 contracts land.
 
 ## Implementation Strategy
 
@@ -937,3 +975,14 @@
 7. Add dreaming backlog controls.
 8. Add Azure production hardening evaluator.
 9. Add integrated hardening E2E fixture.
+
+### Phase 22 Order
+
+1. Add operator dashboard contract and architecture.
+2. Add seeded dashboard fixture covering jobs, workers, sidecars, memory, approvals, bus, costs, and deployments.
+3. Add jobs table and lazy detail DTO tests.
+4. Add approval inbox tests backed by shared approval ledger.
+5. Add sidecar, bus, cost/context, deployment, and scoped Ask tests.
+6. Implement dashboard DTO aggregator and JSON routes.
+7. Implement minimal UI shell or existing-dashboard integration.
+8. Add E2E dashboard smoke proving redaction, fail-closed approval, and no raw context bloat.

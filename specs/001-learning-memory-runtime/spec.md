@@ -258,6 +258,27 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 4. **Given** a skill causes drift, invalid commands, or failed validation, **When** outcome feedback runs, **Then** Hermes records harmful feedback and creates a demotion or repair candidate for that skill version.
 5. **Given** a global skill exists, **When** another tenant runs a similar task, **Then** the skill is retrieved only if redaction, shareability, tenant opt-in, safety, and relevance gates pass.
 
+---
+
+### User Story 19 - Operator Dashboard And Approval UI (Priority: P19)
+
+As a Hermes operator or tenant admin, I want a lean dashboard that exposes jobs, worker activity, sidecars, memory, approvals, costs, and deployments, so I can operate the platform without reading raw logs or bloating supervisor context.
+
+**Why this priority**: The backend now has observability, approval, tenant, memory, sidecar, bus, benchmark, and Azure deployment surfaces. Operators need a bounded UI that consumes those surfaces, makes decisions auditable, and prevents Slack/chat transcripts from becoming the only control plane.
+
+**Independent Test**: Run a seeded dashboard fixture with tenants, jobs, worker attempts, sidecar events, approvals, memory packets, corpus exports, and Azure deployment records. Verify list/detail/filter/approval/scoped-Ask flows return redacted bounded DTOs, perform no mutation without approval, and do not load raw transcripts into model context.
+
+**Acceptance Scenarios**:
+
+1. **Given** multiple tenants have active and historical jobs, **When** the operator opens the dashboard, **Then** the jobs table supports tenant, repo, date, status, worker, model, blocker, cost, and deployment filters.
+2. **Given** an operator opens a job line item, **When** the detail drawer loads, **Then** it shows task packet, Spec Kit refs, worker attempts, sidecar activity, memory packet, validation evidence, artifacts, blocker reason, and completion state using bounded DTOs only.
+3. **Given** approvals are pending, **When** the approval inbox loads, **Then** memory promotion, dreaming conversion, corpus export, deployment apply/promote/destroy, and protected CI/CD actions are grouped by tenant, risk, expiry, target hash, and evidence refs.
+4. **Given** an operator approves or rejects an item, **When** the UI submits the action, **Then** it writes through the shared approval ledger and cannot replay, escalate scope, or mutate unrelated targets.
+5. **Given** sidecars are running, **When** the sidecar panel loads, **Then** it shows role, tier, model, budget state, queue/backlog, last run, failure state, and disabled/degraded reason without exposing secrets.
+6. **Given** the operator asks a scoped question about a job, **When** dashboard Ask runs, **Then** the LLM receives only the read-only compact evidence bundle for that job and cannot mutate repo, memory, policy, deployment, or config.
+7. **Given** Azure deployment orchestration is enabled, **When** the deployment panel loads, **Then** it shows plan/preflight/apply/smoke/soak/promote/rollback state, hardening failures, costs, and required operator actions.
+8. **Given** runtime telemetry exists, **When** the cost panel loads, **Then** it shows token, model, latency, sidecar, worker, memory-hit, and budget attribution by tenant/repo/job without raw transcript storage.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -438,6 +459,11 @@ As the Hermes operator, I want skills to be retrieved, injected, validated, evol
 - **FR-137**: Approved memory MUST support quality lifecycle operations including confidence decay, stale suppression, retirement, compaction, and preserved audit history.
 - **FR-138**: Dreaming proposal creation MUST enforce quota, dedupe, age, and backlog controls by tenant, proposal type, and risk.
 - **FR-139**: Azure live deployment hardening MUST explicitly validate managed identity, RBAC, private endpoints, VNet integration, ingress mode, diagnostics, storage lifecycle policy, Key Vault access model, and rollback artifacts before production apply or promotion.
+- **FR-140**: Operator dashboard UI MUST consume bounded redacted backend DTOs only and MUST NOT read raw worker logs, raw transcripts, provider logs, secrets, or unbounded event streams.
+- **FR-141**: Dashboard job views MUST support tenant, repo, date, status, worker, model, blocker, cost, and deployment filters plus lazy-loaded line-item detail.
+- **FR-142**: Dashboard approval actions MUST write through the shared approval ledger and preserve actor, role, tenant, action, target hash, expiry, evidence refs, and non-replay guarantees.
+- **FR-143**: Dashboard scoped Ask MUST use read-only evidence bundles and MUST NOT have mutation authority over repo, memory, policy, deployment, task, or config state.
+- **FR-144**: Dashboard cost and health panels MUST display token, latency, cost, worker, sidecar, memory, bus, budget, and degradation attribution by tenant/repo/job.
 
 ### Key Entities
 

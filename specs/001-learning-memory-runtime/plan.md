@@ -178,6 +178,12 @@ See [contracts/platform-hardening.md](./contracts/platform-hardening.md) and [..
 
 This phase closes the cross-cutting risks left after the memory, sidecar, dreaming, tenant, skill, MLOps, and Azure deployment work. It adds a shared approval ledger, effective runtime profile resolver, canonical bus envelope, sidecar budget governor, full context-gate coverage, memory quality lifecycle, dreaming backlog control, and Azure production hardening gates.
 
+## Phase 22: Operator Dashboard And Approval UI
+
+See [contracts/operator-dashboard.md](./contracts/operator-dashboard.md) and [../../docs/operator-dashboard-architecture.md](../../docs/operator-dashboard-architecture.md).
+
+This phase turns the existing observability, tenant, approval, memory, bus, benchmark, and Azure deployment DTOs into a bounded operator dashboard. The UI must be lean, lazy-loaded, redacted, approval-ledger-backed, and read-only by default so it does not become a second unsafe control plane or a source of supervisor context bloat.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
@@ -188,6 +194,7 @@ This phase closes the cross-cutting risks left after the memory, sidecar, dreami
 | Tenant runtime cells | Required to isolate enterprise repos, secrets, worktrees, memory, connectors, and cost ledgers | One shared always-on Hermes process would make tenant leakage and cost attribution too risky |
 | Skill evolution boundary | Required to turn repeated lessons into reusable procedures without making raw session data authoritative | Injecting whole skill libraries or auto-publishing generated skills would create context bloat and unsafe hidden policy |
 | Proposal-only dreaming | Required to capture long-horizon improvement ideas without letting speculative synthesis mutate runtime | Letting dreaming write skills, config, goals, or policy directly would create unsafe autonomous drift |
+| Operator dashboard | Required because CLI/Slack alone cannot safely operate multi-tenant jobs, approvals, deployments, sidecars, and costs at scale | Raw logs or chat transcripts would bloat context, leak data, and make approval decisions hard to audit |
 | Corpus remittance for external MLOps | Required to improve cheaper coding models without allowing live runtime sidecars to train, register, or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
 | Gated Azure deployment orchestration | Required to let Hermes chat assist production rollout without blindly creating paid resources or mutating production traffic | Raw one-click deployment would be unsafe for cost, DNS, secrets, tenant data, and rollback correctness |
 | Cross-cutting hardening phase | Required because approval, config, budget, bus, context, memory quality, and deployment hardening span many subsystems | Leaving each subsystem to solve these independently would create loopholes and inconsistent production behavior |
