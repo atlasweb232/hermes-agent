@@ -3,8 +3,13 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+import hermes_cli.memory_wiki as memory_wiki
+from hermes_cli.mlops_corpus import validate_handoff
 from hermes_cli.memory_wiki import (
     compile_memory_wiki,
+    export_wiki_training_corpus_bundle,
     export_training_corpus,
     list_memory_wiki_claims,
     list_training_corpus_records,
@@ -227,5 +232,174 @@ def test_memory_wiki_cli_compile_and_export_json_smoke(tmp_path, monkeypatch, ca
     try:
         records = list_training_corpus_records(db, tenant_id="atlas", repo_id="migration-suite")
         assert len(records) == 1
+    finally:
+        db.close()
+
+
+def _approve_training_record_for_bundle(db: SessionDB, record_id: str) -> None:
+    approval = {
+        "source": "memory_wiki",
+        "approval_required": True,
+        "operator_approved": True,
+        "candidate_id": "metacand_migration",
+        "judge_decision_id": "judge_migration",
+        "operator_approval_id": "approval_migration",
+        "approval_refs": ["approval://approval_migration"],
+    }
+
+    def _do(conn):
+        conn.execute(
+            """
+            UPDATE hermes_training_corpus_records
+            SET export_status = 'approved',
+                approval_provenance_json = ?
+            WHERE id = ?
+            """,
+            (json.dumps(approval, sort_keys=True), record_id),
+        )
+
+    db._execute_write(_do)
+
+
+def test_wiki_training_corpus_bundle_uses_mlops_writer_and_validation_boundary(tmp_path, monkeypatch):
+    db = _make_db(tmp_path)
+    calls = []
+    original_write_bundle = memory_wiki.LocalCorpusBundleWriter.write_bundle
+
+    def spy_write_bundle(self, **kwargs):
+        calls.append(kwargs)
+        return original_write_bundle(self, **kwargs)
+
+    monkeypatch.setattr(memory_wiki.LocalCorpusBundleWriter, "write_bundle", spy_write_bundle)
+    try:
+        _seed_candidate(db)
+        compile_memory_wiki(db, tenant_id="atlas", repo_id="migration-suite")
+        exported = export_training_corpus(
+            db,
+            tenant_id="atlas",
+            repo_id="migration-suite",
+            dataset_family="before_after_diff",
+            approve=True,
+        )
+        _approve_training_record_for_bundle(db, exported.records[0].id)
+
+        bundle = export_wiki_training_corpus_bundle(
+            db,
+            artifact_root=tmp_path / "bundles",
+            tenant_id="atlas",
+            repo_id="migration-suite",
+            dataset_family="before_after_diff",
+            created_at="2026-05-21T00:00:00Z",
+        )
+
+        assert len(calls) == 1
+        assert bundle.status == "exported"
+        assert bundle.manifest["schema_version"] == "mlops.corpus.bundle.v1"
+        assert bundle.manifest["dataset_family"] == "before_after_diff"
+        assert bundle.manifest["record_count"] == 1
+        assert bundle.manifest["artifact_formats"] == ["jsonl"]
+        assert "parquet" in bundle.manifest["format_compatibility"]
+        assert validate_handoff(bundle.bundle_path)["valid"] is True
+
+        record = json.loads((bundle.bundle_path / "records.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert record["schema_version"] == "mlops.corpus.failure_repair.v1"
+        assert record["tenant_id"] == "atlas"
+        assert record["task"]["source_refs"]["wiki_claim_id"].startswith("wikiclaim_")
+        assert record["task"]["source_refs"]["evidence_refs"]["candidate_id"] == "metacand_migration"
+        assert record["approval"]["operator_approval_id"] == "approval_migration"
+        assert record["safety"]["tenant_shareability"] == "tenant_only"
+        exported_text = "\n".join(path.read_text(encoding="utf-8") for path in bundle.bundle_path.iterdir())
+        assert "full raw transcript" not in exported_text
+        assert "sk-live-secret" not in exported_text
+    finally:
+        db.close()
+
+
+def test_wiki_bundle_fails_closed_without_approval_refs_and_blocks_tampering(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        _seed_candidate(db)
+        compile_memory_wiki(db, tenant_id="atlas", repo_id="migration-suite")
+        export_training_corpus(
+            db,
+            tenant_id="atlas",
+            repo_id="migration-suite",
+            dataset_family="before_after_diff",
+            approve=True,
+        )
+
+        with pytest.raises(ValueError, match="approved records with approval provenance"):
+            export_wiki_training_corpus_bundle(
+                db,
+                artifact_root=tmp_path / "missing-approval",
+                tenant_id="atlas",
+                repo_id="migration-suite",
+                dataset_family="before_after_diff",
+            )
+
+        record = list_training_corpus_records(db, tenant_id="atlas", repo_id="migration-suite")[0]
+        _approve_training_record_for_bundle(db, record.id)
+        bundle = export_wiki_training_corpus_bundle(
+            db,
+            artifact_root=tmp_path / "bundles",
+            tenant_id="atlas",
+            repo_id="migration-suite",
+            dataset_family="before_after_diff",
+            created_at="2026-05-21T00:00:00Z",
+        )
+        with (bundle.bundle_path / "records.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"raw_log": "must fail", "note": "token=INLINE_REDACTION_SENTINEL"}) + "\n")
+
+        validation = validate_handoff(bundle.bundle_path)
+        assert validation["valid"] is False
+        assert any(error.startswith("forbidden_key:") for error in validation["errors"])
+        assert any(error.startswith("forbidden_value:") for error in validation["errors"])
+    finally:
+        db.close()
+
+
+def test_wiki_bundle_honors_tenant_and_dataset_filters(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        _seed_candidate(db, "metacand_atlas")
+        db.upsert_meta_candidate(
+            candidate_id="metacand_other",
+            kind="playbook",
+            claim="Other tenant migration repair stays isolated",
+            evidence_json={
+                "record_id": "memrec_other",
+                "evidence_uri": "git://other/repo@abc..def",
+                "dataset_family": "migration_failure_repair",
+                "failure_signature": "fixture failure",
+                "successful_action": "fixture repair",
+                "validation_evidence": {"commands": ["pytest tests/test_fixture.py"]},
+                "redaction_status": "redacted",
+            },
+            score=0.9,
+            status="approved",
+            tenant_id="other",
+            repo_id="migration-suite",
+        )
+        for tenant in ("atlas", "other"):
+            compile_memory_wiki(db, tenant_id=tenant, repo_id="migration-suite")
+            exported = export_training_corpus(db, tenant_id=tenant, repo_id="migration-suite", approve=True)
+            for record in exported.records:
+                _approve_training_record_for_bundle(db, record.id)
+
+        bundle = export_wiki_training_corpus_bundle(
+            db,
+            artifact_root=tmp_path / "bundles",
+            tenant_id="atlas",
+            repo_id="migration-suite",
+            dataset_family="before_after_diff",
+            created_at="2026-05-21T00:00:00Z",
+        )
+
+        assert bundle.manifest["tenant_id"] == "atlas"
+        assert bundle.manifest["dataset_family"] == "before_after_diff"
+        exported_text = "\n".join(path.read_text(encoding="utf-8") for path in bundle.bundle_path.iterdir())
+        assert "Other tenant" not in exported_text
+        assert '"tenant_id":"other"' not in exported_text
+        assert "migration_failure_repair" not in exported_text
     finally:
         db.close()

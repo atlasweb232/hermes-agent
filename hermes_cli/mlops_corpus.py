@@ -429,6 +429,13 @@ class LocalCorpusBundleWriter:
             "dataset_family": dataset_values[0],
             "record_count": len(record_rows),
             "preference_pair_count": len(pair_rows),
+            "artifact_formats": ["jsonl"],
+            "format_compatibility": ["jsonl", "parquet"],
+            "parquet_compatibility": {
+                "status": "manifest_metadata_only",
+                "row_groups": ["records.jsonl", "preference_pairs.jsonl"],
+                "schema_hint": "mlops.corpus.failure_repair.v1",
+            },
             "hash_algorithm": "sha256",
             "records_sha256": records_sha,
             "preference_pairs_sha256": pairs_sha,

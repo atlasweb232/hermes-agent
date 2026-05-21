@@ -5,11 +5,20 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+from pathlib import Path
 import re
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
 from hermes_state import SessionDB
+from hermes_cli.mlops_corpus import (
+    ApprovalProvenance,
+    BundleResult,
+    ExternalTrainingHint,
+    FailureRepairRecord,
+    LocalCorpusBundleWriter,
+    RedactionReport,
+)
 
 
 DATASET_FAMILIES = {
@@ -143,6 +152,30 @@ class TrainingCorpusExportResult:
         return {
             **asdict(self),
             "records": [record.to_dict() for record in self.records],
+        }
+
+
+@dataclass
+class WikiTrainingCorpusBundleResult:
+    status: str
+    scanned: int
+    exported: int
+    bundle_path: Path
+    manifest: Dict[str, Any]
+    hashes: Dict[str, str]
+    rejected: List[Dict[str, Any]] = field(default_factory=list)
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "scanned": self.scanned,
+            "exported": self.exported,
+            "bundle_path": str(self.bundle_path),
+            "manifest": self.manifest,
+            "hashes": self.hashes,
+            "rejected": self.rejected,
+            "metrics": self.metrics,
         }
 
 
@@ -772,3 +805,191 @@ def list_training_corpus_records(
         (*params, max(1, int(limit))),
     ).fetchall()
     return [_row_to_training_record(row) for row in rows]
+
+
+def _approval_value(approval: Dict[str, Any], key: str, ref_prefix: str) -> Optional[str]:
+    value = approval.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    refs = approval.get("approval_refs") if key == "operator_approval_id" else approval.get(f"{key}s")
+    if isinstance(refs, list):
+        prefix = f"{ref_prefix}://"
+        for ref in refs:
+            text = str(ref or "").strip()
+            if text.startswith(prefix) and len(text) > len(prefix):
+                return text[len(prefix):]
+    return None
+
+
+def _approved_training_record_to_failure_repair(
+    record: TrainingCorpusRecord,
+) -> tuple[Optional[FailureRepairRecord], Optional[Dict[str, Any]]]:
+    approval = record.approval_provenance_json or {}
+    evidence = record.evidence_refs_json or {}
+    safety = record.safety_json or {}
+    payload = record.payload_json or {}
+    if record.export_status != "approved":
+        return None, {"training_record_id": record.id, "errors": ["not_approved"]}
+    operator_approval_id = _approval_value(approval, "operator_approval_id", "approval")
+    if not operator_approval_id or approval.get("operator_approved") is not True:
+        return None, {"training_record_id": record.id, "errors": ["missing_operator_approval_ref"]}
+    if safety.get("secret_safe") is not True:
+        return None, {"training_record_id": record.id, "errors": ["secret_safety_not_confirmed"]}
+    if safety.get("raw_transcript") or safety.get("raw_log"):
+        return None, {"training_record_id": record.id, "errors": ["raw_transcript_or_log_not_exportable"]}
+    if _contains_secret({"payload": payload, "evidence": evidence}):
+        return None, {"training_record_id": record.id, "errors": ["secret_pattern_detected"]}
+
+    candidate_id = (
+        str(approval.get("candidate_id") or evidence.get("candidate_id") or "").strip()
+        or record.source_wiki_claim_id
+    )
+    judge_decision_id = _approval_value(approval, "judge_decision_id", "judge") or str(
+        approval.get("judge_ref") or ""
+    ).removeprefix("judge://")
+    shareability = "cross_tenant_shareable" if safety.get("cross_tenant_shareable") else "tenant_only"
+    source_refs = {
+        "wiki_claim_id": record.source_wiki_claim_id,
+        "training_record_id": record.id,
+        "evidence_refs": evidence,
+    }
+    validation_payload = payload.get("validation_evidence")
+    validation_evidence = validation_payload if isinstance(validation_payload, dict) else {}
+    validation_refs = validation_evidence.get("evidence_refs") or validation_evidence.get("commands") or []
+    failure_signature = payload.get("failure_signature") or payload.get("bad_action") or record.goal
+    successful_action = payload.get("successful_action") or payload.get("claim") or record.goal
+    record_dict = FailureRepairRecord(
+        tenant_id=str(record.tenant_id or ""),
+        scope="global" if safety.get("cross_tenant_shareable") else "tenant",
+        dataset_family=record.dataset_family,
+        task={
+            "task_type": record.dataset_family,
+            "repo_id": record.repo_id,
+            "goal": record.goal,
+            "summary": _compact_text(record.goal, payload.get("claim")),
+            "source_refs": source_refs,
+            "legacy_repo_ref": payload.get("legacy_repo_ref") or {},
+            "target_repo_ref": payload.get("target_repo_ref") or {},
+            "spec_refs": payload.get("spec_refs") or [],
+            "diff_refs": payload.get("diff_refs") or {},
+        },
+        lesser_attempt={
+            "summary": _compact_text(failure_signature, payload.get("bad_action")),
+            "failure_type": record.dataset_family,
+            "evidence_refs": [f"wikiclaim://{record.source_wiki_claim_id}", f"trainrec://{record.id}"],
+        },
+        teacher_repair={
+            "diagnosis": _compact_text(failure_signature),
+            "correction_summary": _compact_text(successful_action),
+            "repair_refs": [f"wikiclaim://{record.source_wiki_claim_id}"],
+        },
+        validation={
+            "status": "evidence_backed" if validation_evidence else "not_recorded",
+            "evidence_refs": validation_refs,
+            "validation_evidence": validation_evidence,
+            "drift_eval": payload.get("drift_eval") or {},
+        },
+        lesson={
+            "distilled_behavior": _compact_text(successful_action),
+            "forbidden_behavior": _compact_text(payload.get("bad_action")),
+            "training_labels": payload.get("training_labels") or [record.dataset_family],
+        },
+        safety={
+            "redaction_state": safety.get("redaction_status") or "safe",
+            "contains_raw_transcript": False,
+            "contains_secret": False,
+            "tenant_shareability": shareability,
+        },
+        approval={
+            "candidate_id": candidate_id,
+            "judge_decision_id": judge_decision_id,
+            "operator_approval_id": operator_approval_id,
+            "source": "memory_wiki",
+        },
+        record_id=_stable_id("frwiki", record.id, record.dataset_family, record.tenant_id, record.repo_id),
+    )
+    return record_dict, None
+
+
+def export_wiki_training_corpus_bundle(
+    db: SessionDB,
+    *,
+    artifact_root: str | Path,
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    dataset_family: Optional[str] = None,
+    target_model_family: str = "gemma",
+    target_base_models: Optional[List[str]] = None,
+    recommended_methods: Optional[List[str]] = None,
+    eval_refs: Optional[List[str]] = None,
+    created_at: Optional[str] = None,
+    limit: int = 50,
+) -> WikiTrainingCorpusBundleResult:
+    """Write approved wiki training rows through the Phase 19 MLOps writer."""
+    records = list_training_corpus_records(
+        db,
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        dataset_family=dataset_family,
+        export_status="approved",
+        limit=limit,
+    )
+    converted: List[FailureRepairRecord] = []
+    rejected: List[Dict[str, Any]] = []
+    for record in records:
+        failure_repair, rejection = _approved_training_record_to_failure_repair(record)
+        if rejection:
+            rejected.append(rejection)
+            continue
+        if failure_repair is not None:
+            converted.append(failure_repair)
+
+    if not converted:
+        raise ValueError("no approved records with approval provenance are available for MLOps bundle export")
+    tenant_ids = {record.tenant_id for record in converted}
+    if len(tenant_ids) != 1 or "" in tenant_ids:
+        raise ValueError("wiki MLOps bundle export requires exactly one tenant_id")
+    families = {record.dataset_family for record in converted}
+    if len(families) != 1:
+        raise ValueError("wiki MLOps bundle export requires exactly one dataset_family")
+
+    approval = ApprovalProvenance.from_records(converted)
+    redaction = RedactionReport.from_records(converted)
+    hints = ExternalTrainingHint.build(
+        target_model_family=target_model_family,
+        target_base_models=target_base_models or [f"{target_model_family}-base"],
+        recommended_methods=recommended_methods or ["sft", "lora"],
+        corpus_refs=["bundle://pending"],
+        eval_refs=eval_refs or sorted(
+            {
+                str(ref)
+                for row in converted
+                for ref in row.to_dict().get("validation", {}).get("evidence_refs", [])
+            }
+        ),
+        approval_refs=approval.approval_refs,
+    )
+    bundle: BundleResult = LocalCorpusBundleWriter(Path(artifact_root)).write_bundle(
+        records=converted,
+        preference_pairs=[],
+        redaction_report=redaction,
+        approval_provenance=approval,
+        external_training_hints=hints,
+        dataset_families=[next(iter(families))],
+        created_at=created_at,
+    )
+    return WikiTrainingCorpusBundleResult(
+        status="exported",
+        scanned=len(records),
+        exported=len(converted),
+        bundle_path=bundle.path,
+        manifest=bundle.manifest,
+        hashes=bundle.hashes,
+        rejected=rejected,
+        metrics={
+            "source": "memory_wiki",
+            "writer": "LocalCorpusBundleWriter",
+            "dataset_family": next(iter(families)),
+            "tenant_id": next(iter(tenant_ids)),
+        },
+    )
