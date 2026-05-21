@@ -12,9 +12,9 @@
 
 **Purpose**: Preserve upstream merge and Spec Kit baseline before feature work.
 
-- [ ] T001 Commit upstream merge and Spec Kit scaffolding in repository root
+- [x] T001 Commit upstream merge and Spec Kit scaffolding in repository root
 - [x] T002 [P] Update `docs/curator-policy-framework-architecture.md` to reference `specs/001-learning-memory-runtime/`
-- [ ] T003 [P] Add focused test fixtures for isolated Hermes home/state DB setup in `tests/hermes_cli/`
+- [x] T003 [P] Add focused test fixtures for isolated Hermes home/state DB setup in `tests/hermes_cli/`
 
 ---
 
