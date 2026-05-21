@@ -1786,7 +1786,6 @@ Production runtime surfaces still needed:
 
 - richer observability frontend with active/historical jobs, tenant/repo/date
   filters, blockers, worker state, completion state, and line-item drilldown
-- realtime voice transport behind the existing `voice.realtime` config
 - Redpanda/Kafka deployment helpers behind the global bus interface
 - memory wiki scale-out adapters for object storage, state store, vector index,
   and graph index

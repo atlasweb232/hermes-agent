@@ -785,8 +785,8 @@ claim may be globally proposed only when evidence and approval support it.
     packets.
 
 Do not implement production Kafka/Redpanda, production vector/graph backends,
-large training export, realtime voice, or a full dashboard until steps 14-18
-show measurable value on the VM.
+large training export, product-level media/voice connectors, or a full
+dashboard until steps 14-18 show measurable value on the VM.
 
 ## Production Scale-Out And Evaluation
 

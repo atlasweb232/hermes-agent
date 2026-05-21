@@ -306,14 +306,13 @@
 
 **Phase 11A Core Production Path**: Finish `T105D`, `T105E`, `T105F`, `T105H`, `T105I`, `T121`, `T122`, `T123`, `T124`, `T125`, `T129`, `T130`, and `T131` before starting scale-out work.
 
-**Deferred Scale-Out Work**: Keep `T102`, `T103`, `T104`, `T105`, `T109`, `T110`, `T111`, and `T112` out of the immediate implementation path unless the core production path shows measurable value and a concrete deployment need.
+**Deferred Scale-Out Work**: Keep `T103`, `T104`, `T105`, `T110`, `T111`, and `T112` out of the immediate implementation path unless the core production path shows measurable value and a concrete deployment need.
 
 ### Tests for Production Runtime Surfaces
 
 - [x] T099 [P] [US8] Add low-end model baseline eval fixtures for repeated command failure, branch triage, validation discipline, and worker handoff quality in `tests/hermes_cli/test_learning_value.py`
 - [x] T100 [P] [US8] Add memory-injection improvement tests proving task classifier + metadata retrieval + compact packet reduce repeated mistakes for cheaper workers without leaking unrelated tenant/repo lessons
 - [x] T101 [P] [US8] Add observability UI/API tests for historical jobs, active jobs, tenant/repo/date filters, worker status, blocker reason, completion status, line-item drilldown, and scoped Ask analysis
-- [ ] T102 [P] [US8] Add realtime voice config/transport tests for OpenAI `gpt-realtime-2`, MiniMax `speech-2.8`, and xAI/Grok provider selection, fallback reporting, and no secret leakage
 - [ ] T103 [P] [US8] Add Kafka/Redpanda global bus integration tests behind optional dependency marks, proving backend config selection, broker health checks, topic verification, idempotent publish/consume/replay/dead-letter behavior, lag metrics, TLS/SASL config-shape validation without secrets, SQLite spool fallback when the broker is unavailable, and no foreground blocking
 - [ ] T104 [P] [US8] Reconcile legacy training corpus export tests with Phase 19 MLOps corpus remittance, proving JSONL/Parquet-compatible bundles, redaction, approval provenance, tenant/shareability boundaries, and dataset-family filters use the same safety boundary and do not create a second export path
 - [x] T105 [P] [US8] Add memory wiki scale-out tests for object/state/lexical/vector/graph backend adapters using local fakes before production services
@@ -332,11 +331,10 @@
 - [x] T106 [US8] Implement a low-end model eval runner that records baseline vs memory-assisted metrics: task success, tool error count, repeated error signatures, validation completeness, token estimate, wall time, and escalation count
 - [x] T107 [US8] Implement compact task-memory retrieval profiles for low-cost workers, including strict top-k caps, exact metadata filters, command/error signature matching, semantic fallback, and negative-feedback demotion
 - [x] T108 [US8] Implement richer observability frontend/backend surfaces for active/historical jobs: tenant, repo, task description, worker, model, Spec Kit refs, architecture refs, task list refs, blocker status, completion status, evidence bundle, and scoped Ask analysis
-- [ ] T109 [US8] Implement realtime voice transport behind the existing `voice.realtime` config, with provider adapters for OpenAI realtime first and MiniMax/xAI-compatible extension points
 - [ ] T110 [US8] Implement production global-memory bus deployment helpers for Redpanda/Kafka while keeping SQLite as the default single-node backend, including Docker Compose staging template, optional Kubernetes/Helm or Terraform handoff docs, health/check CLI, dead-letter/replay tooling, SQLite-to-broker publish sidecar, broker-unavailable fallback to SQLite spool, and a staging soak-test checklist
 - [x] T111 [US8] Implement production memory wiki backend adapters for configurable object storage, state store, vector index, and graph index; keep local filesystem/SQLite as default
 - [ ] T112 [US8] Reuse or adapt the Phase 19 MLOps corpus bundle writer for legacy/wiki training corpus exports with JSONL first, Parquet-compatible manifest metadata, redaction report, source refs, approval refs, and hash-based reproducibility, avoiding duplicate corpus writer semantics
-- [x] T113 [US8] Add operator controls for approving export bundles, enabling realtime providers, and promoting low-end model eval findings into advisory policies only after judge/operator approval
+- [x] T113 [US8] Add operator controls for approving export bundles and promoting low-end model eval findings into advisory policies only after judge/operator approval
 - [x] T114 [US8] Update architecture docs with production deployment topology, low-end model eval loop, cost controls, and escalation path from cheap worker -> stronger judge -> operator
 - [x] T115 [US8] Run VM smoke sequence with low-cost models as workers and Codex/strong reasoning as judge/curator, then record measured improvements and regressions in `docs/runtime-learning-enforcement.md`
 - [x] T116 [US8] Resolve VM retrieval gap for command-repair policies: either intentionally keep policy-engine audit separate from compact memory packets and document that boundary, or add relevant approved `command_repair_policy` candidates to task memory packets with strict top-k and audit-only wording
@@ -830,7 +828,7 @@
 2. Audit and drain SQLite bus queues before adding Kafka/Redpanda.
 3. Add production bus/object/vector/graph adapters only when a multi-instance deployment requires them.
 4. Add training corpus export only after approved memory provenance is stable.
-5. Add realtime voice after runtime learning correctness is proven.
+5. Revisit media/voice providers only as product-level connector work, not as core runtime-learning infrastructure.
 
 ### Phase 12 Order
 
