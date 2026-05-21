@@ -142,14 +142,22 @@ def test_discussion_memory_config_and_sidecars_exist(_isolate_hermes_home):
 
 def test_model_roles_include_discussion_sidecars(_isolate_hermes_home):
     from hermes_cli.config import load_config
-    from hermes_cli.model_roles import role_names, get_model_role
+    from hermes_cli.model_roles import get_model_role, get_model_tier, role_names
 
     names = set(role_names())
     assert {"discussion_capture", "claim_extractor", "wiki_compiler", "dreaming", "global_dreaming", "citation_validator"} <= names
-    role = get_model_role(load_config(), "claim_extractor")
+    cfg = load_config()
+    role = get_model_role(cfg, "claim_extractor")
     assert role["path"] == "supervisor.sidecar_models.claim_extractor"
-    assert role["tier"] == "low_cost_reasoning"
-    assert role["config"]["provider"] == "deepseek"
+    assert role["tier"] == "cheap_reasoning"
+    assert role["config"]["provider"] == "cerebras"
+
+    # Backward-compatible alias: older configs/tests may still refer to
+    # low_cost_reasoning, but runtime role surfaces canonicalize to
+    # cheap_reasoning.
+    alias = get_model_tier(cfg, "low_cost_reasoning")
+    assert alias["tier"] == "cheap_reasoning"
+    assert alias["provider"] == role["config"]["provider"]
 
 
 def test_normalize_proposal_adds_hashes_and_simhash():
