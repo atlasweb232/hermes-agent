@@ -527,13 +527,33 @@ class KafkaGlobalMemoryBus:
         return {"backend": "kafka", "topic": resolved, "event_key": event_key}
 
 
+class ProductionGlobalMemoryBus:
+    """Non-blocking Kafka/Redpanda production adapter with SQLite spool fallback."""
+
+    def __init__(self, db: SessionDB, config: Dict[str, Any]):
+        self.db = db
+        self.config = config
+
+    def publish(self, topic: str, payload: Dict[str, Any], *, event_key: str) -> Dict[str, Any]:
+        from hermes_cli.global_bus_production import publish_global_bus_event
+
+        result = publish_global_bus_event(
+            self.db,
+            self.config,
+            topic=topic,
+            payload=payload,
+            event_key=event_key,
+        )
+        return result
+
+
 def get_global_memory_bus(db: SessionDB, config: Dict[str, Any]) -> GlobalMemoryBus:
     bus = ((config or {}).get("supervisor") or {}).get("global_memory_bus") or {}
     backend = str(bus.get("backend") or "sqlite").lower()
     if backend == "sqlite":
         return SQLiteGlobalMemoryBus(db, config)
     if backend in {"kafka", "redpanda"}:
-        return KafkaGlobalMemoryBus(config)
+        return ProductionGlobalMemoryBus(db, config)
     raise ValueError(f"unsupported global memory bus backend: {backend}")
 
 

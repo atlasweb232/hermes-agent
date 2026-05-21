@@ -2,8 +2,6 @@ import json
 import sys
 from unittest.mock import patch
 
-import pytest
-
 from hermes_cli.global_memory import (
     DiscussionMemoryRecord,
     GlobalPreCurationEvent,
@@ -207,20 +205,25 @@ def test_global_topic_uses_configured_prefix():
     assert build_global_topic(config, "dedupe_requested") == "atlas.memory.dedupe.requested"
 
 
-def test_kafka_bus_boundary_requires_optional_dependency(tmp_path):
+def test_kafka_bus_boundary_falls_back_to_sqlite_without_optional_dependency(tmp_path):
     db = _db(tmp_path)
     try:
         config = {
             "supervisor": {
                 "global_memory_bus": {
+                    "enabled": True,
                     "backend": "redpanda",
                     "brokers": ["127.0.0.1:9092"],
                 }
             }
         }
 
-        with pytest.raises(RuntimeError, match="confluent-kafka"):
-            get_global_memory_bus(db, config)
+        bus = get_global_memory_bus(db, config)
+        result = bus.publish("proposed", _proposal(), event_key="proposal:1")
+
+        assert result["status"] == "spooled"
+        assert result["fallback"]["used"] is True
+        assert list_learning_events(db, topic="hermes.memory.proposed")
     finally:
         db.close()
 

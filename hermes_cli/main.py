@@ -13078,6 +13078,15 @@ Examples:
     bus_drain.add_argument("--lease-seconds", type=float, default=300.0, help="Lease duration")
     bus_drain.add_argument("--no-ack", action="store_true", help="Lease without marking events consumed")
     bus_drain.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_check = bus_sub.add_parser("check", help="Check production Kafka/Redpanda global bus status")
+    bus_check.add_argument("--topic", action="append", default=[], help="Logical global topic to verify; repeatable")
+    bus_check.add_argument("--lag", action="store_true", help="Include lag metrics when broker is reachable")
+    bus_check.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
+    bus_spool = bus_sub.add_parser("spool-drain", help="Publish SQLite fallback spool to Kafka/Redpanda")
+    bus_spool.add_argument("--topic", action="append", default=[], help="Logical global topic to drain; repeatable")
+    bus_spool.add_argument("--drain-key", required=True, help="Idempotency key for this spool drain")
+    bus_spool.add_argument("--limit", type=int, default=10, help="Maximum spooled events to publish")
+    bus_spool.add_argument("--json", action="store_true", help="Print machine-readable JSON output")
     jobs_parser = memory_sub.add_parser(
         "jobs",
         help="Inspect background learning jobs",
@@ -13943,6 +13952,89 @@ Examples:
                             print(
                                 f"\n  learning events drained: {result.get('drained_count', 0)}"
                                 f"  already drained: {result.get('already_drained_count', 0)}\n"
+                            )
+                    elif bus_cmd == "check":
+                        from hermes_cli.config import load_config
+                        from hermes_cli.global_bus_production import (
+                            OptionalConfluentKafkaAdapter,
+                            broker_status_json,
+                            global_bus_lag_metrics,
+                            resolve_global_bus_config,
+                            verify_broker_topics,
+                        )
+
+                        cfg = load_config()
+                        prod_cfg = resolve_global_bus_config(cfg)
+                        result = broker_status_json(prod_cfg)
+                        topic_args = getattr(args, "topic", []) or []
+                        if topic_args or getattr(args, "lag", False):
+                            try:
+                                adapter = OptionalConfluentKafkaAdapter(prod_cfg)
+                                if topic_args:
+                                    result["topic_verification"] = verify_broker_topics(
+                                        prod_cfg,
+                                        adapter=adapter,
+                                        topics=topic_args,
+                                    )
+                                if getattr(args, "lag", False):
+                                    result["lag"] = global_bus_lag_metrics(
+                                        prod_cfg,
+                                        adapter=adapter,
+                                        topics=topic_args or ["proposed", "dead_letter"],
+                                    )
+                            except Exception as exc:
+                                result["broker_probe"] = {
+                                    "available": False,
+                                    "error": exc.__class__.__name__,
+                                    "fallback_to_sqlite": prod_cfg.fallback_to_sqlite,
+                                }
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                "\n  global bus:"
+                                f" status={result.get('status')}"
+                                f" backend={result.get('broker', {}).get('backend')}"
+                                f" fallback={result.get('fallback', {}).get('active', False)}\n"
+                            )
+                    elif bus_cmd == "spool-drain":
+                        from hermes_cli.config import load_config
+                        from hermes_cli.global_bus_production import (
+                            OptionalConfluentKafkaAdapter,
+                            drain_sqlite_spool_to_broker,
+                            resolve_global_bus_config,
+                        )
+
+                        cfg = load_config()
+                        prod_cfg = resolve_global_bus_config(cfg)
+                        try:
+                            adapter = OptionalConfluentKafkaAdapter(prod_cfg)
+                            result = drain_sqlite_spool_to_broker(
+                                db,
+                                prod_cfg,
+                                adapter=adapter,
+                                topics=getattr(args, "topic", []) or None,
+                                drain_key=getattr(args, "drain_key"),
+                                limit=getattr(args, "limit", 10),
+                            )
+                        except Exception as exc:
+                            result = {
+                                "status": "unavailable",
+                                "backend": prod_cfg.backend,
+                                "published_count": 0,
+                                "error": exc.__class__.__name__,
+                                "fallback": {
+                                    "sqlite_spool_retained": True,
+                                    "fallback_to_sqlite": prod_cfg.fallback_to_sqlite,
+                                },
+                            }
+                        if getattr(args, "json", False):
+                            print(json.dumps(result, indent=2, ensure_ascii=False))
+                        else:
+                            print(
+                                "\n  global bus spool drain:"
+                                f" status={result.get('status')}"
+                                f" published={result.get('published_count', 0)}\n"
                             )
                     else:
                         rows = list_learning_events(
