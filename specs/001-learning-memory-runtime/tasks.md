@@ -768,24 +768,24 @@
 
 ### Tests For Operator Dashboard
 
-- [ ] T329 [P] [US19] Add dashboard seed fixture tests covering tenants, repos, jobs, worker attempts, sidecars, memory packets, approvals, corpus exports, bus events, benchmarks, and Azure deployments
-- [ ] T330 [P] [US19] Add jobs table API/UI DTO tests for tenant/repo/date/status/worker/model/blocker/cost/deployment filters and redacted row summaries
-- [ ] T331 [P] [US19] Add job detail tests for lazy Overview, Agents, Spec Kit, Memory, Validation, Sidecars, Bus Events, Costs, Deployment, and Ask tabs
-- [ ] T332 [P] [US19] Add approval inbox tests proving memory, dreaming, corpus, deployment, CI/CD, and policy actions write through the shared approval ledger and reject replay/mismatched target hash
-- [ ] T333 [P] [US19] Add sidecar and bus health panel tests for role/tier/model/budget/backlog/lag/DLQ/spool/degraded state without secrets
-- [ ] T334 [P] [US19] Add cost/context panel tests for token, estimated cost, latency, context admitted, sidecar calls, memory hits, worker attempts, and benchmark attribution
-- [ ] T335 [P] [US19] Add scoped Ask dashboard tests proving only read-only bounded evidence bundles are sent to the LLM and mutation tools are unavailable
-- [ ] T336 [P] [US19] Add Azure deployment panel tests for plan/preflight/apply/smoke/soak/promote/rollback state, hardening failures, costs, and required operator actions
+- [x] T329 [P] [US19] Add dashboard seed fixture tests covering tenants, repos, jobs, worker attempts, sidecars, memory packets, approvals, corpus exports, bus events, benchmarks, and Azure deployments
+- [x] T330 [P] [US19] Add jobs table API/UI DTO tests for tenant/repo/date/status/worker/model/blocker/cost/deployment filters and redacted row summaries
+- [x] T331 [P] [US19] Add job detail tests for lazy Overview, Agents, Spec Kit, Memory, Validation, Sidecars, Bus Events, Costs, Deployment, and Ask tabs
+- [x] T332 [P] [US19] Add approval inbox tests proving memory, dreaming, corpus, deployment, CI/CD, and policy actions write through the shared approval ledger and reject replay/mismatched target hash
+- [x] T333 [P] [US19] Add sidecar and bus health panel tests for role/tier/model/budget/backlog/lag/DLQ/spool/degraded state without secrets
+- [x] T334 [P] [US19] Add cost/context panel tests for token, estimated cost, latency, context admitted, sidecar calls, memory hits, worker attempts, and benchmark attribution
+- [x] T335 [P] [US19] Add scoped Ask dashboard tests proving only read-only bounded evidence bundles are sent to the LLM and mutation tools are unavailable
+- [x] T336 [P] [US19] Add Azure deployment panel tests for plan/preflight/apply/smoke/soak/promote/rollback state, hardening failures, costs, and required operator actions
 
 ### Implementation For Operator Dashboard
 
-- [ ] T337 [US19] Implement dashboard DTO aggregator using existing runtime observability, tenant, memory, sidecar, bus, benchmark, approval ledger, and Azure deployment surfaces
-- [ ] T338 [US19] Implement jobs list and lazy job-detail JSON routes or backend surfaces with strict tenant scoping and redaction
-- [ ] T339 [US19] Implement approval inbox backend surfaces backed by shared approval ledger actions
-- [ ] T340 [US19] Implement sidecar, bus, cost/context, and deployment dashboard summary surfaces
-- [ ] T341 [US19] Implement scoped Ask evidence-bundle builder for dashboard job analysis with read-only/no-mutation guarantees
-- [ ] T342 [US19] Implement minimal dashboard UI shell or existing-dashboard integration for jobs, detail drawer, approval inbox, sidecar/bus/cost/deployment panels, and scoped Ask
-- [ ] T343 [US19] Add E2E dashboard smoke fixture proving seeded state is visible, dangerous actions fail closed without approval, and raw logs/transcripts are never loaded
+- [x] T337 [US19] Implement dashboard DTO aggregator using existing runtime observability, tenant, memory, sidecar, bus, benchmark, approval ledger, and Azure deployment surfaces
+- [x] T338 [US19] Implement jobs list and lazy job-detail JSON routes or backend surfaces with strict tenant scoping and redaction
+- [x] T339 [US19] Implement approval inbox backend surfaces backed by shared approval ledger actions
+- [x] T340 [US19] Implement sidecar, bus, cost/context, and deployment dashboard summary surfaces
+- [x] T341 [US19] Implement scoped Ask evidence-bundle builder for dashboard job analysis with read-only/no-mutation guarantees
+- [x] T342 [US19] Implement minimal dashboard UI shell or existing-dashboard integration for jobs, detail drawer, approval inbox, sidecar/bus/cost/deployment panels, and scoped Ask
+- [x] T343 [US19] Add E2E dashboard smoke fixture proving seeded state is visible, dangerous actions fail closed without approval, and raw logs/transcripts are never loaded
 
 **Checkpoint**: Operator can inspect active and historical work, approve high-risk actions, see platform health/cost, and ask scoped analytical questions without raw context bloat or unsafe mutation paths.
 
