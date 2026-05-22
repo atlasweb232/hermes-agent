@@ -156,9 +156,21 @@ class TaskGoalContinuationDecision:
     continuation_prompt: Optional[str] = None
     goal_json: Dict[str, Any] = field(default_factory=dict)
     guard: Dict[str, Any] = field(default_factory=dict)
+    judge_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class ConfiguredGoalJudgeResult:
+    verdict: str
+    reason: str
+    parse_failed: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def as_tuple(self) -> tuple[str, str, bool]:
+        return self.verdict, self.reason, self.parse_failed
 
 
 def ensure_supervisor_control_schema(db: SessionDB) -> None:
@@ -800,12 +812,122 @@ def goal_continuation_allowed(db: SessionDB, *, task_id: str) -> Dict[str, Any]:
     return {"task_id": task_id, "allowed": True, "reason": "goal_is_supervisor_owned", "state": entry.state}
 
 
+def call_configured_goal_judge(
+    goal: str,
+    last_response: str,
+    *,
+    config: Optional[Dict[str, Any]] = None,
+    model_call: Optional[Any] = None,
+) -> ConfiguredGoalJudgeResult:
+    """Invoke the configured ``goal_judge`` role or return structured degradation.
+
+    This wrapper is used by the supervisor control plane. It resolves the
+    configured model role first, records provider/model/tier metadata, and
+    fails closed into an explicit degraded ``continue`` decision when the role
+    is disabled or unavailable. The native chat `/goal` path can keep using the
+    upstream ``hermes_cli.goals.judge_goal`` semantics.
+    """
+    cfg = config or load_config()
+    from hermes_cli.model_roles import get_model_role
+
+    try:
+        role = get_model_role(cfg, "goal_judge")
+    except Exception as exc:
+        return ConfiguredGoalJudgeResult(
+            verdict="continue",
+            reason=f"goal_judge degraded: role resolution failed ({type(exc).__name__})",
+            parse_failed=False,
+            metadata={
+                "status": "degraded",
+                "role": "goal_judge",
+                "degraded_reason": "role_resolution_failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+
+    role_config = dict(role.get("config") or {})
+    timeout = float(role_config.get("timeout") or role_config.get("timeout_seconds") or 30.0)
+    metadata = {
+        "status": "ready",
+        "role": "goal_judge",
+        "path": role.get("path"),
+        "tier": role.get("tier"),
+        "provider": role_config.get("provider", ""),
+        "model": role_config.get("model", ""),
+        "timeout_seconds": timeout,
+        "degraded_reason": "",
+    }
+    if role_config.get("enabled", True) is False:
+        metadata["status"] = "degraded"
+        metadata["degraded_reason"] = "role_disabled"
+        return ConfiguredGoalJudgeResult(
+            verdict="continue",
+            reason="goal_judge degraded: role disabled",
+            parse_failed=False,
+            metadata=metadata,
+        )
+    if not str(role_config.get("provider") or "").strip() or not str(role_config.get("model") or "").strip():
+        metadata["status"] = "degraded"
+        metadata["degraded_reason"] = "missing_provider_or_model"
+        return ConfiguredGoalJudgeResult(
+            verdict="continue",
+            reason="goal_judge degraded: missing provider or model",
+            parse_failed=False,
+            metadata=metadata,
+        )
+
+    try:
+        if model_call is not None:
+            raw_result = model_call(role, goal, last_response, timeout)
+            if isinstance(raw_result, ConfiguredGoalJudgeResult):
+                raw_result.metadata = {**metadata, **(raw_result.metadata or {})}
+                return raw_result
+            if isinstance(raw_result, tuple):
+                verdict, reason, parse_failed = raw_result
+                return ConfiguredGoalJudgeResult(
+                    verdict=str(verdict),
+                    reason=str(reason),
+                    parse_failed=bool(parse_failed),
+                    metadata=metadata,
+                )
+            from hermes_cli.goals import _parse_judge_response
+
+            done, reason, parse_failed = _parse_judge_response(str(raw_result or ""))
+            return ConfiguredGoalJudgeResult(
+                verdict="done" if done else "continue",
+                reason=reason,
+                parse_failed=parse_failed,
+                metadata=metadata,
+            )
+
+        from hermes_cli.goals import judge_goal
+
+        verdict, reason, parse_failed = judge_goal(goal, last_response, timeout=timeout)
+        return ConfiguredGoalJudgeResult(
+            verdict=verdict,
+            reason=reason,
+            parse_failed=parse_failed,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        metadata["status"] = "degraded"
+        metadata["degraded_reason"] = "judge_invocation_failed"
+        metadata["error_type"] = type(exc).__name__
+        return ConfiguredGoalJudgeResult(
+            verdict="continue",
+            reason=f"goal_judge degraded: {type(exc).__name__}",
+            parse_failed=False,
+            metadata=metadata,
+        )
+
+
 def evaluate_task_goal_continuation(
     db: SessionDB,
     *,
     task_id: str,
     last_response: str,
     judge_fn: Optional[Any] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> TaskGoalContinuationDecision:
     """Evaluate task-level goal continuation under supervisor ledger gates.
 
@@ -841,11 +963,25 @@ def evaluate_task_goal_continuation(
             guard=guard,
         )
 
-    judge = judge_fn
-    if judge is None:
-        from hermes_cli.goals import judge_goal as judge
-
-    verdict, reason, parse_failed = judge(str(goal_state.get("goal") or ""), last_response)
+    if judge_fn is None:
+        judge_result = call_configured_goal_judge(
+            str(goal_state.get("goal") or ""),
+            last_response,
+            config=config,
+        )
+    else:
+        raw_judge_result = judge_fn(str(goal_state.get("goal") or ""), last_response)
+        if isinstance(raw_judge_result, ConfiguredGoalJudgeResult):
+            judge_result = raw_judge_result
+        else:
+            verdict_raw, reason_raw, parse_failed_raw = raw_judge_result
+            judge_result = ConfiguredGoalJudgeResult(
+                verdict=str(verdict_raw),
+                reason=str(reason_raw),
+                parse_failed=bool(parse_failed_raw),
+                metadata={"status": "test_override", "role": "goal_judge"},
+            )
+    verdict, reason, parse_failed = judge_result.as_tuple()
     turns_used = int(goal_state.get("turns_used") or 0) + 1
     max_turns = int(goal_state.get("max_turns") or 20)
     goal_state["turns_used"] = turns_used
@@ -860,6 +996,7 @@ def evaluate_task_goal_continuation(
             "reason": reason,
             "parse_failed": bool(parse_failed),
             "turn": turns_used,
+            "judge": judge_result.metadata,
             "created_at": goal_state["updated_at"],
         }
     )
@@ -916,7 +1053,12 @@ def evaluate_task_goal_continuation(
                 entry.state,
                 entry.state,
                 entry.worker_id,
-                _json_dumps({"verdict": verdict, "should_continue": should_continue, "goal": goal_state}),
+                _json_dumps({
+                    "verdict": verdict,
+                    "should_continue": should_continue,
+                    "goal": goal_state,
+                    "judge": judge_result.metadata,
+                }),
                 current,
             ),
         )
@@ -931,4 +1073,5 @@ def evaluate_task_goal_continuation(
         continuation_prompt=prompt,
         goal_json=goal_state,
         guard=guard,
+        judge_metadata=judge_result.metadata,
     )

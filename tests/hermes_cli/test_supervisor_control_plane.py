@@ -6,6 +6,8 @@ from unittest.mock import patch
 from hermes_cli.supervisor_control_plane import (
     apply_override_action,
     assess_task_convergence,
+    call_configured_goal_judge,
+    ConfiguredGoalJudgeResult,
     create_recovery_packet,
     create_task_ledger_entry,
     evaluate_task_goal_continuation,
@@ -239,6 +241,111 @@ def test_task_goal_continuation_uses_supervisor_owned_judge(tmp_path):
         assert entry.goal_json["continuation_count"] == 1
     finally:
         db.close()
+
+
+def test_task_goal_continuation_invokes_configured_goal_judge_role(tmp_path):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import update_model_role
+
+    db = _make_db(tmp_path)
+    try:
+        cfg = load_config()
+        update_model_role(cfg, "goal_judge", provider="codex", model="codex", timeout=222)
+        create_task_ledger_entry(
+            db,
+            task_id="task_goal_configured",
+            worker_id="codex-worker",
+            goal="finish configured goal judge test",
+            goal_max_turns=3,
+        )
+        calls = []
+
+        def fake_model_call(role, goal, last_response, timeout):
+            calls.append({"role": role, "goal": goal, "last_response": last_response, "timeout": timeout})
+            return '{"done": false, "reason": "needs one more validation step"}'
+
+        result = evaluate_task_goal_continuation(
+            db,
+            task_id="task_goal_configured",
+            last_response="I changed code but did not validate yet.",
+            config=cfg,
+            judge_fn=lambda goal, response: call_configured_goal_judge(
+                goal,
+                response,
+                config=cfg,
+                model_call=fake_model_call,
+            ),
+        )
+
+        assert result.status == "continue"
+        assert result.should_continue is True
+        assert result.judge_metadata["role"] == "goal_judge"
+        assert result.judge_metadata["provider"] == "codex"
+        assert result.judge_metadata["model"] == "codex"
+        assert result.judge_metadata["timeout_seconds"] == 222
+        assert calls[0]["role"]["path"] == "auxiliary.goal_judge"
+        assert calls[0]["timeout"] == 222
+        entry = get_task_ledger_entry(db, "task_goal_configured")
+        assert entry.goal_json["history"][0]["judge"]["provider"] == "codex"
+    finally:
+        db.close()
+
+
+def test_task_goal_continuation_returns_structured_degraded_when_goal_judge_disabled(tmp_path):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import update_model_role
+
+    db = _make_db(tmp_path)
+    try:
+        cfg = load_config()
+        update_model_role(cfg, "goal_judge", provider="codex", model="codex", enabled=False, timeout=120)
+        create_task_ledger_entry(
+            db,
+            task_id="task_goal_degraded",
+            worker_id="codex-worker",
+            goal="finish degraded goal judge test",
+            goal_max_turns=2,
+        )
+
+        result = evaluate_task_goal_continuation(
+            db,
+            task_id="task_goal_degraded",
+            last_response="Maybe done.",
+            config=cfg,
+        )
+
+        assert result.status == "continue"
+        assert result.should_continue is True
+        assert result.verdict == "continue"
+        assert "goal_judge degraded" in result.reason
+        assert result.judge_metadata["status"] == "degraded"
+        assert result.judge_metadata["degraded_reason"] == "role_disabled"
+        entry = get_task_ledger_entry(db, "task_goal_degraded")
+        assert entry.goal_json["last_parse_failed"] is False
+        assert entry.goal_json["history"][0]["judge"]["degraded_reason"] == "role_disabled"
+    finally:
+        db.close()
+
+
+def test_configured_goal_judge_model_call_tuple_keeps_audit_metadata(_isolate_hermes_home):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import update_model_role
+
+    cfg = load_config()
+    update_model_role(cfg, "goal_judge", provider="deepseek", model="deepseek-reasoner", timeout=99)
+
+    result = call_configured_goal_judge(
+        "finish task",
+        "work complete",
+        config=cfg,
+        model_call=lambda _role, _goal, _response, _timeout: ("done", "validated", False),
+    )
+
+    assert isinstance(result, ConfiguredGoalJudgeResult)
+    assert result.verdict == "done"
+    assert result.metadata["provider"] == "deepseek"
+    assert result.metadata["model"] == "deepseek-reasoner"
+    assert result.metadata["timeout_seconds"] == 99
 
 
 def test_task_goal_judge_cannot_override_reclaimed_task(tmp_path):
