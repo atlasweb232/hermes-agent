@@ -835,6 +835,7 @@
 - [x] T361 [US20] Implement production runtime smoke CLI/API surface, e.g. `hermes runtime production-smoke --json`, with pass/fail report and redacted artifacts
 - [x] T361A [US20] Implement runtime impact DTO aggregator over live state for sidecars by category, sidecars by job, memory activity timeline, and foreground/background latency attribution
 - [x] T361B [US20] Wire runtime impact JSON into dashboard/API surfaces and minimal UI panel, preserving lazy loading and redaction
+- [x] T361C [US20] Patch session persistence and gateway transcript reload so context-heavy tool/proc/read/search outputs are stored as redacted `event://worker/...` refs before hygiene estimation, preventing follow-up turns from re-ingesting raw worker streams and triggering avoidable preflight compression
 - [ ] T362 [US20] Update release readiness report generation to include production closure gates, live VM command evidence, cost/context totals, runtime impact UI evidence, sidecar status, and known blockers
 - [ ] T363 [US20] Run VM production closure smoke and runtime impact UI/API smoke, then record results in `docs/runtime-learning-release-readiness.md`
 

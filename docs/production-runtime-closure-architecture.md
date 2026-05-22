@@ -82,6 +82,29 @@ supervisor prompt should use the checkpoint and refs, not raw update streams.
 This is the shortest path to reducing preflight compression frequency while
 preserving traceability.
 
+### Transcript Persistence Gate
+
+Live tool progress may still be rendered to the terminal, Slack, or dashboard
+for operator visibility. That display path is separate from the supervisor
+transcript. Before a completed turn is written to the session log or SQLite
+gateway transcript, context-heavy tool results such as terminal output,
+process wait/poll output, file reads, grep/search results, delegated worker
+streams, browser traces, and web fetch bodies are passed through the context
+admission gate.
+
+If the result is not small enough to admit directly, Hermes stores the full
+redacted body in `hermes_worker_events` and persists only a compact
+`event://worker/...` reference plus bounded summary in the transcript. This
+keeps follow-up turns from rehydrating raw worker streams and triggering
+avoidable preflight compression while preserving the full audit trail for UI
+drilldown and later sidecar analysis.
+
+Gateway reload applies the same rewrite before hygiene estimation. That covers
+older sessions whose raw tool output was persisted before this gate existed:
+the session is rewritten to refs first, then token/message pressure is
+measured. Compression remains a safety valve for genuinely long conversations,
+not a response to repeated worker/proc telemetry.
+
 ## Goal Judge Boundary
 
 The goal judge is a continuation evaluator, not a completion authority. It can

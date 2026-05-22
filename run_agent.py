@@ -1167,9 +1167,148 @@ class AIAgent:
         """
         self._drop_trailing_empty_response_scaffolding(messages)
         self._apply_persist_user_message_override(messages)
-        self._session_messages = messages
-        self._save_session_log(messages)
-        self._flush_messages_to_session_db(messages, conversation_history)
+        persisted_messages = self._context_safe_messages_for_persistence(messages)
+        self._session_messages = persisted_messages
+        self._save_session_log(persisted_messages)
+        self._flush_messages_to_session_db(persisted_messages, conversation_history)
+
+    _CONTEXT_HEAVY_TRANSCRIPT_TOOLS = {
+        "terminal",
+        "execute_code",
+        "read_file",
+        "search_files",
+        "delegate_task",
+        "browser",
+        "browser_cdp",
+        "web_search",
+        "web_fetch",
+        "proc",
+        "process",
+        "process_wait",
+        "process_poll",
+        "process_read",
+    }
+
+    def _context_safe_messages_for_persistence(self, messages: List[Dict]) -> List[Dict]:
+        """Return transcript-safe messages for session log/DB persistence.
+
+        The live model loop may need raw file reads and command output within a
+        turn. Persisted gateway history does not: rehydrating those raw tool
+        bodies on the next user message is what causes preflight compression
+        loops. Keep the message protocol shape, but replace context-heavy tool
+        contents with compact event references after the task turn is done.
+        """
+        if not messages:
+            return messages
+        if str(os.getenv("HERMES_CONTEXT_ADMISSION_DISABLE", "")).lower() in {"1", "true", "yes"}:
+            return messages
+
+        db = getattr(self, "_session_db", None)
+        if db is None:
+            return messages
+
+        try:
+            from hermes_cli.context_admission import (
+                ContextAdmissionPolicy,
+                ContextItem,
+                decide_context_admission,
+            )
+            from hermes_cli.worker_event_store import store_worker_event
+        except Exception:
+            return messages
+
+        sanitized: List[Dict] = []
+        policy = ContextAdmissionPolicy(direct_token_budget=120, summary_token_budget=500)
+        for idx, msg in enumerate(messages):
+            if not isinstance(msg, dict) or msg.get("role") != "tool":
+                sanitized.append(msg)
+                continue
+
+            content = msg.get("content")
+            if not isinstance(content, str) or not content:
+                sanitized.append(msg)
+                continue
+
+            tool_name = str(msg.get("name") or msg.get("tool_name") or "")
+            lower_tool = tool_name.casefold()
+            context_heavy_tool = (
+                lower_tool in self._CONTEXT_HEAVY_TRANSCRIPT_TOOLS
+                or any(marker in lower_tool for marker in ("terminal", "worker", "proc", "search", "read"))
+            )
+            kind = "terminal_output" if context_heavy_tool else "tool_result"
+            try:
+                decision = decide_context_admission(
+                    ContextItem(
+                        kind=kind,
+                        source=tool_name,
+                        text=content,
+                        task_id=getattr(self, "task_id", None),
+                        metadata={
+                            "session_id": self.session_id,
+                            "message_index": idx,
+                            "tool_call_id": msg.get("tool_call_id"),
+                            "tool_name": tool_name,
+                            "persistence_gate": True,
+                        },
+                    ),
+                    policy=policy,
+                )
+            except Exception:
+                sanitized.append(msg)
+                continue
+
+            # Keep truly small/decision-critical tool results readable. Context
+            # heavy tools are still offloaded once they cross the direct budget.
+            if decision.action == "admit":
+                sanitized.append(msg)
+                continue
+
+            digest = hashlib.sha256(
+                f"{self.session_id}:{idx}:{tool_name}:{content}".encode("utf-8")
+            ).hexdigest()[:16]
+            try:
+                event = store_worker_event(
+                    db,
+                    kind=kind,
+                    source=tool_name,
+                    task_id=getattr(self, "task_id", None),
+                    worker_id=str(msg.get("worker_id") or ""),
+                    content=content,
+                    payload={
+                        "session_id": self.session_id,
+                        "message_index": idx,
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "tool_name": tool_name,
+                        "admission": decision.to_dict(),
+                        "stored_from": "session_persistence",
+                    },
+                    foreground_admitted=False,
+                    event_id=f"wevt_persist_{digest}",
+                )
+            except Exception:
+                logger.debug("session persistence context offload failed", exc_info=True)
+                sanitized.append(msg)
+                continue
+
+            summary = re.sub(r"\s+", " ", str(event.summary or "")).strip()[:220]
+            replacement = (
+                "<context-offloaded-transcript-tool-result>\n"
+                f"tool: {tool_name or 'unknown'}\n"
+                f"decision: {decision.action}\n"
+                f"reason: {decision.reason}\n"
+                f"event_ref: {event.ref}\n"
+                f"raw_size_bytes: {event.raw_size_bytes}\n"
+                f"summary: {summary}\n"
+                "raw_output_in_context: false\n"
+                "</context-offloaded-transcript-tool-result>"
+            )
+            safe_msg = dict(msg)
+            safe_msg["content"] = replacement
+            safe_msg["_context_offloaded"] = True
+            safe_msg["_context_event_ref"] = event.ref
+            sanitized.append(safe_msg)
+
+        return sanitized
 
     def _drop_trailing_empty_response_scaffolding(self, messages: List[Dict]) -> None:
         """Remove private empty-response retry/failure scaffolding from transcript tails.

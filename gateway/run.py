@@ -7400,6 +7400,25 @@ class GatewayRunner:
 
         # Load conversation history from transcript
         history = self.session_store.load_transcript(session_entry.session_id)
+        if history:
+            try:
+                from run_agent import AIAgent
+
+                _ctx_agent = AIAgent.__new__(AIAgent)
+                _ctx_agent._session_db = getattr(self.session_store, "_db", None)
+                _ctx_agent.session_id = session_entry.session_id
+                _ctx_agent.task_id = f"gateway:{session_key}"
+                if _ctx_agent._session_db is not None:
+                    _safe_history = _ctx_agent._context_safe_messages_for_persistence(history)
+                    if _safe_history != history:
+                        self.session_store.rewrite_transcript(session_entry.session_id, _safe_history)
+                        history = _safe_history
+                        session_entry.last_prompt_tokens = 0
+                        logger.info(
+                            "Session hygiene: rewrote context-heavy transcript entries as event refs before compression check"
+                        )
+            except Exception:
+                logger.debug("Session hygiene context-admission rewrite skipped", exc_info=True)
         
         # -----------------------------------------------------------------
         # Session hygiene: auto-compress pathologically large transcripts
