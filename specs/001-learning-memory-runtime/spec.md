@@ -299,6 +299,7 @@ As the Hermes operator, I want the VM-proven runtime-learning loop to be product
 6. **Given** a repeated failure implies a reusable procedure, **When** the skill evolution loop runs, **Then** a skill candidate can be created, judged, operator-approved, retrieved as a bounded skill packet, and updated by outcome feedback.
 7. **Given** sidecars are configured for production, **When** their service-equivalent smoke runs, **Then** each sidecar reports lock, budget, interval, last run, degraded reason, backlog, and foreground-nonblocking status.
 8. **Given** a live primary worker failure and healthy fallback, **When** the production learning-loop smoke runs, **Then** Hermes records the failure, falls back or pauses under budget, creates advisory learning, and injects only scoped approved guidance on a follow-up task.
+9. **Given** sidecars, memory retrieval, curator, judge, and notifications run during a task, **When** the operator opens runtime impact UI, **Then** sidecars are grouped by category and job, memory activity is shown by job, and foreground latency is separated from asynchronous sidecar latency.
 
 ### Edge Cases
 
@@ -497,6 +498,8 @@ As the Hermes operator, I want the VM-proven runtime-learning loop to be product
 - **FR-149**: `supervisor_runtime_failure` records MUST include bounded tenant/repo/task/worker/route/status/latency/evidence metadata where available and MUST classify sparse evidence as insufficient for automatic approval.
 - **FR-150**: System MUST prove one skill evolution loop from failure or approved memory to skill candidate, judge decision, operator approval, scoped skill packet, and outcome feedback.
 - **FR-151**: System MUST provide a production runtime smoke that validates Claude primary, Codex fallback/judge, curator, learning judge, goal judge, sidecars, memory injection, skill retrieval, Slack/dashboard alerts, and cost/context telemetry with enforcement disabled.
+- **FR-152**: System MUST expose live runtime impact UI/API surfaces showing sidecars by category, sidecars by job, memory activity timelines, foreground/background latency attribution, and cost/context attribution from real state.
+- **FR-153**: Runtime impact surfaces MUST distinguish foreground-blocking latency from asynchronous sidecar latency and MUST keep raw logs, raw transcripts, provider logs, and secrets out of default UI/API responses.
 
 ### Key Entities
 

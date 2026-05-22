@@ -122,3 +122,31 @@ The smoke passes only when a live failure produces an advisory candidate,
 judge decision, approval boundary, and useful follow-up memory or skill packet
 without leaking secrets or blocking foreground runtime.
 
+## Runtime Impact UI
+
+The current operator dashboard work provides DTOs and seeded fixture tests, but
+production closure requires live UI/API wiring. Operators need to answer one
+question quickly: is runtime learning adding value or dragging the platform?
+
+The runtime impact view should show:
+
+- sidecars grouped by category and job
+- live memory activity for each job
+- foreground latency added by memory retrieval, allocator, validation, and
+  notification paths
+- background latency spent by curator, judge, dreaming, wiki, sync,
+  housekeeping, corpus, and benchmark paths
+- token and cost attribution by supervisor, worker, model, sidecar, memory
+  retrieval, Slack/dashboard Ask, and deployment worker
+- degraded or disabled reason for every sidecar
+- whether each latency/cost item was foreground-blocking or asynchronous
+
+The UI must remain bounded and lazy-loaded. The job list should show compact
+rollups; job detail tabs should fetch sidecars, memory activity, and latency
+attribution on demand. Raw logs, raw transcripts, provider logs, and secrets
+must never be loaded by default.
+
+This UI is part of production readiness because without it the operator cannot
+prove that sidecars and memory retrieval are improving task convergence rather
+than silently increasing latency, cost, or context bloat.
+

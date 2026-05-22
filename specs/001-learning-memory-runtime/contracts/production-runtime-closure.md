@@ -136,6 +136,37 @@ The production smoke must exercise:
 9. Slack/dashboard notification for blocked or degraded work.
 10. Cost/context telemetry showing sidecars did not block foreground runtime.
 
+### Live Operator UI For Runtime Impact
+
+The operator dashboard must expose live production-closure state, not only
+seeded fixtures. The UI/API must show whether runtime-learning improves or drags
+the platform.
+
+Required views:
+
+- sidecars by category: capture, retrieval, curator, judge, dreaming, wiki,
+  sync, housekeeping, progress summarizer, health, benchmark, corpus
+- sidecars by job/task with role, tier, model, state, budget decision, backlog,
+  last run, next eligible run, failure reason, and service mode
+- memory activity by job/task: capture, bus event, candidate, judge decision,
+  operator approval, wiki update, skill candidate, injection, feedback
+- latency impact by job/task:
+  - baseline task latency
+  - foreground memory retrieval latency
+  - allocator/worker-selection latency
+  - foreground validation latency
+  - background sidecar latency
+  - judge/curator latency
+  - notification latency
+  - total foreground added latency
+- cost/context attribution by supervisor, worker, sidecar role, memory
+  retrieval, judge, curator, dashboard Ask, Slack notification, and deployment
+  worker
+
+Foreground and background time must be separated. A long curator or dreaming
+run is acceptable only if it is clearly marked background and did not block
+chat, delegation, or tool execution.
+
 ## Required CLI/API Surfaces
 
 - `hermes runtime production-smoke --json`
@@ -145,6 +176,13 @@ The production smoke must exercise:
 - `hermes runtime redaction audit --json`
 - `hermes runtime learning-loop smoke --json`
 - `hermes skills runtime e2e --json`
+- `hermes dashboard runtime-impact --json`
+- API endpoints or equivalent dashboard routes for:
+  - runtime impact summary
+  - sidecars grouped by category
+  - sidecars grouped by job
+  - memory activity timeline
+  - foreground/background latency attribution
 
 The exact command names may be adjusted during implementation, but the final
 surfaces must expose equivalent JSON for tests, dashboard, and operator use.
@@ -161,6 +199,7 @@ Production closure passes only when:
 - runtime failure records have bounded useful metadata
 - skill evolution E2E passes with approval gates intact
 - learning-loop E2E proves follow-up task injection
+- live dashboard/API surfaces expose sidecars, jobs, memory activity, and
+  foreground/background latency impact from real state, not only seeded fixtures
 - all high-risk actions remain advisory or approval-gated
 - foreground runtime never waits on long-running sidecar work
-
