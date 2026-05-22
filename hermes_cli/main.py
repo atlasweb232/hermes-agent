@@ -12115,6 +12115,13 @@ Examples:
     runtime_impact.add_argument("--job-id", default="", help="Job scope")
     runtime_impact.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_production_smoke = runtime_sub.add_parser("production-smoke", help="Run deterministic production-closure smoke")
+    runtime_production_smoke.add_argument("--tenant-id", default="production-smoke-tenant", help="Tenant scope")
+    runtime_production_smoke.add_argument("--repo-id", default="hermes-agent", help="Repository scope")
+    runtime_production_smoke.add_argument("--artifact-root", default="", help="Optional redacted smoke artifact directory")
+    runtime_production_smoke.add_argument("--require-urgent-channel", action="store_true", help="Fail if urgent route is not configured")
+    runtime_production_smoke.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
     runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
     runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
@@ -12634,6 +12641,24 @@ Examples:
                     repo_id=getattr(args, "repo_id", "") or None,
                     job_id=getattr(args, "job_id", "") or None,
                     worker_event_db=db,
+                ))
+            finally:
+                db.close()
+            return
+        if cmd == "production-smoke":
+            from hermes_cli.config import load_config
+            from hermes_cli.production_runtime_smoke import run_production_runtime_smoke
+            from hermes_state import SessionDB
+
+            db = SessionDB()
+            try:
+                _emit(run_production_runtime_smoke(
+                    db,
+                    config=load_config(),
+                    tenant_id=getattr(args, "tenant_id", "production-smoke-tenant") or "production-smoke-tenant",
+                    repo_id=getattr(args, "repo_id", "hermes-agent") or "hermes-agent",
+                    artifact_root=getattr(args, "artifact_root", "") or None,
+                    require_urgent_channel=bool(getattr(args, "require_urgent_channel", False)),
                 ))
             finally:
                 db.close()

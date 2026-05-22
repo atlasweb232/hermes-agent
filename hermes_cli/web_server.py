@@ -1140,6 +1140,34 @@ def get_runtime_impact(
         raise HTTPException(status_code=500, detail="Failed to build runtime impact panel")
 
 
+@app.post("/api/runtime/production-smoke")
+def post_runtime_production_smoke(
+    tenant_id: str = "production-smoke-tenant",
+    repo_id: str = "hermes-agent",
+    require_urgent_channel: bool = False,
+):
+    """Run deterministic production-closure smoke for dashboard/API callers."""
+    try:
+        from hermes_cli.config import load_config
+        from hermes_cli.production_runtime_smoke import run_production_runtime_smoke
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            return run_production_runtime_smoke(
+                db,
+                config=load_config(),
+                tenant_id=tenant_id or "production-smoke-tenant",
+                repo_id=repo_id or "hermes-agent",
+                require_urgent_channel=bool(require_urgent_channel),
+            )
+        finally:
+            db.close()
+    except Exception:
+        _log.exception("POST /api/runtime/production-smoke failed")
+        raise HTTPException(status_code=500, detail="Failed to run runtime production smoke")
+
+
 @app.put("/api/model/tiers/{tier}")
 def put_model_tier(tier: str, body: ModelTierAssignment):
     """Update a named sidecar model tier for backend/dashboard callers."""
