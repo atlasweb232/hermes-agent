@@ -5809,8 +5809,28 @@ def config_command(args):
 
     elif subcmd == "role":
         role_cmd = getattr(args, "config_role_command", None)
+        if role_cmd == "doctor":
+            from hermes_cli.model_roles import doctor_model_roles
+
+            config = load_config()
+            role_arg = getattr(args, "roles", "") or ""
+            roles = [item.strip() for item in role_arg.split(",") if item.strip()] or None
+            try:
+                result = doctor_model_roles(config, roles=roles)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                sys.exit(1)
+            if getattr(args, "json", False):
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return
+            print(f"model-role doctor: {result.get('status')}")
+            for item in result.get("diagnostics", []):
+                reasons = ", ".join(item.get("degraded_reasons") or []) or "none"
+                print(f"  {item.get('role')}: {item.get('status')} ({item.get('provider')}/{item.get('model')})")
+                print(f"    tier: {item.get('tier')} parity: {item.get('service_environment_parity')} reasons: {reasons}")
+            return
         if role_cmd != "set":
-            print("Usage: hermes config role set <curator|learning_judge|goal_judge> --provider <provider> --model <model>")
+            print("Usage: hermes config role {set|doctor} ...")
             sys.exit(1)
         from hermes_cli.model_roles import update_model_role
 

@@ -10,7 +10,11 @@ so CLI, backend, and docs do not drift.
 from __future__ import annotations
 
 from copy import deepcopy
+import os
+import shutil
 from typing import Any, Dict, Iterable, Optional
+
+from hermes_cli.redaction_guard import redact_value
 
 
 DEFAULT_SIDECAR_MODEL_TIERS: Dict[str, Dict[str, Any]] = {
@@ -468,3 +472,175 @@ def validate_roles(roles: Iterable[str]) -> list[str]:
     if invalid:
         raise ValueError(f"unknown model role(s): {', '.join(invalid)}")
     return list(roles)
+
+
+PROVIDER_AUTH_ENV: Dict[str, tuple[str, ...]] = {
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "cerebras": ("CEREBRAS_API_KEY",),
+    "claude": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    "codex": ("OPENAI_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "gmi": ("GMI_API_KEY",),
+    "minimax": ("MINIMAX_API_KEY", "FIREWORKS_API_KEY"),
+    "openai": ("OPENAI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+}
+
+PROVIDER_EXECUTABLES: Dict[str, tuple[str, ...]] = {
+    "claude": ("claude",),
+    "codex": ("codex",),
+    "ollama": ("ollama",),
+}
+
+SERVICE_CONTEXTS = ("cli", "ssh_non_login_shell", "gateway_service", "sidecar_service")
+
+
+def _provider_name(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _service_path_for_context(context: str, env: Dict[str, str]) -> str:
+    env_key = {
+        "cli": "PATH",
+        "ssh_non_login_shell": "HERMES_SSH_PATH",
+        "gateway_service": "HERMES_GATEWAY_PATH",
+        "sidecar_service": "HERMES_SIDECAR_PATH",
+    }.get(context, "PATH")
+    return env.get(env_key) or env.get("PATH", "")
+
+
+def _which_in_path(command: str, path: str) -> str:
+    resolved = shutil.which(command, path=path or None)
+    return resolved or ""
+
+
+def _auth_status(provider: str, config: Dict[str, Any], env: Dict[str, str]) -> Dict[str, Any]:
+    if provider in {"", "none", "programmatic", "ollama"}:
+        return {"required": False, "present": True, "sources": []}
+    names = PROVIDER_AUTH_ENV.get(provider, ())
+    sources = [name for name in names if env.get(name)]
+    if config.get("api_key"):
+        sources.append("config.api_key")
+    if config.get("auth_token"):
+        sources.append("config.auth_token")
+    required = provider not in {"codex", "claude"}
+    # Codex/Claude may be authenticated by their CLIs without a visible env key.
+    return {"required": required, "present": bool(sources) or not required, "sources": sources}
+
+
+def _timeout_seconds(config: Dict[str, Any]) -> float:
+    for key in ("timeout_seconds", "timeout"):
+        if key in config and config.get(key) is not None:
+            try:
+                return float(config.get(key))
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+def doctor_model_roles(
+    config: Dict[str, Any],
+    *,
+    roles: Iterable[str] | None = None,
+    env: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    """Return secret-safe readiness diagnostics for configured model roles.
+
+    This is a local deterministic doctor. It does not call providers or print
+    credentials; it checks resolved role config, executable discovery, auth
+    presence, timeout/budget fields, and whether service contexts resolve the
+    same role/tier/provider/model shape.
+    """
+    env_map = dict(os.environ if env is None else env)
+    selected_roles = validate_roles(roles or ("curator", "learning_judge", "goal_judge", "code_review_judge"))
+    diagnostics: list[Dict[str, Any]] = []
+    overall_status = "ready"
+
+    for role in selected_roles:
+        role_info = get_model_role(config, role)
+        role_config = dict(role_info.get("config") or {})
+        provider = _provider_name(role_config.get("provider"))
+        model = str(role_config.get("model") or "")
+        allow_llm = bool(role_config.get("allow_llm", provider not in {"", "none"}))
+        enabled = bool(role_config.get("enabled", True))
+        auth = _auth_status(provider, role_config, env_map)
+        executable_names = PROVIDER_EXECUTABLES.get(provider, ())
+        contexts: list[Dict[str, Any]] = []
+        degraded_reasons: list[str] = []
+
+        if not enabled:
+            degraded_reasons.append("role_disabled")
+        if allow_llm and provider in {"", "none"}:
+            degraded_reasons.append("missing_provider")
+        if allow_llm and not model:
+            degraded_reasons.append("missing_model")
+        if auth["required"] and not auth["present"]:
+            degraded_reasons.append("missing_auth")
+        if _timeout_seconds(role_config) <= 0:
+            degraded_reasons.append("missing_timeout")
+
+        for context in SERVICE_CONTEXTS:
+            path = _service_path_for_context(context, env_map)
+            executable_paths = {name: _which_in_path(name, path) for name in executable_names}
+            executable_ready = all(executable_paths.values()) if executable_names else True
+            context_reasons: list[str] = []
+            if not executable_ready:
+                context_reasons.append("missing_executable")
+            context_status = "ready" if not context_reasons else "degraded"
+            contexts.append(
+                {
+                    "context": context,
+                    "status": context_status,
+                    "provider": provider,
+                    "model": model,
+                    "tier": role_info.get("tier"),
+                    "path_present": bool(path),
+                    "path_entry_count": len([item for item in path.split(os.pathsep) if item]),
+                    "executables": executable_paths,
+                    "auth_present": bool(auth["present"]),
+                    "auth_sources": list(auth["sources"]),
+                    "degraded_reasons": context_reasons,
+                }
+            )
+            degraded_reasons.extend(context_reasons)
+
+        signatures = {
+            (item["provider"], item["model"], item["tier"])
+            for item in contexts
+        }
+        parity_ok = len(signatures) == 1
+        if not parity_ok:
+            degraded_reasons.append("service_environment_parity_mismatch")
+
+        unique_reasons = sorted(set(degraded_reasons))
+        status = "ready" if not unique_reasons else "degraded"
+        if status != "ready":
+            overall_status = "degraded"
+        diagnostics.append(
+            {
+                "role": role,
+                "status": status,
+                "path": role_info.get("path"),
+                "tier": role_info.get("tier"),
+                "provider": provider,
+                "model": model,
+                "enabled": enabled,
+                "allow_llm": allow_llm,
+                "timeout_seconds": _timeout_seconds(role_config),
+                "auth": auth,
+                "service_environment_parity": parity_ok,
+                "contexts": contexts,
+                "degraded_reasons": unique_reasons,
+            }
+        )
+
+    result = {
+        "status": overall_status,
+        "kind": "model_role_doctor",
+        "roles_checked": selected_roles,
+        "contexts_checked": list(SERVICE_CONTEXTS),
+        "diagnostics": diagnostics,
+        "secrets_printed": False,
+    }
+    return redact_value(result)

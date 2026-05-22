@@ -36,6 +36,7 @@ SAFE_RAW_STATE_KEYS = {
     "raw_logs_loaded",
     "raw_transcripts_included",
     "raw_transcripts_loaded",
+    "secrets_printed",
 }
 
 SENSITIVE_KEY_PARTS = (

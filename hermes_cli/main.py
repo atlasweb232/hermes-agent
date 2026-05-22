@@ -11017,6 +11017,13 @@ Examples:
     config_role_set.add_argument("--timeout", type=float, help="Role request timeout in seconds")
     config_role_set.add_argument("--enabled", action=argparse.BooleanOptionalAction, default=None)
     config_role_set.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    config_role_doctor = config_role_sub.add_parser("doctor", help="Check named model-role readiness without printing secrets")
+    config_role_doctor.add_argument(
+        "--roles",
+        default="curator,learning_judge,goal_judge,code_review_judge",
+        help="Comma-separated roles to check",
+    )
+    config_role_doctor.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     # config path
     config_subparsers.add_parser("path", help="Print config file path")

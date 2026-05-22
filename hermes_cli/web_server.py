@@ -1080,6 +1080,21 @@ def get_model_roles():
         raise HTTPException(status_code=500, detail="Failed to read model roles")
 
 
+@app.get("/api/model/roles/doctor")
+def get_model_roles_doctor(roles: str = ""):
+    """Return secret-safe model-role readiness diagnostics for dashboard/service callers."""
+    try:
+        from hermes_cli.model_roles import doctor_model_roles
+
+        selected = [item.strip() for item in roles.split(",") if item.strip()] or None
+        return doctor_model_roles(load_config(), roles=selected)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        _log.exception("GET /api/model/roles/doctor failed")
+        raise HTTPException(status_code=500, detail="Failed to run model-role doctor")
+
+
 @app.get("/api/model/tiers")
 def get_model_tiers():
     """Return sidecar model tier configuration."""

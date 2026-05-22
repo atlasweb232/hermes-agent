@@ -2,6 +2,8 @@ import json
 import sys
 from unittest.mock import patch
 
+import pytest
+
 
 def test_model_role_helper_updates_curator_and_goal_judge(_isolate_hermes_home):
     from hermes_cli.config import load_config, save_config
@@ -178,3 +180,116 @@ def test_config_tier_cli_updates_low_cost_provider(_isolate_hermes_home, capsys)
     assert tier["provider"] == "minimax"
     assert tier["model"] == "MiniMax-M2"
     assert role["config"]["provider"] == "minimax"
+
+
+def test_model_role_doctor_reports_service_context_parity_without_secrets(_isolate_hermes_home, tmp_path):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import doctor_model_roles, update_model_role
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("codex", "claude"):
+        path = bin_dir / name
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    cfg = load_config()
+    update_model_role(cfg, "goal_judge", provider="codex", model="codex", timeout=180)
+    update_model_role(cfg, "curator", provider="claude", model="sonnet", timeout=180)
+    update_model_role(cfg, "learning_judge", provider="deepseek", model="deepseek-reasoner", timeout=180)
+    env = {
+        "PATH": str(bin_dir),
+        "HERMES_SSH_PATH": str(bin_dir),
+        "HERMES_GATEWAY_PATH": str(bin_dir),
+        "HERMES_SIDECAR_PATH": str(bin_dir),
+        "DEEPSEEK_API_KEY": "sk-testsecret1234567890",
+    }
+
+    output = doctor_model_roles(cfg, roles=["curator", "learning_judge", "goal_judge"], env=env)
+    dumped = json.dumps(output)
+
+    assert output["kind"] == "model_role_doctor"
+    assert output["status"] == "ready"
+    assert output["secrets_printed"] is False
+    assert {item["role"] for item in output["diagnostics"]} == {"curator", "learning_judge", "goal_judge"}
+    assert all(item["service_environment_parity"] is True for item in output["diagnostics"])
+    assert "sk-testsecret" not in dumped
+    assert "DEEPSEEK_API_KEY" in dumped
+
+
+def test_model_role_doctor_degrades_when_service_executable_missing(_isolate_hermes_home, tmp_path):
+    from hermes_cli.config import load_config
+    from hermes_cli.model_roles import doctor_model_roles, update_model_role
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codex_path = bin_dir / "codex"
+    codex_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex_path.chmod(0o755)
+
+    cfg = load_config()
+    update_model_role(cfg, "goal_judge", provider="codex", model="codex", timeout=180)
+    output = doctor_model_roles(
+        cfg,
+        roles=["goal_judge"],
+        env={
+            "PATH": str(bin_dir),
+            "HERMES_SSH_PATH": str(bin_dir),
+            "HERMES_GATEWAY_PATH": str(tmp_path / "missing"),
+            "HERMES_SIDECAR_PATH": str(bin_dir),
+        },
+    )
+
+    role = output["diagnostics"][0]
+    gateway = next(item for item in role["contexts"] if item["context"] == "gateway_service")
+
+    assert output["status"] == "degraded"
+    assert role["status"] == "degraded"
+    assert "missing_executable" in role["degraded_reasons"]
+    assert gateway["status"] == "degraded"
+
+
+def test_config_role_doctor_cli_json_surface(_isolate_hermes_home, capsys, monkeypatch, tmp_path):
+    from hermes_cli import main as hermes_main
+    from hermes_cli.config import load_config, save_config
+    from hermes_cli.model_roles import update_model_role
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codex_path = bin_dir / "codex"
+    codex_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    codex_path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("HERMES_SSH_PATH", str(bin_dir))
+    monkeypatch.setenv("HERMES_GATEWAY_PATH", str(bin_dir))
+    monkeypatch.setenv("HERMES_SIDECAR_PATH", str(bin_dir))
+
+    cfg = load_config()
+    update_model_role(cfg, "goal_judge", provider="codex", model="codex", timeout=180)
+    save_config(cfg)
+
+    with patch.object(sys, "argv", ["hermes", "config", "role", "doctor", "--roles", "goal_judge", "--json"]):
+        hermes_main.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "ready"
+    assert output["diagnostics"][0]["role"] == "goal_judge"
+    assert output["diagnostics"][0]["contexts"][0]["path_entry_count"] >= 1
+
+
+def test_model_role_doctor_backend_surface(_isolate_hermes_home):
+    try:
+        from starlette.testclient import TestClient
+    except ImportError:
+        pytest.skip("fastapi/starlette not installed")
+    from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
+
+    client = TestClient(app)
+    client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
+    response = client.get("/api/model/roles/doctor?roles=curator,learning_judge,goal_judge")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "model_role_doctor"
+    assert {item["role"] for item in payload["diagnostics"]} == {"curator", "learning_judge", "goal_judge"}
+    assert "api_key" not in json.dumps(payload).lower()
