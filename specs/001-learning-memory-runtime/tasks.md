@@ -789,6 +789,45 @@
 
 **Checkpoint**: Operator can inspect active and historical work, approve high-risk actions, see platform health/cost, and ask scoped analytical questions without raw context bloat or unsafe mutation paths.
 
+## Phase 23: Production Runtime Closure (Priority: P20)
+
+**Goal**: Convert live VM findings into production-grade runtime guarantees for Claude/Codex workers, goal judge, curator, learning judge, sidecars, skills, memory injection, Slack/dashboard alerts, and cost/context telemetry.
+
+**Independent Test**: Run a service-equivalent production smoke that uses Claude as primary worker, Codex as fallback/judge path, curator and learning judge enabled, sidecars in bounded one-shot mode, Slack/dashboard notifications configured, and enforcement disabled. Verify no secrets persist, goal judge invokes the configured model role, runtime failures become advisory candidates, judge decisions fail closed, skill evolution is approval-gated, and follow-up task packets receive scoped approved guidance only.
+
+**Boundary**: This phase must not enable enforcement or introduce a hidden autonomous loop. It closes unsafe integration gaps and proves advisory learning operates safely under production-like execution.
+
+### Spec And Architecture Artifacts
+
+- [x] T344 [US20] Add `contracts/production-runtime-closure.md` covering secret-safe capture, service-resolved model roles, goal judge invocation, sidecar service operation, rich runtime failure evidence, skill evolution, and production smoke gates
+- [x] T345 [US20] Add `docs/production-runtime-closure-architecture.md` summarizing live VM findings, production principles, sidecar deployment, goal judge boundary, secret safety, skill evolution, and final smoke requirements
+
+### Tests For Production Runtime Closure
+
+- [ ] T346 [P] [US20] Add pre-persistence redaction tests proving provider-shaped secrets in commands, env files, tool output, worker excerpts, bus payloads, candidates, Slack/dashboard messages, and corpus records are scrubbed before storage
+- [ ] T347 [P] [US20] Add model-role doctor tests proving Codex/Claude/curator/learning_judge/goal_judge resolve consistently under CLI, SSH non-login shell, gateway service env, and sidecar service env
+- [ ] T348 [P] [US20] Add goal judge invocation tests proving `hermes runtime control goal` calls the configured `goal_judge` role when enabled and returns structured degraded status when unavailable
+- [ ] T349 [P] [US20] Add sidecar service-readiness tests for one-shot and daemon/timer modes, including lock acquisition, budget gate, interval/deadline, backlog limit, degraded reason, and foreground non-blocking behavior
+- [ ] T350 [P] [US20] Add rich `supervisor_runtime_failure` metadata tests covering supervisor, delegated worker, allocator, and goal paths with task id, tenant/repo, worker family, requested route, actual route, command family, status, latency, allocation refs, validation mismatch, and redacted evidence refs
+- [ ] T351 [P] [US20] Add sparse-evidence curator/judge tests proving insufficient runtime failure records become diagnostics or needs-human outcomes, not reusable approved lessons
+- [ ] T352 [P] [US20] Add skill evolution E2E tests for failure or approved memory -> skill candidate -> judge -> operator approval -> bounded skill packet -> outcome feedback -> demotion/repair on harmful feedback
+- [ ] T353 [P] [US20] Add production learning-loop smoke tests for Claude primary, Claude degraded, Codex fallback/code-critical path, runtime capture, curator, judge, advisory memory injection, Slack/dashboard alert, and cost/context telemetry
+
+### Implementation For Production Runtime Closure
+
+- [ ] T354 [US20] Implement centralized pre-persistence redaction guard and apply it to runtime failure capture, memory records, evidence excerpts, learning bus events, candidates, sidecar jobs, Slack/dashboard DTOs, and corpus export inputs
+- [ ] T355 [US20] Implement model-role doctor JSON surface for provider/model/tier/path/auth readiness, degraded reason, timeout, budget, and service-environment parity without printing secrets
+- [ ] T356 [US20] Fix `goal_judge` Codex/auxiliary invocation so goal evaluation calls the configured model role or returns structured degraded status with audit metadata
+- [ ] T357 [US20] Implement sidecar service/timer readiness surfaces and service-equivalent one-shot runner for curator, learning judge, dreaming, wiki, bus consumer, sync, progress summarizer, and housekeeping
+- [ ] T358 [US20] Enrich `supervisor_runtime_failure` capture across supervisor, delegated worker, allocator, and goal paths with bounded metadata and redacted evidence refs
+- [ ] T359 [US20] Tighten curator runtime-failure synthesis so sparse records cannot create high-confidence reusable lessons without sufficient evidence and judge/operator gates
+- [ ] T360 [US20] Implement skill evolution conversion helpers and approval-gated publication path from approved memory/wiki/runtime failure candidates into scoped runtime skills
+- [ ] T361 [US20] Implement production runtime smoke CLI/API surface, e.g. `hermes runtime production-smoke --json`, with pass/fail report and redacted artifacts
+- [ ] T362 [US20] Update release readiness report generation to include production closure gates, live VM command evidence, cost/context totals, sidecar status, and known blockers
+- [ ] T363 [US20] Run VM production closure smoke and record results in `docs/runtime-learning-release-readiness.md`
+
+**Checkpoint**: Runtime-learning is production-closure-ready only after the VM smoke proves secret-safe capture, service-resolved model roles, model-backed goal judge or explicit degradation, sidecar readiness, skill evolution, advisory memory injection, and cost/context telemetry.
+
 ## Dependencies & Execution Order
 
 - Phase 1 and Phase 2 must complete before any user story implementation.
@@ -809,6 +848,7 @@
 - User Story 15 depends on existing dreaming storage, tenant/global scope, skill candidates, feature toggles, and observability so proposals can be reviewed without runtime mutation.
 - User Story 16 depends on approved memory/wiki/training provenance, benchmark gates, and sidecar model-tier telemetry so offline fine-tuning data can be built safely.
 - User Story 19 depends on observability, tenant DTOs, approval ledger, sidecar/bus/cost telemetry, Azure deployment DTOs, and platform hardening gates so the UI can stay bounded and safe.
+- User Story 20 depends on User Stories 8, 9, 10, 14, 18, and 19 enough to prove the live production runtime loop with safe model roles, redaction, sidecars, skills, goal judge, and advisory learning.
 
 ## Parallel Opportunities
 
@@ -826,6 +866,7 @@
 - Dreaming proposal-type validators, local/global input builders, dashboard DTOs, and conversion-gate tests can be developed in parallel after Phase 18 architecture lands.
 - MLOps corpus schemas, local bundle writer, external training hints, and remittance receipt tests can be developed in parallel after Phase 19 architecture lands.
 - Operator dashboard list, detail, approval inbox, sidecar/bus, cost, deployment, and scoped Ask tests can be developed in parallel after Phase 22 contracts land.
+- Production closure redaction, model-role doctor, goal judge, sidecar service, runtime failure metadata, skill evolution, and production smoke tests can be developed in parallel after Phase 23 contracts land.
 
 ## Implementation Strategy
 
@@ -986,3 +1027,14 @@
 6. Implement dashboard DTO aggregator and JSON routes.
 7. Implement minimal UI shell or existing-dashboard integration.
 8. Add E2E dashboard smoke proving redaction, fail-closed approval, and no raw context bloat.
+
+### Phase 23 Order
+
+1. Add pre-persistence redaction tests first and fix runtime capture before any more live smoke.
+2. Add model-role doctor and service-environment parity checks for Codex, Claude, curator, learning judge, and goal judge.
+3. Fix goal judge invocation so unavailable auxiliary clients produce structured degradation instead of implicit continuation.
+4. Add sidecar service-readiness tests and one-shot service-equivalent runner.
+5. Enrich runtime failure records and tighten sparse-evidence curator/judge behavior.
+6. Prove skill evolution loop with judge/operator gates.
+7. Add production runtime smoke command.
+8. Run VM production closure smoke and update release readiness report.

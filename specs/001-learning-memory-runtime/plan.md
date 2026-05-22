@@ -184,6 +184,12 @@ See [contracts/operator-dashboard.md](./contracts/operator-dashboard.md) and [..
 
 This phase turns the existing observability, tenant, approval, memory, bus, benchmark, and Azure deployment DTOs into a bounded operator dashboard. The UI must be lean, lazy-loaded, redacted, approval-ledger-backed, and read-only by default so it does not become a second unsafe control plane or a source of supervisor context bloat.
 
+## Phase 23: Production Runtime Closure
+
+See [contracts/production-runtime-closure.md](./contracts/production-runtime-closure.md) and [../../docs/production-runtime-closure-architecture.md](../../docs/production-runtime-closure-architecture.md).
+
+This phase converts live VM smoke findings into a final production-grade closure pass. It fixes secret-safe capture before persistence, service-equivalent model-role resolution, Codex-backed goal judge invocation, sidecar service readiness, richer runtime-failure evidence, skill evolution E2E, and the final Claude/Codex/curator/judge/memory-injection production smoke. Enforcement remains disabled by default; this phase proves advisory learning is safe, observable, bounded, and useful before production rollout.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
@@ -198,3 +204,4 @@ This phase turns the existing observability, tenant, approval, memory, bus, benc
 | Corpus remittance for external MLOps | Required to improve cheaper coding models without allowing live runtime sidecars to train, register, or deploy models directly | Mixing fine-tuning into runtime memory would create safety, tenant, cost, and reproducibility failures |
 | Gated Azure deployment orchestration | Required to let Hermes chat assist production rollout without blindly creating paid resources or mutating production traffic | Raw one-click deployment would be unsafe for cost, DNS, secrets, tenant data, and rollback correctness |
 | Cross-cutting hardening phase | Required because approval, config, budget, bus, context, memory quality, and deployment hardening span many subsystems | Leaving each subsystem to solve these independently would create loopholes and inconsistent production behavior |
+| Production runtime closure phase | Required because live VM smoke exposed integration gaps that unit tests did not catch: service PATH drift, unavailable goal judge, dead curator backend, sparse evidence, unproven skill loop, and pre-persistence secret capture | Treating the branch as production-ready after isolated tests would allow unsafe learning stores and prompt-dependent runtime behavior |

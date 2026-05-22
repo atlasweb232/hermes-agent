@@ -279,6 +279,27 @@ As a Hermes operator or tenant admin, I want a lean dashboard that exposes jobs,
 7. **Given** Azure deployment orchestration is enabled, **When** the deployment panel loads, **Then** it shows plan/preflight/apply/smoke/soak/promote/rollback state, hardening failures, costs, and required operator actions.
 8. **Given** runtime telemetry exists, **When** the cost panel loads, **Then** it shows token, model, latency, sidecar, worker, memory-hit, and budget attribution by tenant/repo/job without raw transcript storage.
 
+---
+
+### User Story 20 - Production Runtime Closure (Priority: P20)
+
+As the Hermes operator, I want the VM-proven runtime-learning loop to be production-grade before rollout, so Claude/Codex workers, goal judge, curator, learning judge, sidecars, skills, memory injection, Slack alerts, and cost/context telemetry operate deterministically without secret leakage or foreground drag.
+
+**Why this priority**: Live VM smoke showed the framework exists, but production blockers remain: Codex was not on the service path, goal judge returned `auxiliary client unavailable`, curator depended on dead Ollama until reconfigured, sidecars were not proven as services, runtime failure evidence was too sparse, skill evolution was not proven E2E, and one capture path persisted secret-bearing command text before manual redaction.
+
+**Independent Test**: Run `hermes runtime production-smoke --json` in a service-equivalent VM environment. Verify Claude primary and Codex fallback/judge paths, goal judge model invocation, curator and learning judge, secret-safe runtime capture, sidecar one-shot service mode, failure-to-advisory-to-next-task memory injection, skill evolution, Slack/dashboard alerts, and cost/context telemetry.
+
+**Acceptance Scenarios**:
+
+1. **Given** a command or worker attempt contains provider-shaped secrets, **When** runtime learning captures the failure, **Then** all persisted memory, evidence, bus, candidate, Slack, dashboard, and corpus outputs contain only redacted values.
+2. **Given** Codex is installed under a user npm prefix, **When** Hermes runs from SSH non-login shell, gateway service, sidecar, or CLI, **Then** the model-role doctor resolves the same executable/provider state without relying on interactive shell profile side effects.
+3. **Given** a supervisor task has a goal and `goal_judge` is enabled, **When** `hermes runtime control goal` evaluates a worker response, **Then** the configured model role is invoked or a structured degraded result is returned without pretending a model-backed judgment occurred.
+4. **Given** curator and learning judge are enabled, **When** runtime-failure records exist, **Then** curator creates advisory candidates and learning judge approves, rejects, or marks needs-human fail-closed based on bounded evidence quality.
+5. **Given** a runtime failure is captured, **When** the record is stored, **Then** it includes tenant/repo/task/worker/route/status/latency/evidence-ref metadata where available so curator and judge are not forced into sparse-evidence decisions.
+6. **Given** a repeated failure implies a reusable procedure, **When** the skill evolution loop runs, **Then** a skill candidate can be created, judged, operator-approved, retrieved as a bounded skill packet, and updated by outcome feedback.
+7. **Given** sidecars are configured for production, **When** their service-equivalent smoke runs, **Then** each sidecar reports lock, budget, interval, last run, degraded reason, backlog, and foreground-nonblocking status.
+8. **Given** a live primary worker failure and healthy fallback, **When** the production learning-loop smoke runs, **Then** Hermes records the failure, falls back or pauses under budget, creates advisory learning, and injects only scoped approved guidance on a follow-up task.
+
 ### Edge Cases
 
 - Judge provider is unavailable, times out, or returns non-JSON.
@@ -315,6 +336,11 @@ As a Hermes operator or tenant admin, I want a lean dashboard that exposes jobs,
 - A skill exists for the same task type but wrong tenant, repo, toolset, worker role, or safety status.
 - A skill version was helpful historically but conflicts with current repo evidence or operator instruction.
 - SkillClaw proposes a skill from raw session data without approved memory/wiki provenance.
+- A model role works in an interactive shell but fails under systemd, SSH non-login shell, or sidecar execution because PATH or trust state differs.
+- Goal judge returns a fallback continuation because the auxiliary client is unavailable; this must be reported as degraded and must not count as model-backed judgment.
+- A command captures `.env` creation or provider configuration; secrets must be scrubbed before persistence.
+- Curator creates candidates from sparse runtime failure records; judge must reject or require human review unless evidence is sufficient.
+- Sidecar backlog grows while foreground work is active; sidecars must throttle, defer, or fail closed without blocking chat/delegation.
 
 ## Requirements
 
@@ -464,6 +490,13 @@ As a Hermes operator or tenant admin, I want a lean dashboard that exposes jobs,
 - **FR-142**: Dashboard approval actions MUST write through the shared approval ledger and preserve actor, role, tenant, action, target hash, expiry, evidence refs, and non-replay guarantees.
 - **FR-143**: Dashboard scoped Ask MUST use read-only evidence bundles and MUST NOT have mutation authority over repo, memory, policy, deployment, task, or config state.
 - **FR-144**: Dashboard cost and health panels MUST display token, latency, cost, worker, sidecar, memory, bus, budget, and degradation attribution by tenant/repo/job.
+- **FR-145**: System MUST scrub secret-like values before persisting runtime-learning records, evidence excerpts, candidates, bus events, sidecar jobs, Slack/dashboard payloads, or training corpus artifacts.
+- **FR-146**: System MUST provide a model-role doctor that resolves provider/model/tier/path/auth readiness from service-equivalent environments without printing secrets.
+- **FR-147**: System MUST ensure `goal_judge` model invocation is explicit and observable; unavailable auxiliary clients MUST return structured degraded status instead of silent prompt-dependent continuation.
+- **FR-148**: System MUST provide service-equivalent sidecar status and one-shot execution surfaces with locks, budgets, intervals, degraded reasons, and foreground-nonblocking guarantees.
+- **FR-149**: `supervisor_runtime_failure` records MUST include bounded tenant/repo/task/worker/route/status/latency/evidence metadata where available and MUST classify sparse evidence as insufficient for automatic approval.
+- **FR-150**: System MUST prove one skill evolution loop from failure or approved memory to skill candidate, judge decision, operator approval, scoped skill packet, and outcome feedback.
+- **FR-151**: System MUST provide a production runtime smoke that validates Claude primary, Codex fallback/judge, curator, learning judge, goal judge, sidecars, memory injection, skill retrieval, Slack/dashboard alerts, and cost/context telemetry with enforcement disabled.
 
 ### Key Entities
 
