@@ -11964,6 +11964,14 @@ Examples:
     runtime_health_check.add_argument("--once", action="store_true", help="Run one scan and exit")
     runtime_health_check.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_sidecars = runtime_sub.add_parser("sidecars", help="Inspect runtime sidecar service readiness")
+    runtime_sidecars_sub = runtime_sidecars.add_subparsers(dest="runtime_sidecars_command")
+    runtime_sidecars_readiness = runtime_sidecars_sub.add_parser("readiness", help="Check sidecar readiness without starting daemons")
+    runtime_sidecars_readiness.add_argument("--mode", default="oneshot", choices=["oneshot", "timer", "daemon"])
+    runtime_sidecars_readiness.add_argument("--sidecar", action="append", default=[], help="Sidecar name to check; repeatable")
+    runtime_sidecars_readiness.add_argument("--run-once", action="store_true", help="Run bounded service-equivalent one-shot checks")
+    runtime_sidecars_readiness.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_task_graph = runtime_sub.add_parser("task-graph", help="Inspect supervisor task graphs")
     runtime_task_graph_sub = runtime_task_graph.add_subparsers(dest="runtime_task_graph_command")
     runtime_task_graph_list = runtime_task_graph_sub.add_parser("list", help="List task graphs")
@@ -12371,6 +12379,25 @@ Examples:
             try:
                 if health_cmd == "check":
                     _emit(run_health_check_once(db))
+            finally:
+                db.close()
+            return
+        if cmd == "sidecars":
+            from hermes_cli.sidecar_readiness import run_sidecar_readiness
+            from hermes_cli.config import load_config
+            from hermes_state import SessionDB
+
+            sidecars_cmd = getattr(args, "runtime_sidecars_command", None) or "readiness"
+            db = SessionDB()
+            try:
+                if sidecars_cmd == "readiness":
+                    _emit(run_sidecar_readiness(
+                        db,
+                        config=load_config(),
+                        mode=getattr(args, "mode", "oneshot") or "oneshot",
+                        run_once=bool(getattr(args, "run_once", False)),
+                        sidecars=getattr(args, "sidecar", []) or None,
+                    ).to_dict())
             finally:
                 db.close()
             return
