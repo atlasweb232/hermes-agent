@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from hermes_state import SessionDB
+from hermes_cli.redaction_guard import redact_value
 
 
 def _now() -> float:
@@ -16,7 +17,7 @@ def _now() -> float:
 
 
 def _json_dumps(value: Optional[Dict[str, Any]]) -> str:
-    return json.dumps(value or {}, sort_keys=True)
+    return json.dumps(redact_value(value or {}), sort_keys=True)
 
 
 def _json_loads(value: Any) -> Dict[str, Any]:

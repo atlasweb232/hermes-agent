@@ -14,6 +14,8 @@ import re
 import time
 from typing import Any, Mapping, Sequence
 
+from hermes_cli.redaction_guard import find_secret_like_fragments, redact_text
+
 
 DEFAULT_DIRECT_TOKEN_BUDGET = 180
 DEFAULT_SUMMARY_TOKEN_BUDGET = 900
@@ -48,11 +50,6 @@ RAW_TEXT_PATTERNS = (
     re.compile(r"(?im)^\s*(stdout|stderr|raw log|provider log)\s*[:=]"),
     re.compile(r"(?im)\b(worker-router watch|tail -f|Preparing terminal|preparing terminal)\b"),
     re.compile(r"(?im)\b(Passed: \d+|Failed: \d+|pytest|npm test|dotnet test)\b.*\n", re.M),
-)
-
-SECRET_TEXT_RE = re.compile(
-    r"(?i)(?:password|api[_-]?key|secret|token|authorization)\s*[:=]\s*\S+|"
-    r"\b(?:sk|csk|ghp|xoxb|xapp)-[A-Za-z0-9_-]{8,}\b"
 )
 
 
@@ -107,10 +104,7 @@ def text_hash(text: str) -> str:
 
 def sanitize_for_context(text: str, *, max_chars: int = 1200) -> str:
     compact = re.sub(r"\s+", " ", str(text or "")).strip()
-    compact = SECRET_TEXT_RE.sub("[REDACTED]", compact)
-    if len(compact) > max_chars:
-        compact = compact[: max(0, max_chars - 3)].rstrip() + "..."
-    return compact
+    return redact_text(compact, max_chars=max_chars)
 
 
 def _has_raw_marker(item: ContextItem) -> bool:
@@ -165,7 +159,7 @@ def decide_context_admission(
         )
     tokens = estimate_tokens(item.text)
     digest = text_hash(item.text)
-    redaction_required = bool(SECRET_TEXT_RE.search(item.text or ""))
+    redaction_required = bool(find_secret_like_fragments(item.text or ""))
     repeats = _repetition_count(item, recent_hashes)
     raw_marker = _has_raw_marker(item)
 
@@ -206,4 +200,3 @@ def decide_context_admission(
         redaction_required=redaction_required,
         item_hash=digest,
     )
-

@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
+from hermes_cli.redaction_guard import redact_text, redact_value
+
 
 URGENT_SEVERITIES = frozenset({
     "blocked",
@@ -58,11 +60,11 @@ class UrgentNotification:
         if self.source:
             lines.append(f"source: {self.source}")
         if self.message:
-            lines.extend(["", self.message.strip()])
-        return "\n".join(lines).strip()
+            lines.extend(["", redact_text(self.message).strip()])
+        return redact_text("\n".join(lines).strip())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        return redact_value({
             "severity": self.severity,
             "title": self.title,
             "message": self.message,
@@ -72,7 +74,7 @@ class UrgentNotification:
             "event_kind": self.event_kind,
             "source": self.source,
             "created_at": self.created_at,
-        }
+        })
 
 
 def normalize_severity(value: str | None) -> str:

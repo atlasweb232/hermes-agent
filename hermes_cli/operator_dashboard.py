@@ -15,6 +15,7 @@ import re
 from typing import Any, Callable, Iterable, Mapping
 
 from hermes_cli.platform_hardening import ApprovalLedger
+from hermes_cli.redaction_guard import is_sensitive_key, redact_text, redact_value
 
 
 JOB_DETAIL_TABS = (
@@ -79,34 +80,15 @@ def _stable_hash(value: Any) -> str:
 
 def _safe_text(value: Any, *, max_chars: int = 500) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
-    return _SECRET_TEXT_RE.sub("[REDACTED]", text)[:max_chars]
+    return redact_text(text, max_chars=max_chars)
 
 
 def _redact(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        clean: dict[str, Any] = {}
-        for key, item in value.items():
-            key_text = str(key)
-            if _is_sensitive_key(key_text):
-                continue
-            clean[key_text] = _redact(item)
-        return clean
-    if isinstance(value, list):
-        return [_redact(item) for item in value]
-    if isinstance(value, tuple):
-        return [_redact(item) for item in value]
-    if isinstance(value, str):
-        return _safe_text(value, max_chars=700)
-    return value
+    return redact_value(value, max_string_chars=700)
 
 
 def _is_sensitive_key(key: str) -> bool:
-    lowered = key.casefold()
-    if lowered in _SAFE_TOKEN_METRIC_KEYS or lowered in _SAFE_RAW_STATE_KEYS:
-        return False
-    if lowered in {"token", "access_token", "refresh_token", "id_token"}:
-        return True
-    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+    return is_sensitive_key(key)
 
 
 def _actor_tenant(actor: Mapping[str, Any]) -> str | None:

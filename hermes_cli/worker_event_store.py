@@ -4,18 +4,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
-import re
 import time
 import uuid
 from typing import Any, Mapping
 
 from hermes_state import SessionDB
-
-
-SECRET_TEXT_RE = re.compile(
-    r"(?i)(?:password|api[_-]?key|secret|token|authorization)\s*[:=]\s*\S+|"
-    r"\b(?:sk|csk|ghp|xoxb|xapp)-[A-Za-z0-9_-]{8,}\b"
-)
+from hermes_cli.redaction_guard import redact_text as _guard_redact_text, redact_value
 
 
 def _now() -> float:
@@ -23,10 +17,7 @@ def _now() -> float:
 
 
 def redact_text(text: str, *, max_chars: int | None = None) -> str:
-    redacted = SECRET_TEXT_RE.sub("[REDACTED]", str(text or ""))
-    if max_chars is not None and len(redacted) > max_chars:
-        return redacted[: max(0, max_chars - 3)].rstrip() + "..."
-    return redacted
+    return _guard_redact_text(text, max_chars=max_chars)
 
 
 def redact_payload(value: Any) -> Any:
@@ -37,22 +28,7 @@ def redact_payload(value: Any) -> Any:
     must be safe for UI, Slack, audit, and corpus sidecars.
     """
 
-    if isinstance(value, str):
-        return redact_text(value)
-    if isinstance(value, Mapping):
-        redacted: dict[str, Any] = {}
-        for key, item in value.items():
-            key_text = str(key)
-            if SECRET_TEXT_RE.search(key_text):
-                redacted[key_text] = "[REDACTED]"
-            else:
-                redacted[key_text] = redact_payload(item)
-        return redacted
-    if isinstance(value, list):
-        return [redact_payload(item) for item in value]
-    if isinstance(value, tuple):
-        return [redact_payload(item) for item in value]
-    return value
+    return redact_value(value)
 
 
 def _json_dumps(value: Mapping[str, Any] | None) -> str:

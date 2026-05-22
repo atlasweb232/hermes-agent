@@ -15,6 +15,8 @@ import re
 import shlex
 from typing import Any, Optional
 
+from hermes_cli.redaction_guard import redact_text
+
 
 _SECRET_PATTERNS = [
     re.compile(r"\b(sk-[A-Za-z0-9_-]{12,})\b"),
@@ -104,12 +106,7 @@ class DelegatedWorkerRuntimeFailure:
 
 
 def redact_sensitive_text(text: str, *, max_chars: int = 2000) -> str:
-    safe = str(text or "")
-    for pattern in _SECRET_PATTERNS:
-        safe = pattern.sub("[REDACTED]", safe)
-    if len(safe) > max_chars:
-        safe = safe[:max_chars] + "...[truncated]"
-    return safe
+    return redact_text(text, max_chars=max_chars)
 
 
 def parse_terminal_failure(result: Any) -> bool:

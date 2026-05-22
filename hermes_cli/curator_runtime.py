@@ -20,6 +20,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from hermes_cli.redaction_guard import redact_text, redact_value
+
 
 CURATOR_POLICY_VERSION = "2026.05.16"
 
@@ -339,18 +341,7 @@ def build_command_repair_policy_data(record: dict[str, Any], output: str) -> dic
 
 
 def _redact_and_bound_text(value: Any, *, max_chars: int) -> str:
-    text = str(value or "")
-    text = re.sub(
-        r"(?i)\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*\S+",
-        "[REDACTED_SECRET]",
-        text,
-    )
-    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [REDACTED]", text)
-    text = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-[REDACTED]", text)
-    text = text.strip()
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3].rstrip() + "..."
+    return redact_text(value, max_chars=max_chars).strip()
 
 
 def _bounded_supervisor_failure_payload(record: dict[str, Any]) -> dict[str, Any]:
@@ -358,10 +349,10 @@ def _bounded_supervisor_failure_payload(record: dict[str, Any]) -> dict[str, Any
     validation_mismatch = payload.get("validation_mismatch")
     if not isinstance(validation_mismatch, dict):
         validation_mismatch = {}
-    bounded_mismatch = {
+    bounded_mismatch = redact_value({
         _redact_and_bound_text(key, max_chars=80): _redact_and_bound_text(value, max_chars=220)
         for key, value in list(validation_mismatch.items())[:12]
-    }
+    })
     evidence_refs = payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else []
     return {
         "detector": _redact_and_bound_text(payload.get("detector"), max_chars=120),

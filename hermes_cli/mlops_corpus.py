@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from hermes_cli.redaction_guard import redact_text, redact_value
+
 
 FAILURE_REPAIR_SCHEMA = "mlops.corpus.failure_repair.v1"
 SFT_MESSAGE_SCHEMA = "mlops.corpus.sft_message.v1"
@@ -79,27 +81,20 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
         for key, item in value.items():
-            lower = str(key).lower()
-            if lower in FORBIDDEN_EXPORT_KEYS:
+            key_text = str(key)
+            if key_text.lower() in FORBIDDEN_EXPORT_KEYS:
                 continue
-            safe[str(key)] = _json_safe(item)
+            safe[key_text] = _json_safe(item)
         return safe
     if isinstance(value, list):
         return [_json_safe(item) for item in value]
     if isinstance(value, tuple):
         return [_json_safe(item) for item in value]
-    if isinstance(value, str):
-        return _redact_sensitive_text(value)
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    return _redact_sensitive_text(str(value))
+    return redact_value(value)
 
 
 def _redact_sensitive_text(text: str) -> str:
-    redacted = text
-    for pattern in SENSITIVE_VALUE_PATTERNS:
-        redacted = pattern.sub(lambda match: f"{match.group(1)}=[REDACTED]" if match.lastindex else "[REDACTED]", redacted)
-    return redacted
+    return redact_text(text)
 
 
 def _sensitive_text_findings(text: str) -> list[str]:
