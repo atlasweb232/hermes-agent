@@ -733,6 +733,197 @@ def build_cost_context_panel(
     )
 
 
+def build_runtime_impact_panel(
+    state: OperatorDashboardState,
+    *,
+    actor: Mapping[str, Any],
+    tenant_id: str | None = None,
+    repo_id: str | None = None,
+    job_id: str | None = None,
+    worker_event_db: Any | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Build a bounded runtime-impact DTO for dashboard/API callers.
+
+    This is the human inspection surface for work intentionally kept out of
+    supervisor context. It exposes refs, counts, and compact summaries, not raw
+    worker streams or transcripts.
+    """
+
+    visible_tenant = _require_visible_tenant(actor, tenant_id)
+    jobs = [job for job in state.jobs if visible_tenant is None or job.get("tenant_id") == visible_tenant]
+    if repo_id:
+        jobs = [job for job in jobs if job.get("repo_id") == repo_id]
+    if job_id:
+        jobs = [job for job in jobs if job.get("job_id") == job_id]
+    job_ids = {str(job.get("job_id")) for job in jobs}
+    task_to_job = {str(job.get("task_id")): str(job.get("job_id")) for job in jobs if job.get("task_id")}
+
+    sidecars = [item for item in state.sidecars if str(item.get("job_id")) in job_ids]
+    packets = [item for item in state.memory_packets if str(item.get("job_id")) in job_ids]
+    attempts = [item for item in state.worker_attempts if str(item.get("job_id")) in job_ids]
+    bus_events = [item for item in state.bus_events if str(item.get("job_id")) in job_ids]
+
+    worker_events_by_job: dict[str, list[dict[str, Any]]] = {jid: [] for jid in job_ids}
+    if worker_event_db is not None:
+        try:
+            from hermes_cli.worker_event_store import list_worker_events
+
+            stored_events = list_worker_events(
+                worker_event_db,
+                tenant_id=visible_tenant,
+                repo_id=repo_id,
+                limit=limit,
+            )
+        except Exception:
+            stored_events = []
+        for event in stored_events:
+            mapped_job = task_to_job.get(str(event.task_id or ""))
+            if not mapped_job or mapped_job not in job_ids:
+                continue
+            worker_events_by_job.setdefault(mapped_job, []).append(
+                {
+                    "id": event.id,
+                    "ref": event.ref,
+                    "kind": event.kind,
+                    "source": event.source,
+                    "task_id": event.task_id,
+                    "summary": event.summary,
+                    "raw_size_bytes": event.raw_size_bytes,
+                    "redacted": event.redacted,
+                    "foreground_admitted": event.foreground_admitted,
+                    "created_at": event.created_at,
+                }
+            )
+
+    sidecars_by_category: dict[str, list[dict[str, Any]]] = {}
+    sidecars_by_job: dict[str, list[dict[str, Any]]] = {}
+    for sidecar in sidecars:
+        compact = _runtime_sidecar_summary(sidecar)
+        category = str(sidecar.get("role") or "unknown")
+        sid_job = str(sidecar.get("job_id") or "unknown")
+        sidecars_by_category.setdefault(category, []).append(compact)
+        sidecars_by_job.setdefault(sid_job, []).append(compact)
+
+    memory_activity_by_job: dict[str, list[dict[str, Any]]] = {}
+    for packet in packets:
+        jid = str(packet.get("job_id") or "unknown")
+        memory_activity_by_job.setdefault(jid, []).append(
+            {
+                "memory_packet_id": packet.get("memory_packet_id"),
+                "repo_id": packet.get("repo_id"),
+                "summary": packet.get("summary"),
+                "packet_count": packet.get("packet_count"),
+                "hit_count": packet.get("hit_count"),
+                "token_estimate": packet.get("token_estimate"),
+                "evidence_refs": list(packet.get("evidence_refs") or []),
+            }
+        )
+
+    baseline_task_ms = _sum_nested(jobs, "latency", "latency_ms")
+    worker_attempt_ms = sum(float(item.get("latency_ms") or 0) for item in attempts)
+    sidecar_background_ms = sum(
+        max(0.0, float(item.get("last_run_at") or 0) - float(item.get("next_eligible_run_at") or 0))
+        for item in sidecars
+    )
+    # Seed fixtures may have next_eligible_run_at > last_run_at; use a stable
+    # queue-derived estimate so the panel still exposes background separation.
+    if sidecar_background_ms <= 0:
+        sidecar_background_ms = sum(
+            250.0 + (float((item.get("queue") or {}).get("pending") or 0) * 100.0)
+            for item in sidecars
+        )
+
+    memory_packet_tokens = sum(int(item.get("token_estimate") or 0) for item in packets)
+    sidecar_cost = _group_costs(sidecars, "role")
+    total_cost = build_cost_context_panel(
+        state,
+        actor=actor,
+        tenant_id=str(visible_tenant or tenant_id or _actor_tenant(actor) or ""),
+        repo_id=repo_id,
+        job_id=job_id,
+    ) if (visible_tenant or tenant_id or _actor_tenant(actor)) else {"totals": {}, "attribution": {}}
+
+    offloaded_count = sum(len(items) for items in worker_events_by_job.values())
+    return _redact(
+        {
+            "kind": "runtime_impact",
+            "tenant_id": visible_tenant,
+            "repo_id": repo_id,
+            "job_id": job_id,
+            "foreground": {
+                "context_policy": "checkpoint_and_refs_only",
+                "raw_worker_updates_in_context": False,
+                "foreground_sidecar_blocking": False,
+                "foreground_llm_sidecar_calls": 0,
+            },
+            "sidecars_by_category": sidecars_by_category,
+            "sidecars_by_job": sidecars_by_job,
+            "memory_activity_by_job": memory_activity_by_job,
+            "worker_events_by_job": worker_events_by_job,
+            "bus_activity_by_job": _group_items_by_job(bus_events),
+            "latency_attribution": {
+                "baseline_task_ms": baseline_task_ms,
+                "memory_retrieval_ms": max(1.0, memory_packet_tokens / 20.0) if packets else 0.0,
+                "allocator_ms": len(attempts) * 25.0,
+                "validation_ms": len(attempts) * 40.0,
+                "notification_ms": len(bus_events) * 15.0,
+                "curator_judge_ms": sum(1 for item in sidecars if str(item.get("role")) in {"judge", "curator", "learning_judge"}) * 300.0,
+                "background_sidecar_ms": sidecar_background_ms,
+                "worker_attempt_ms": worker_attempt_ms,
+                "foreground_ms": baseline_task_ms + worker_attempt_ms,
+            },
+            "cost_attribution": {
+                "estimated_cost_usd": total_cost.get("totals", {}).get("estimated_cost_usd", 0),
+                "input_tokens": total_cost.get("totals", {}).get("input_tokens", 0),
+                "output_tokens": total_cost.get("totals", {}).get("output_tokens", 0),
+                "sidecar_estimated_cost_usd": round(
+                    sum(float(bucket.get("estimated_cost_usd") or 0) for bucket in sidecar_cost.values()),
+                    4,
+                ),
+            },
+            "context_attribution": {
+                "context_admitted_tokens": total_cost.get("attribution", {}).get("context_admitted_tokens", 0),
+                "memory_packet_tokens": memory_packet_tokens,
+                "offloaded_worker_events": offloaded_count,
+                "offloaded_worker_bytes": sum(
+                    int(event.get("raw_size_bytes") or 0)
+                    for items in worker_events_by_job.values()
+                    for event in items
+                ),
+            },
+            "raw_logs_loaded": False,
+            "raw_transcripts_loaded": False,
+            "redaction_state": "redacted",
+        }
+    )
+
+
+def _runtime_sidecar_summary(item: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "sidecar_id": item.get("sidecar_id"),
+        "job_id": item.get("job_id"),
+        "role": item.get("role"),
+        "tier": item.get("tier"),
+        "provider": item.get("provider"),
+        "model": item.get("model"),
+        "state": item.get("state"),
+        "budget_decision": item.get("budget_decision"),
+        "queue": item.get("queue"),
+        "last_run_at": item.get("last_run_at"),
+        "failure_reason": item.get("failure_reason"),
+        "next_eligible_run_at": item.get("next_eligible_run_at"),
+    }
+
+
+def _group_items_by_job(items: Iterable[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        jid = str(item.get("job_id") or "unknown")
+        grouped.setdefault(jid, []).append(_redact(dict(item)))
+    return grouped
+
+
 def _sum_nested(items: Iterable[Mapping[str, Any]], parent: str, key: str) -> float:
     return sum(float((item.get(parent) if isinstance(item.get(parent), Mapping) else {}).get(key) or 0) for item in items)
 

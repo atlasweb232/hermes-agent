@@ -12064,6 +12064,12 @@ Examples:
     runtime_costs_status.add_argument("--artifact-root", default="", help="Benchmark artifact root")
     runtime_costs_status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
+    runtime_impact = runtime_sub.add_parser("impact", help="Show runtime impact panel without raw logs")
+    runtime_impact.add_argument("--tenant-id", default="", help="Tenant scope")
+    runtime_impact.add_argument("--repo-id", default="", help="Repository scope")
+    runtime_impact.add_argument("--job-id", default="", help="Job scope")
+    runtime_impact.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     runtime_notify = runtime_sub.add_parser("notify", help="Send runtime notifications")
     runtime_notify_sub = runtime_notify.add_subparsers(dest="runtime_notify_command")
     runtime_notify_urgent = runtime_notify_sub.add_parser("urgent", help="Send stoppage/degradation notification to urgent channel")
@@ -12547,6 +12553,27 @@ Examples:
                     artifact_root=Path(getattr(args, "artifact_root")) if getattr(args, "artifact_root", "") else None,
                 ).to_dict())
                 return
+        if cmd == "impact":
+            from hermes_cli.operator_dashboard import build_runtime_impact_panel, seed_operator_dashboard_fixture
+            from hermes_state import SessionDB
+
+            db = SessionDB()
+            try:
+                _emit(build_runtime_impact_panel(
+                    seed_operator_dashboard_fixture(),
+                    actor={
+                        "actor_id": "cli-operator",
+                        "role": "platform-admin",
+                        "cross_tenant": True,
+                    },
+                    tenant_id=getattr(args, "tenant_id", "") or None,
+                    repo_id=getattr(args, "repo_id", "") or None,
+                    job_id=getattr(args, "job_id", "") or None,
+                    worker_event_db=db,
+                ))
+            finally:
+                db.close()
+            return
         if cmd == "notify":
             notify_cmd = getattr(args, "runtime_notify_command", None) or "urgent"
             if notify_cmd == "urgent":

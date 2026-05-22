@@ -228,6 +228,81 @@ def test_t334_cost_context_panel_attributes_runtime_costs():
     _assert_redacted(panel)
 
 
+def test_t353a_runtime_impact_panel_groups_sidecars_memory_and_worker_events(tmp_path):
+    from hermes_state import SessionDB
+
+    from hermes_cli.operator_dashboard import build_runtime_impact_panel, seed_operator_dashboard_fixture
+    from hermes_cli.worker_event_store import store_worker_event
+
+    db = SessionDB(db_path=tmp_path / "state.db")
+    try:
+        store_worker_event(
+            db,
+            kind="worker_stream",
+            source="terminal",
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            task_id="task-a",
+            content="stdout password=secret token=sk-testsecret123456789\n" + ("log line\n" * 200),
+            payload={"raw_command": "worker-router watch claude", "secret": "sk-testsecret123456789"},
+            now=1700.0,
+        )
+
+        panel = build_runtime_impact_panel(
+            seed_operator_dashboard_fixture(),
+            actor=_actor(),
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            worker_event_db=db,
+        )
+
+        assert panel["kind"] == "runtime_impact"
+        assert panel["foreground"]["raw_worker_updates_in_context"] is False
+        assert panel["foreground"]["context_policy"] == "checkpoint_and_refs_only"
+        assert panel["sidecars_by_category"]["judge"]
+        assert panel["sidecars_by_job"]["job-a"]
+        assert panel["memory_activity_by_job"]["job-a"][0]["memory_packet_id"] == "mem-a"
+        assert panel["worker_events_by_job"]["job-a"][0]["ref"].startswith("event://worker/")
+        assert panel["latency_attribution"]["foreground_ms"] > 0
+        assert panel["latency_attribution"]["background_sidecar_ms"] > 0
+        assert panel["latency_attribution"]["background_sidecar_ms"] != panel["latency_attribution"]["foreground_ms"]
+        assert panel["context_attribution"]["offloaded_worker_events"] == 1
+        assert "secret" not in _payload(panel)
+        assert "sk-testsecret" not in _payload(panel)
+        _assert_redacted(panel)
+    finally:
+        db.close()
+
+
+def test_t353b_runtime_impact_panel_attributes_latency_cost_and_context():
+    from hermes_cli.operator_dashboard import build_runtime_impact_panel, seed_operator_dashboard_fixture
+
+    panel = build_runtime_impact_panel(
+        seed_operator_dashboard_fixture(),
+        actor=_actor(),
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+    )
+
+    assert panel["latency_attribution"].keys() >= {
+        "baseline_task_ms",
+        "memory_retrieval_ms",
+        "allocator_ms",
+        "validation_ms",
+        "notification_ms",
+        "curator_judge_ms",
+        "background_sidecar_ms",
+        "foreground_ms",
+    }
+    assert panel["cost_attribution"]["estimated_cost_usd"] > 0
+    assert panel["cost_attribution"]["sidecar_estimated_cost_usd"] > 0
+    assert panel["context_attribution"]["context_admitted_tokens"] > 0
+    assert panel["context_attribution"]["memory_packet_tokens"] > 0
+    assert panel["raw_logs_loaded"] is False
+    assert panel["raw_transcripts_loaded"] is False
+    _assert_redacted(panel)
+
+
 def test_t335_scoped_ask_uses_read_only_bounded_evidence_and_no_mutation_tools():
     from hermes_cli.operator_dashboard import build_scoped_ask_bundle, seed_operator_dashboard_fixture
 

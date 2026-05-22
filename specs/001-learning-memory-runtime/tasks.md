@@ -816,8 +816,8 @@
 - [ ] T351 [P] [US20] Add sparse-evidence curator/judge tests proving insufficient runtime failure records become diagnostics or needs-human outcomes, not reusable approved lessons
 - [ ] T352 [P] [US20] Add skill evolution E2E tests for failure or approved memory -> skill candidate -> judge -> operator approval -> bounded skill packet -> outcome feedback -> demotion/repair on harmful feedback
 - [ ] T353 [P] [US20] Add production learning-loop smoke tests for Claude primary, Claude degraded, Codex fallback/code-critical path, runtime capture, curator, judge, advisory memory injection, Slack/dashboard alert, and cost/context telemetry
-- [ ] T353A [P] [US20] Add runtime impact UI/API tests proving live sidecars are grouped by category and by job, memory activity is grouped by job, and foreground latency is separated from asynchronous sidecar latency
-- [ ] T353B [P] [US20] Add latency attribution tests for baseline task latency, memory retrieval latency, allocator latency, validation latency, notification latency, curator/judge latency, sidecar background latency, token cost, and context admitted
+- [x] T353A [P] [US20] Add runtime impact UI/API tests proving live sidecars are grouped by category and by job, memory activity is grouped by job, and foreground latency is separated from asynchronous sidecar latency
+- [x] T353B [P] [US20] Add latency attribution tests for baseline task latency, memory retrieval latency, allocator latency, validation latency, notification latency, curator/judge latency, sidecar background latency, token cost, and context admitted
 
 ### Implementation For Production Runtime Closure
 
@@ -833,8 +833,8 @@
 - [ ] T359 [US20] Tighten curator runtime-failure synthesis so sparse records cannot create high-confidence reusable lessons without sufficient evidence and judge/operator gates
 - [ ] T360 [US20] Implement skill evolution conversion helpers and approval-gated publication path from approved memory/wiki/runtime failure candidates into scoped runtime skills
 - [ ] T361 [US20] Implement production runtime smoke CLI/API surface, e.g. `hermes runtime production-smoke --json`, with pass/fail report and redacted artifacts
-- [ ] T361A [US20] Implement runtime impact DTO aggregator over live state for sidecars by category, sidecars by job, memory activity timeline, and foreground/background latency attribution
-- [ ] T361B [US20] Wire runtime impact JSON into dashboard/API surfaces and minimal UI panel, preserving lazy loading and redaction
+- [x] T361A [US20] Implement runtime impact DTO aggregator over live state for sidecars by category, sidecars by job, memory activity timeline, and foreground/background latency attribution
+- [x] T361B [US20] Wire runtime impact JSON into dashboard/API surfaces and minimal UI panel, preserving lazy loading and redaction
 - [ ] T362 [US20] Update release readiness report generation to include production closure gates, live VM command evidence, cost/context totals, runtime impact UI evidence, sidecar status, and known blockers
 - [ ] T363 [US20] Run VM production closure smoke and runtime impact UI/API smoke, then record results in `docs/runtime-learning-release-readiness.md`
 

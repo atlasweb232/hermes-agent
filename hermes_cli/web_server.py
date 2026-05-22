@@ -1093,6 +1093,38 @@ def get_model_tiers():
         raise HTTPException(status_code=500, detail="Failed to read model tiers")
 
 
+@app.get("/api/runtime/impact")
+def get_runtime_impact(
+    tenant_id: str = "",
+    repo_id: str = "",
+    job_id: str = "",
+):
+    """Return the runtime-impact dashboard DTO without raw logs/transcripts."""
+    try:
+        from hermes_cli.operator_dashboard import build_runtime_impact_panel, seed_operator_dashboard_fixture
+        from hermes_state import SessionDB
+
+        db = SessionDB()
+        try:
+            return build_runtime_impact_panel(
+                seed_operator_dashboard_fixture(),
+                actor={
+                    "actor_id": "dashboard-operator",
+                    "role": "platform-admin",
+                    "cross_tenant": True,
+                },
+                tenant_id=tenant_id or None,
+                repo_id=repo_id or None,
+                job_id=job_id or None,
+                worker_event_db=db,
+            )
+        finally:
+            db.close()
+    except Exception:
+        _log.exception("GET /api/runtime/impact failed")
+        raise HTTPException(status_code=500, detail="Failed to build runtime impact panel")
+
+
 @app.put("/api/model/tiers/{tier}")
 def put_model_tier(tier: str, body: ModelTierAssignment):
     """Update a named sidecar model tier for backend/dashboard callers."""

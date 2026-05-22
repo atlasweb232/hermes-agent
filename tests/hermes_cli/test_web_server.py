@@ -549,6 +549,19 @@ class TestConfigRoundTrip:
         )
         assert response.status_code == 400
 
+    def test_runtime_impact_api_returns_bounded_redacted_panel(self):
+        response = self.client.get("/api/runtime/impact?tenant_id=tenant-a&repo_id=repo-a")
+        assert response.status_code == 200
+        payload = response.json()
+        dumped = json.dumps(payload).casefold()
+        assert payload["kind"] == "runtime_impact"
+        assert payload["foreground"]["raw_worker_updates_in_context"] is False
+        assert payload["sidecars_by_category"]
+        assert payload["memory_activity_by_job"]
+        assert payload["raw_logs_loaded"] is False
+        assert "password" not in dumped
+        assert "sk-" not in dumped
+
     def test_schema_types_match_config_values(self):
         """Every schema field should have a matching-type value in the config."""
         config = self.client.get("/api/config").json()
