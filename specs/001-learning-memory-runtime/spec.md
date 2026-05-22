@@ -291,6 +291,7 @@ As the Hermes operator, I want the VM-proven runtime-learning loop to be product
 
 **Acceptance Scenarios**:
 
+1. **Given** a worker emits a long update stream, repeated status report, raw command output, sidecar log, or Slack mirror, **When** the supervisor prepares context, **Then** the context admission gate stores the raw content outside model context and injects only a bounded checkpoint plus evidence refs.
 1. **Given** a command or worker attempt contains provider-shaped secrets, **When** runtime learning captures the failure, **Then** all persisted memory, evidence, bus, candidate, Slack, dashboard, and corpus outputs contain only redacted values.
 2. **Given** Codex is installed under a user npm prefix, **When** Hermes runs from SSH non-login shell, gateway service, sidecar, or CLI, **Then** the model-role doctor resolves the same executable/provider state without relying on interactive shell profile side effects.
 3. **Given** a supervisor task has a goal and `goal_judge` is enabled, **When** `hermes runtime control goal` evaluates a worker response, **Then** the configured model role is invoked or a structured degraded result is returned without pretending a model-backed judgment occurred.
@@ -492,6 +493,9 @@ As the Hermes operator, I want the VM-proven runtime-learning loop to be product
 - **FR-143**: Dashboard scoped Ask MUST use read-only evidence bundles and MUST NOT have mutation authority over repo, memory, policy, deployment, task, or config state.
 - **FR-144**: Dashboard cost and health panels MUST display token, latency, cost, worker, sidecar, memory, bus, budget, and degradation attribution by tenant/repo/job.
 - **FR-145**: System MUST scrub secret-like values before persisting runtime-learning records, evidence excerpts, candidates, bus events, sidecar jobs, Slack/dashboard payloads, or training corpus artifacts.
+- **FR-145A**: System MUST provide a context admission gate that prevents raw worker streams, long command outputs, sidecar logs, Slack mirrors, repeated status reports, and full artifacts from entering supervisor model context.
+- **FR-145B**: System MUST store full worker/tool/sidecar updates outside model context with durable event or artifact refs.
+- **FR-145C**: System MUST provide bounded progress checkpoints with current task state, latest progress, blocker, next action, validation refs, memory refs, and artifact refs within a configured token cap.
 - **FR-146**: System MUST provide a model-role doctor that resolves provider/model/tier/path/auth readiness from service-equivalent environments without printing secrets.
 - **FR-147**: System MUST ensure `goal_judge` model invocation is explicit and observable; unavailable auxiliary clients MUST return structured degraded status instead of silent prompt-dependent continuation.
 - **FR-148**: System MUST provide service-equivalent sidecar status and one-shot execution surfaces with locks, budgets, intervals, degraded reasons, and foreground-nonblocking guarantees.

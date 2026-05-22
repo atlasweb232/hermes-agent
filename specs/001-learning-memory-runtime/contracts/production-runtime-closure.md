@@ -26,6 +26,31 @@ treated as production-grade.
 
 ## Required Production Gates
 
+### Context Admission Emergency Gate
+
+Supervisor context must be treated as a scarce production resource. Raw worker
+updates, command outputs, watch streams, sidecar logs, Slack mirrors, repeated
+status reports, and full Spec Kit/task artifacts must not be appended directly
+to the model conversation.
+
+The runtime must provide:
+
+- `context_admission.py`: deterministic gate that classifies each candidate
+  context item as `admit`, `summarize`, `store_only`, or `reject`
+- `worker_event_store.py`: durable store for full worker/tool/sidecar updates,
+  returning refs such as `event://worker/<id>` or `artifact://worker/<id>`
+- `progress_checkpoint.py`: bounded checkpoint builder producing the latest
+  task summary, blocker, next action, validation refs, and memory refs within a
+  configured token cap
+- supervisor prompt wiring that injects only current task state, latest bounded
+  checkpoint, relevant memory packet, and evidence refs
+- runtime impact UI/API that lets humans inspect full event history without
+  putting that history back into supervisor context
+
+The emergency acceptance criterion is that a long worker update stream no
+longer forces preflight compression before the supervisor can answer a simple
+status/commit/push question.
+
 ### Secret-Safe Runtime Capture
 
 Every runtime-learning write path must sanitize before persistence. This
@@ -170,6 +195,9 @@ chat, delegation, or tool execution.
 ## Required CLI/API Surfaces
 
 - `hermes runtime production-smoke --json`
+- `hermes runtime context-admission audit --json`
+- `hermes runtime worker-events list --task-id <task> --json`
+- `hermes runtime progress-checkpoint get --task-id <task> --json`
 - `hermes runtime model-roles doctor --json`
 - `hermes runtime sidecars status --json`
 - `hermes runtime sidecars run --role <role> --once --json`

@@ -37,6 +37,9 @@ model. The platform should use:
 
 ```text
 worker/tool/goal event
+  -> context admission gate
+  -> worker event store / artifact ref
+  -> bounded progress checkpoint
   -> secret-safe runtime capture
   -> typed memory/bus event
   -> sidecar budget and lease gate
@@ -50,6 +53,34 @@ worker/tool/goal event
 
 At no point may a raw transcript, raw command containing secrets, or unbounded
 worker stream enter the supervisor context or persistent learning stores.
+
+## Context Admission First
+
+The immediate production problem is supervisor context bloat. Compression is a
+safety valve, not the target operating mode. The supervisor should not need to
+compress just because workers, sidecars, Slack mirrors, or Spec Kit reports
+emitted verbose updates.
+
+The first implementation slice should add:
+
+- `hermes_cli/context_admission.py`
+- `hermes_cli/worker_event_store.py`
+- `hermes_cli/progress_checkpoint.py`
+
+The admission gate decides whether an item is:
+
+- admitted directly because it is small and decision-critical
+- summarized into a checkpoint
+- stored only with an event/artifact ref
+- rejected from supervisor context
+
+The worker event store preserves full detail for audit and UI. The progress
+checkpoint gives the supervisor a compact view: current task, latest progress,
+blocker, next action, validation refs, memory refs, and artifact refs. The
+supervisor prompt should use the checkpoint and refs, not raw update streams.
+
+This is the shortest path to reducing preflight compression frequency while
+preserving traceability.
 
 ## Goal Judge Boundary
 
@@ -149,4 +180,3 @@ must never be loaded by default.
 This UI is part of production readiness because without it the operator cannot
 prove that sidecars and memory retrieval are improving task convergence rather
 than silently increasing latency, cost, or context bloat.
-

@@ -804,6 +804,10 @@
 
 ### Tests For Production Runtime Closure
 
+- [ ] T346A [P] [US20] Add context admission tests proving raw worker streams, long command outputs, sidecar logs, Slack mirrors, repeated status reports, and full Spec Kit artifacts are classified as summarize/store-only/reject instead of direct supervisor admission
+- [ ] T346B [P] [US20] Add worker event store tests proving full worker/tool/sidecar updates are persisted as redacted event/artifact refs and can be listed for UI/audit without entering model context
+- [ ] T346C [P] [US20] Add progress checkpoint tests proving bounded task checkpoints stay under configured token caps and contain current task, latest progress, blocker, next action, validation refs, memory refs, and artifact refs
+- [ ] T346D [P] [US20] Add supervisor prompt/context tests proving long worker update streams do not trigger preflight compression for simple follow-up questions because only checkpoints and refs are admitted
 - [ ] T346 [P] [US20] Add pre-persistence redaction tests proving provider-shaped secrets in commands, env files, tool output, worker excerpts, bus payloads, candidates, Slack/dashboard messages, and corpus records are scrubbed before storage
 - [ ] T347 [P] [US20] Add model-role doctor tests proving Codex/Claude/curator/learning_judge/goal_judge resolve consistently under CLI, SSH non-login shell, gateway service env, and sidecar service env
 - [ ] T348 [P] [US20] Add goal judge invocation tests proving `hermes runtime control goal` calls the configured `goal_judge` role when enabled and returns structured degraded status when unavailable
@@ -817,6 +821,10 @@
 
 ### Implementation For Production Runtime Closure
 
+- [ ] T354A [US20] Implement `hermes_cli/context_admission.py` with deterministic `admit`, `summarize`, `store_only`, and `reject` decisions plus token/size/repetition/raw-log rules
+- [ ] T354B [US20] Implement `hermes_cli/worker_event_store.py` for durable worker/tool/sidecar event storage with redacted event/artifact refs and bounded listing APIs
+- [ ] T354C [US20] Implement `hermes_cli/progress_checkpoint.py` for programmatic or cheap-tier checkpoint generation capped to 500-1000 tokens per task by default
+- [ ] T354D [US20] Patch supervisor context/prompt construction to inject only current task state, latest progress checkpoint, relevant memory packet, and evidence refs instead of every worker update
 - [ ] T354 [US20] Implement centralized pre-persistence redaction guard and apply it to runtime failure capture, memory records, evidence excerpts, learning bus events, candidates, sidecar jobs, Slack/dashboard DTOs, and corpus export inputs
 - [ ] T355 [US20] Implement model-role doctor JSON surface for provider/model/tier/path/auth readiness, degraded reason, timeout, budget, and service-environment parity without printing secrets
 - [ ] T356 [US20] Fix `goal_judge` Codex/auxiliary invocation so goal evaluation calls the configured model role or returns structured degraded status with audit metadata
@@ -1034,12 +1042,13 @@
 
 ### Phase 23 Order
 
-1. Add pre-persistence redaction tests first and fix runtime capture before any more live smoke.
-2. Add model-role doctor and service-environment parity checks for Codex, Claude, curator, learning judge, and goal judge.
-3. Fix goal judge invocation so unavailable auxiliary clients produce structured degradation instead of implicit continuation.
-4. Add sidecar service-readiness tests and one-shot service-equivalent runner.
-5. Enrich runtime failure records and tighten sparse-evidence curator/judge behavior.
-6. Prove skill evolution loop with judge/operator gates.
-7. Add production runtime smoke command.
-8. Add runtime impact UI/API for sidecars, memory activity, and latency attribution.
-9. Run VM production closure smoke and update release readiness report.
+1. Add context admission, worker event store, progress checkpoint, and supervisor prompt tests first to stop context bloat immediately.
+2. Add pre-persistence redaction tests and fix runtime capture before any more live smoke.
+3. Add model-role doctor and service-environment parity checks for Codex, Claude, curator, learning judge, and goal judge.
+4. Fix goal judge invocation so unavailable auxiliary clients produce structured degradation instead of implicit continuation.
+5. Add sidecar service-readiness tests and one-shot service-equivalent runner.
+6. Enrich runtime failure records and tighten sparse-evidence curator/judge behavior.
+7. Prove skill evolution loop with judge/operator gates.
+8. Add production runtime smoke command.
+9. Add runtime impact UI/API for sidecars, memory activity, and latency attribution.
+10. Run VM production closure smoke and update release readiness report.
