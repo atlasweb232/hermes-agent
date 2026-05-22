@@ -353,6 +353,25 @@ def run_conversation(
 
     active_system_prompt = agent._cached_system_prompt
 
+    # Rehydrated CLI/TUI sessions may contain raw tool output persisted before
+    # the transcript admission gate existed. Rewrite the working history to
+    # compact event refs before token estimation or preflight compression.
+    try:
+        if hasattr(agent, "_context_safe_messages_for_persistence"):
+            _safe_messages = agent._context_safe_messages_for_persistence(messages)
+            if _safe_messages != messages:
+                messages = _safe_messages
+                conversation_history = _safe_messages[: len(conversation_history or [])] if conversation_history else None
+                if getattr(agent, "_session_db", None):
+                    try:
+                        agent._session_db.replace_messages(agent.session_id, _safe_messages)
+                    except Exception:
+                        logger.debug("Preflight context-safe transcript rewrite DB update failed", exc_info=True)
+                agent.context_compressor.last_prompt_tokens = 0
+                logger.info("Preflight context admission rewrote raw tool history before compression check")
+    except Exception:
+        logger.debug("Preflight context admission rewrite skipped", exc_info=True)
+
     # ── Preflight context compression ──
     # Before entering the main loop, check if the loaded conversation
     # history already exceeds the model's context threshold.  This handles
@@ -3368,9 +3387,12 @@ def run_conversation(
                     # to the new session (see preflight compression comment).
                     conversation_history = None
                 
-                # Save session log incrementally (so progress is visible even if interrupted)
-                agent._session_messages = messages
-                agent._save_session_log(messages)
+                # Save session log incrementally (so progress is visible even if
+                # interrupted), but never persist raw worker/tool streams into
+                # the resumable supervisor transcript.
+                _persistable_messages = agent._context_safe_messages_for_persistence(messages)
+                agent._session_messages = _persistable_messages
+                agent._save_session_log(_persistable_messages)
                 
                 # Continue loop for next response
                 continue
