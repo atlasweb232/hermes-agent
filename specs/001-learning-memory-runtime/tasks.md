@@ -824,7 +824,7 @@
 - [x] T354A [US20] Implement `hermes_cli/context_admission.py` with deterministic `admit`, `summarize`, `store_only`, and `reject` decisions plus token/size/repetition/raw-log rules
 - [x] T354B [US20] Implement `hermes_cli/worker_event_store.py` for durable worker/tool/sidecar event storage with redacted event/artifact refs and bounded listing APIs
 - [x] T354C [US20] Implement `hermes_cli/progress_checkpoint.py` for programmatic or cheap-tier checkpoint generation capped to 500-1000 tokens per task by default
-- [ ] T354D [US20] Patch supervisor context/prompt construction to inject only current task state, latest progress checkpoint, relevant memory packet, and evidence refs instead of every worker update
+- [x] T354D [US20] Patch supervisor context/prompt construction to inject only current task state, latest progress checkpoint, relevant memory packet, and evidence refs instead of every worker update
 - [ ] T354 [US20] Implement centralized pre-persistence redaction guard and apply it to runtime failure capture, memory records, evidence excerpts, learning bus events, candidates, sidecar jobs, Slack/dashboard DTOs, and corpus export inputs
 - [ ] T355 [US20] Implement model-role doctor JSON surface for provider/model/tier/path/auth readiness, degraded reason, timeout, budget, and service-environment parity without printing secrets
 - [ ] T356 [US20] Fix `goal_judge` Codex/auxiliary invocation so goal evaluation calls the configured model role or returns structured degraded status with audit metadata

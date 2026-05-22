@@ -54,11 +54,125 @@ logger = logging.getLogger(__name__)
 # Mirrors the constant in ``run_agent`` for tests/imports that look here.
 _MAX_TOOL_WORKERS = 8
 
+_CONTEXT_OFFLOAD_TOOL_NAMES = {
+    "terminal",
+    "execute_code",
+    "delegate_task",
+    "worker-router",
+    "browser",
+    "browser_cdp",
+}
+
 
 def _ra():
     """Lazy reference to ``run_agent`` so patches like ``run_agent._set_interrupt`` work."""
     import run_agent
     return run_agent
+
+
+def _context_safe_tool_result(
+    agent,
+    *,
+    tool_name: str,
+    tool_args: dict,
+    tool_result: str,
+    tool_call_id: str,
+    task_id: str,
+) -> str:
+    """Replace context-heavy tool output with a bounded checkpoint + event ref.
+
+    Full redacted output is retained in the worker event store for audit/UI.
+    The supervisor receives only a compact summary and references, which keeps
+    foreground task latency and prompt growth bounded.
+    """
+
+    if not isinstance(tool_result, str) or not tool_result:
+        return tool_result
+    if str(os.getenv("HERMES_CONTEXT_ADMISSION_DISABLE", "")).lower() in {"1", "true", "yes"}:
+        return tool_result
+
+    try:
+        from hermes_cli.context_admission import ContextItem, decide_context_admission
+        from hermes_cli.progress_checkpoint import build_progress_checkpoint
+        from hermes_cli.worker_event_store import store_worker_event
+    except Exception:
+        return tool_result
+
+    source = str(tool_name or "")
+    kind = "tool_result"
+    if (
+        source in _CONTEXT_OFFLOAD_TOOL_NAMES
+        or "worker" in source.casefold()
+        or "terminal" in source.casefold()
+    ):
+        kind = "worker_stream"
+
+    try:
+        decision = decide_context_admission(
+            ContextItem(
+                kind=kind,
+                source=source,
+                text=tool_result,
+                task_id=task_id,
+                metadata={"tool_call_id": tool_call_id, "tool_name": tool_name},
+            )
+        )
+    except Exception:
+        return tool_result
+
+    if decision.action == "admit":
+        return tool_result
+
+    db = getattr(agent, "_session_db", None)
+    if db is None:
+        # No durable event store available; preserve old behavior rather than
+        # losing diagnostic detail.
+        return tool_result
+
+    try:
+        event = store_worker_event(
+            db,
+            kind=kind,
+            source=source,
+            task_id=task_id,
+            worker_id=str(tool_args.get("worker_id") or tool_args.get("agent") or ""),
+            content=tool_result,
+            payload={
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "admission": decision.to_dict(),
+            },
+            foreground_admitted=False,
+        )
+        checkpoint = build_progress_checkpoint(
+            task_id=task_id,
+            events=[event],
+            task_state={
+                "status": "running",
+                "summary": f"{tool_name} output was stored outside supervisor context",
+                "next_action": "Use the event ref for audit/UI; continue from the bounded checkpoint.",
+            },
+            artifact_refs=[event.ref],
+            token_budget=350,
+        )
+    except Exception:
+        logger.debug("context admission offload failed", exc_info=True)
+        return tool_result
+
+    return (
+        "<context-offloaded-tool-result>\n"
+        f"tool: {tool_name}\n"
+        f"decision: {decision.action}\n"
+        f"reason: {decision.reason}\n"
+        f"event_ref: {event.ref}\n"
+        f"raw_size_bytes: {event.raw_size_bytes}\n"
+        f"checkpoint_status: {checkpoint.status}\n"
+        f"checkpoint_summary: {checkpoint.summary}\n"
+        f"latest_progress: {checkpoint.latest_progress}\n"
+        f"next_action: {checkpoint.next_action}\n"
+        "raw_output_in_context: false\n"
+        "</context-offloaded-tool-result>"
+    )
 
 
 def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
@@ -427,6 +541,16 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             tool_use_id=tc.id,
             env=get_active_env(effective_task_id),
         ) if not _is_multimodal_tool_result(function_result) else function_result
+
+        if not _is_multimodal_tool_result(function_result):
+            function_result = _context_safe_tool_result(
+                agent,
+                tool_name=name,
+                tool_args=args,
+                tool_result=function_result,
+                tool_call_id=tc.id,
+                task_id=effective_task_id,
+            )
 
         subdir_hints = agent._subdirectory_hints.check_tool_call(name, args)
         if subdir_hints:
@@ -854,6 +978,16 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             tool_use_id=tool_call.id,
             env=get_active_env(effective_task_id),
         ) if not _is_multimodal_tool_result(function_result) else function_result
+
+        if not _is_multimodal_tool_result(function_result):
+            function_result = _context_safe_tool_result(
+                agent,
+                tool_name=function_name,
+                tool_args=function_args,
+                tool_result=function_result,
+                tool_call_id=tool_call.id,
+                task_id=effective_task_id,
+            )
 
         # Discover subdirectory context files from tool arguments
         subdir_hints = agent._subdirectory_hints.check_tool_call(function_name, function_args)

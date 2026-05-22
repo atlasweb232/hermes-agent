@@ -126,3 +126,50 @@ def test_t346d_long_worker_updates_do_not_enter_supervisor_packet(tmp_path):
     finally:
         db.close()
 
+
+def test_t354d_tool_executor_offloads_long_terminal_result(tmp_path):
+    from types import SimpleNamespace
+
+    from agent.tool_executor import _context_safe_tool_result
+    from hermes_cli.worker_event_store import list_worker_events
+
+    db = SessionDB(db_path=tmp_path / "state.db")
+    agent = SimpleNamespace(_session_db=db)
+    try:
+        raw = "preparing terminal\nworker-router watch claude\n" + ("stdout line\n" * 2000)
+        result = _context_safe_tool_result(
+            agent,
+            tool_name="terminal",
+            tool_args={"command": "worker-router watch claude"},
+            tool_result=raw,
+            tool_call_id="tc_1",
+            task_id="task-tool",
+        )
+
+        assert "raw_output_in_context: false" in result
+        assert "event://worker/" in result
+        assert len(result) < len(raw) / 20
+        assert "stdout line\nstdout line" not in result
+
+        events = list_worker_events(db, task_id="task-tool")
+        assert len(events) == 1
+        assert events[0].raw_size_bytes == len(raw.encode("utf-8"))
+    finally:
+        db.close()
+
+
+def test_t354d_tool_executor_keeps_small_decision_result_without_db():
+    from types import SimpleNamespace
+
+    from agent.tool_executor import _context_safe_tool_result
+
+    agent = SimpleNamespace(_session_db=None)
+    result = _context_safe_tool_result(
+        agent,
+        tool_name="status",
+        tool_args={},
+        tool_result="pytest passed; git diff clean",
+        tool_call_id="tc_2",
+        task_id="task-tool",
+    )
+    assert result == "pytest passed; git diff clean"
