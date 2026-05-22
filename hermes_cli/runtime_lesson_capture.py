@@ -15,7 +15,7 @@ import re
 import shlex
 from typing import Any, Optional
 
-from hermes_cli.redaction_guard import redact_text
+from hermes_cli.redaction_guard import redact_text, redact_value
 
 
 _SECRET_PATTERNS = [
@@ -48,6 +48,9 @@ class ToolOutcome:
     failed: bool
     result_excerpt: str = ""
     session_id: Optional[str] = None
+    task_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
     cwd: Optional[str] = None
     duration_seconds: float = 0.0
     status: str = ""
@@ -90,7 +93,14 @@ class DelegatedWorkerRuntimeFailure:
     route: str
     command_family: str
     status: str
+    requested_route: str = ""
+    actual_route: str = ""
+    worker_family: str = ""
+    latency_seconds: float = 0.0
+    tenant_id: Optional[str] = None
+    repo_id: Optional[str] = None
     evidence_refs: list[str] = field(default_factory=list)
+    allocation_refs: list[str] = field(default_factory=list)
     validation_mismatch: dict[str, Any] = field(default_factory=dict)
     output_excerpt: str = ""
     error_excerpt: str = ""
@@ -509,16 +519,44 @@ def persist_runtime_lesson(db: Any, lesson: RuntimeLesson) -> dict[str, Any]:
     record_kind = "tool_routing_lesson"
     if lesson.kind in {"supervisor_tool_loop_failure", "supervisor_evidence_mismatch"}:
         record_kind = "supervisor_runtime_failure"
-    db.upsert_memory_record(
-        record_id=lesson.record_id,
-        kind=record_kind,
-        title=lesson.title,
-        body=lesson.body,
-        payload_json=lesson.evidence,
-        status="active",
-        score=lesson.score,
-        evidence_uri=f"hermes:runtime-lesson:{lesson.record_id}",
-    )
+    if record_kind == "supervisor_runtime_failure":
+        evidence = lesson.evidence or {}
+        capture_supervisor_runtime_failure(
+            db,
+            record_id=lesson.record_id,
+            failure_type=str(evidence.get("failure_type") or lesson.kind),
+            detector=str(evidence.get("detector") or "runtime_lesson_capture.runtime_lesson"),
+            task_id=str(evidence.get("task_id") or ""),
+            tenant_id=evidence.get("tenant_id"),
+            repo_id=evidence.get("repo_id"),
+            worker_id=str(evidence.get("worker_id") or "supervisor"),
+            worker_family=str(evidence.get("worker_family") or "supervisor"),
+            requested_route=str(evidence.get("failed_path") or evidence.get("failed_command_family") or evidence.get("command_family") or ""),
+            actual_route=str(evidence.get("working_path") or evidence.get("substitute_command_family") or evidence.get("command_family") or ""),
+            command_family=str(evidence.get("command_family") or evidence.get("failed_command_family") or ""),
+            status=str(evidence.get("status") or "failed"),
+            latency_seconds=float(evidence.get("duration_seconds") or 0.0),
+            evidence_refs=evidence.get("evidence_refs") or [f"hermes:runtime-lesson:{lesson.record_id}"],
+            validation_mismatch=evidence.get("validation_mismatch") if isinstance(evidence.get("validation_mismatch"), dict) else {},
+            output_excerpt=str(evidence.get("last_result_excerpt") or evidence.get("substitute_result_excerpt") or ""),
+            session_id=evidence.get("session_id"),
+            cwd=evidence.get("cwd"),
+            extra=evidence,
+            title=lesson.title,
+            body=lesson.body,
+            score=lesson.score,
+        )
+    else:
+        db.upsert_memory_record(
+            record_id=lesson.record_id,
+            kind=record_kind,
+            title=lesson.title,
+            body=lesson.body,
+            payload_json=lesson.evidence,
+            status="active",
+            score=lesson.score,
+            evidence_uri=f"hermes:runtime-lesson:{lesson.record_id}",
+        )
     return {
         "lesson_captured": True,
         "record_id": lesson.record_id,
@@ -541,6 +579,154 @@ def _clean_evidence_refs(values: Any) -> list[str]:
         if text:
             cleaned.append(text)
     return cleaned[:20]
+
+
+def _bounded_redacted_mapping(value: Optional[dict[str, Any]], *, max_items: int = 24) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    bounded: dict[str, Any] = {}
+    for key, item in list(value.items())[:max_items]:
+        safe_key = redact_sensitive_text(str(key), max_chars=120)
+        safe_value = redact_value(item, key=safe_key, max_string_chars=500)
+        bounded[safe_key] = safe_value
+    return bounded
+
+
+def _clean_ref_list(values: Any, *, prefix: str = "") -> list[str]:
+    if not isinstance(values, list):
+        return []
+    refs: list[str] = []
+    for value in values:
+        text = redact_sensitive_text(str(value or "").strip(), max_chars=300)
+        if text and (not prefix or text.startswith(prefix)):
+            refs.append(text)
+        elif text and not prefix:
+            refs.append(text)
+    return refs[:20]
+
+
+def capture_supervisor_runtime_failure(
+    db: Any,
+    *,
+    failure_type: str,
+    detector: str,
+    task_id: str = "",
+    tenant_id: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    worker_id: str = "supervisor",
+    worker_family: str = "supervisor",
+    requested_route: str = "",
+    actual_route: str = "",
+    command_family: str = "",
+    status: str = "failed",
+    latency_seconds: float = 0.0,
+    allocation_id: Optional[str] = None,
+    attempt_id: Optional[str] = None,
+    allocation_refs: Optional[list[str]] = None,
+    evidence_refs: Optional[list[str]] = None,
+    validation_mismatch: Optional[dict[str, Any]] = None,
+    output_excerpt: str = "",
+    error_excerpt: str = "",
+    session_id: Optional[str] = None,
+    cwd: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
+    record_id: Optional[str] = None,
+    title: Optional[str] = None,
+    body: Optional[str] = None,
+    score: float = 0.9,
+) -> dict[str, Any]:
+    task = str(task_id or "").strip()
+    worker = str(worker_id or "").strip() or "supervisor"
+    requested = redact_sensitive_text(str(requested_route or "").strip(), max_chars=300)
+    actual = redact_sensitive_text(str(actual_route or "").strip(), max_chars=300)
+    family = str(command_family or _route_family(actual) or _route_family(requested) or worker_family or "unknown")
+    normalized_status = str(status or "failed").strip().lower() or "failed"
+    evidence = _clean_evidence_refs(evidence_refs or [])
+    alloc_refs = _clean_ref_list(allocation_refs or [], prefix="hermes:allocation:")
+    if allocation_id:
+        alloc_ref = f"hermes:allocation:{allocation_id}"
+        if attempt_id:
+            alloc_ref = f"{alloc_ref}:{attempt_id}"
+        alloc_refs = [alloc_ref, *[ref for ref in alloc_refs if ref != alloc_ref]][:20]
+    if not evidence:
+        if alloc_refs:
+            evidence = alloc_refs[:1]
+        elif task and worker:
+            evidence = [f"hermes:delegate:{task}:{worker}"]
+
+    mismatch = _bounded_redacted_mapping(validation_mismatch)
+    route_substitution = bool(requested and actual and requested != actual)
+    if route_substitution:
+        mismatch.setdefault("expected_route", requested)
+        mismatch.setdefault("actual_route", actual)
+
+    claim_parts = [
+        str(failure_type or "supervisor_runtime_failure"),
+        task or "unknown-task",
+        worker,
+        requested or "unknown-requested-route",
+        actual or "unknown-actual-route",
+        normalized_status,
+        json.dumps(mismatch, sort_keys=True),
+        "|".join(evidence),
+        "|".join(alloc_refs),
+    ]
+    stable_record_id = record_id or _stable_id("memrec", "supervisor_runtime_failure:" + "|".join(claim_parts))
+    payload: dict[str, Any] = {
+        "record_id": stable_record_id,
+        "detector": redact_sensitive_text(detector, max_chars=160),
+        "failure_type": redact_sensitive_text(failure_type, max_chars=160),
+        "task_id": task,
+        "tenant_id": tenant_id,
+        "repo_id": repo_id,
+        "worker_id": worker,
+        "worker_family": redact_sensitive_text(worker_family or family, max_chars=120),
+        "requested_route": requested,
+        "actual_route": actual,
+        "route": actual or requested,
+        "route_substitution": route_substitution,
+        "command_family": redact_sensitive_text(family, max_chars=120),
+        "status": normalized_status,
+        "latency_seconds": float(latency_seconds or 0.0),
+        "allocation_id": allocation_id,
+        "attempt_id": attempt_id,
+        "allocation_refs": alloc_refs,
+        "evidence_refs": evidence,
+        "validation_mismatch": mismatch,
+        "output_excerpt": redact_sensitive_text(output_excerpt, max_chars=800),
+        "error_excerpt": redact_sensitive_text(error_excerpt, max_chars=800),
+        "session_id": session_id,
+        "cwd": redact_sensitive_text(cwd or "", max_chars=300) if cwd else None,
+        "secret_safe": True,
+        "requires_judge": True,
+        "operator_approval_required": True,
+    }
+    if extra:
+        payload["source_metadata"] = _bounded_redacted_mapping(extra, max_items=40)
+    db.upsert_memory_record(
+        record_id=stable_record_id,
+        kind="supervisor_runtime_failure",
+        title=title or f"Supervisor runtime failure: {payload['failure_type']}",
+        body=body or (
+            "A supervisor, goal, allocator, or delegated worker path degraded. "
+            "Use this record as advisory evidence only until curator, judge, and "
+            "operator gates validate a reusable lesson."
+        ),
+        payload_json=payload,
+        status="active",
+        score=float(score),
+        tenant_id=tenant_id,
+        repo_id=repo_id,
+        task_id=task or None,
+        evidence_uri=evidence[0] if evidence else f"hermes:runtime-lesson:{stable_record_id}",
+    )
+    return {
+        "runtime_failure_captured": True,
+        "record_id": stable_record_id,
+        "kind": "supervisor_runtime_failure",
+        "status": normalized_status,
+        "failure_type": payload["failure_type"],
+    }
 
 
 def _should_capture_delegated_worker_failure(
@@ -583,6 +769,11 @@ def capture_delegated_worker_runtime_failure(
     worker_id: str,
     route: str,
     status: str,
+    requested_route: Optional[str] = None,
+    actual_route: Optional[str] = None,
+    worker_family: Optional[str] = None,
+    latency_seconds: float = 0.0,
+    allocation_refs: Optional[list[str]] = None,
     evidence_refs: Optional[list[str]] = None,
     validation_mismatch: Optional[dict[str, Any]] = None,
     output_excerpt: str = "",
@@ -602,12 +793,14 @@ def capture_delegated_worker_runtime_failure(
     task = str(task_id or "").strip()
     worker = str(worker_id or "").strip()
     route_text = str(route or "").strip()
+    requested_text = str(requested_route or expected_route or route_text).strip()
+    actual_text = str(actual_route or route_text).strip()
     normalized_status = str(status or "unknown").strip().lower() or "unknown"
-    route_substitution = bool(expected_route and str(expected_route).strip() != route_text)
+    route_substitution = bool(requested_text and actual_text and requested_text != actual_text)
     mismatch = dict(validation_mismatch or {})
     if route_substitution:
-        mismatch.setdefault("expected_route", str(expected_route or "").strip())
-        mismatch.setdefault("actual_route", route_text)
+        mismatch.setdefault("expected_route", requested_text)
+        mismatch.setdefault("actual_route", actual_text)
     if not _should_capture_delegated_worker_failure(
         status=normalized_status,
         validation_mismatch=mismatch,
@@ -615,7 +808,7 @@ def capture_delegated_worker_runtime_failure(
     ):
         return {"runtime_failure_captured": False, "reason": "no_failure"}
 
-    family = _route_family(route_text)
+    family = _route_family(actual_text or route_text)
     evidence = _clean_evidence_refs(evidence_refs or [])
     if not evidence:
         if allocation_id and attempt_id:
@@ -636,10 +829,17 @@ def capture_delegated_worker_runtime_failure(
         record_id=record_id,
         task_id=task,
         worker_id=worker,
-        route=redact_sensitive_text(route_text, max_chars=300),
+        route=redact_sensitive_text(actual_text or route_text, max_chars=300),
         command_family=family,
         status=normalized_status,
+        requested_route=redact_sensitive_text(requested_text, max_chars=300),
+        actual_route=redact_sensitive_text(actual_text, max_chars=300),
+        worker_family=redact_sensitive_text(worker_family or worker or family, max_chars=120),
+        latency_seconds=float(latency_seconds or 0.0),
+        tenant_id=tenant_id,
+        repo_id=repo_id,
         evidence_refs=evidence,
+        allocation_refs=_clean_ref_list(allocation_refs or [], prefix="hermes:allocation:"),
         validation_mismatch={
             redact_sensitive_text(str(key), max_chars=120): redact_sensitive_text(str(value), max_chars=500)
             for key, value in mismatch.items()

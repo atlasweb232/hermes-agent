@@ -6,6 +6,7 @@ from hermes_cli.runtime_lesson_capture import (
     append_lesson_capture_note,
     apply_runtime_failure_gate_to_final_response,
     capture_delegated_worker_runtime_failure,
+    capture_supervisor_runtime_failure,
     classify_terminal_status,
     parse_terminal_failure,
     persist_runtime_lesson,
@@ -265,6 +266,58 @@ def test_persist_generic_supervisor_failure_writes_supervisor_runtime_failure(tm
     records = db.list_memory_records(kind="supervisor_runtime_failure", limit=5)
     assert records[0]["id"] == capture["record_id"]
     assert records[0]["payload_json"]["failure_type"] == "supervisor_tool_loop_failure"
+    assert records[0]["payload_json"]["worker_family"] == "supervisor"
+    assert records[0]["payload_json"]["requested_route"] == "worker-router"
+    assert records[0]["payload_json"]["actual_route"] == "worker-router"
+    assert records[0]["payload_json"]["latency_seconds"] == 120.0
+
+
+def test_capture_supervisor_runtime_failure_rich_metadata_is_bounded_and_redacted(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        result = capture_supervisor_runtime_failure(
+            db,
+            failure_type="supervisor_tool_timeout",
+            detector="test.supervisor",
+            task_id="task-rich",
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            worker_id="supervisor",
+            worker_family="supervisor",
+            requested_route="worker-router claude api_key=sk-abc123456789XYZ",
+            actual_route="echo fallback",
+            command_family="worker-router",
+            status="timed_out",
+            latency_seconds=121.5,
+            allocation_refs=["hermes:allocation:alloc-rich:attempt-1"],
+            evidence_refs=["hermes:runtime-lesson:rich"],
+            validation_mismatch={"expected": "worker answer", "actual": "supervisor fallback", "password": "hunter2"},
+            output_excerpt="token=sk-abc123456789XYZ\n" + "raw\n" * 200,
+            session_id="session-rich",
+            extra={"provider_log": "secret text", "safe": "ok"},
+        )
+
+        assert result["runtime_failure_captured"] is True
+        record = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)[0]
+        payload = record["payload_json"]
+        assert record["tenant_id"] == "tenant-a"
+        assert record["repo_id"] == "repo-a"
+        assert record["task_id"] == "task-rich"
+        assert payload["failure_type"] == "supervisor_tool_timeout"
+        assert payload["worker_family"] == "supervisor"
+        assert "sk-abc" not in payload["requested_route"]
+        assert "[REDACTED]" in payload["requested_route"]
+        assert payload["actual_route"] == "echo fallback"
+        assert payload["command_family"] == "worker-router"
+        assert payload["status"] == "timed_out"
+        assert payload["latency_seconds"] == 121.5
+        assert payload["allocation_refs"] == ["hermes:allocation:alloc-rich:attempt-1"]
+        assert payload["validation_mismatch"]["password"] == "[REDACTED]"
+        serialized = json.dumps(payload)
+        assert "sk-abc" not in serialized
+        assert "hunter2" not in serialized
+    finally:
+        db.close()
 
 
 def test_capture_delegated_worker_failure_persists_structured_record_without_raw_secret(tmp_path):
@@ -291,6 +344,9 @@ def test_capture_delegated_worker_failure_persists_structured_record_without_raw
         assert payload["task_id"] == "task-131b"
         assert payload["worker_id"] == "subagent-2"
         assert payload["route"] == "delegate_task:codex"
+        assert payload["requested_route"] == "delegate_task:claude"
+        assert payload["actual_route"] == "delegate_task:codex"
+        assert payload["worker_family"] == "subagent-2"
         assert payload["command_family"] == "delegate_task"
         assert payload["status"] == "timeout"
         assert payload["evidence_refs"] == ["hermes:delegate:task-131b:subagent-2"]

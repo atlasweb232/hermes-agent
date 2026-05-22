@@ -252,9 +252,14 @@ def test_record_worker_attempt_captures_runtime_failure_before_sidecars(tmp_path
         assert payload["task_id"] == "task_148"
         assert payload["worker_id"] == "claude-code"
         assert payload["route"] == "worker-router claude-code"
+        assert payload["requested_route"] == "claude-code"
+        assert payload["actual_route"] == "worker-router claude-code"
+        assert payload["worker_family"] == "claude-code"
         assert payload["command_family"] == "worker-router"
         assert payload["status"] == "empty_output"
+        assert payload["latency_seconds"] == attempt.duration_seconds
         assert payload["evidence_refs"] == ["hermes:allocation:alloc_148:attempt_1"]
+        assert payload["allocation_refs"][0].startswith("hermes:allocation:alloc_148:attempt_")
         assert payload["validation_mismatch"]["validation_status"] == "failed"
         assert payload["validation_mismatch"]["error_signature"] == "claimed_done_no_files"
         assert payload["requires_judge"] is True

@@ -323,6 +323,15 @@ def test_task_goal_continuation_returns_structured_degraded_when_goal_judge_disa
         entry = get_task_ledger_entry(db, "task_goal_degraded")
         assert entry.goal_json["last_parse_failed"] is False
         assert entry.goal_json["history"][0]["judge"]["degraded_reason"] == "role_disabled"
+        records = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)
+        assert len(records) == 1
+        payload = records[0]["payload_json"]
+        assert payload["failure_type"] == "goal_judge_runtime_failure"
+        assert payload["task_id"] == "task_goal_degraded"
+        assert payload["worker_id"] == "goal_judge"
+        assert payload["requested_route"] == "auxiliary.goal_judge"
+        assert payload["command_family"] == "goal_judge"
+        assert payload["validation_mismatch"]["degraded_reason"] == "role_disabled"
     finally:
         db.close()
 

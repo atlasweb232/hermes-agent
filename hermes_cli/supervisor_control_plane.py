@@ -982,6 +982,39 @@ def evaluate_task_goal_continuation(
                 metadata={"status": "test_override", "role": "goal_judge"},
             )
     verdict, reason, parse_failed = judge_result.as_tuple()
+    if (judge_result.metadata or {}).get("status") == "degraded":
+        try:
+            from hermes_cli.runtime_lesson_capture import capture_supervisor_runtime_failure
+
+            capture_supervisor_runtime_failure(
+                db,
+                failure_type="goal_judge_runtime_failure",
+                detector="supervisor_control_plane.evaluate_task_goal_continuation",
+                task_id=task_id,
+                tenant_id=entry.tenant_id,
+                repo_id=entry.repo_id,
+                worker_id="goal_judge",
+                worker_family=str((judge_result.metadata or {}).get("provider") or "goal_judge"),
+                requested_route="auxiliary.goal_judge",
+                actual_route=str((judge_result.metadata or {}).get("path") or "auxiliary.goal_judge"),
+                command_family="goal_judge",
+                status="degraded",
+                latency_seconds=0.0,
+                evidence_refs=[f"hermes:runtime-lesson:goal:{task_id}"],
+                validation_mismatch={
+                    "verdict": verdict,
+                    "reason": reason,
+                    "degraded_reason": (judge_result.metadata or {}).get("degraded_reason", ""),
+                    "provider": (judge_result.metadata or {}).get("provider", ""),
+                    "model": (judge_result.metadata or {}).get("model", ""),
+                },
+                output_excerpt=reason,
+                session_id=None,
+                extra=judge_result.metadata,
+                score=0.8,
+            )
+        except Exception:
+            pass
     turns_used = int(goal_state.get("turns_used") or 0) + 1
     max_turns = int(goal_state.get("max_turns") or 20)
     goal_state["turns_used"] = turns_used
