@@ -813,7 +813,7 @@
 - [x] T348 [P] [US20] Add goal judge invocation tests proving `hermes runtime control goal` calls the configured `goal_judge` role when enabled and returns structured degraded status when unavailable
 - [x] T349 [P] [US20] Add sidecar service-readiness tests for one-shot and daemon/timer modes, including lock acquisition, budget gate, interval/deadline, backlog limit, degraded reason, and foreground non-blocking behavior
 - [x] T350 [P] [US20] Add rich `supervisor_runtime_failure` metadata tests covering supervisor, delegated worker, allocator, and goal paths with task id, tenant/repo, worker family, requested route, actual route, command family, status, latency, allocation refs, validation mismatch, and redacted evidence refs
-- [ ] T351 [P] [US20] Add sparse-evidence curator/judge tests proving insufficient runtime failure records become diagnostics or needs-human outcomes, not reusable approved lessons
+- [x] T351 [P] [US20] Add sparse-evidence curator/judge tests proving insufficient runtime failure records become diagnostics or needs-human outcomes, not reusable approved lessons
 - [ ] T352 [P] [US20] Add skill evolution E2E tests for failure or approved memory -> skill candidate -> judge -> operator approval -> bounded skill packet -> outcome feedback -> demotion/repair on harmful feedback
 - [ ] T353 [P] [US20] Add production learning-loop smoke tests for Claude primary, Claude degraded, Codex fallback/code-critical path, runtime capture, curator, judge, advisory memory injection, Slack/dashboard alert, and cost/context telemetry
 - [x] T353A [P] [US20] Add runtime impact UI/API tests proving live sidecars are grouped by category and by job, memory activity is grouped by job, and foreground latency is separated from asynchronous sidecar latency
@@ -830,7 +830,7 @@
 - [x] T356 [US20] Fix `goal_judge` Codex/auxiliary invocation so goal evaluation calls the configured model role or returns structured degraded status with audit metadata
 - [x] T357 [US20] Implement sidecar service/timer readiness surfaces and service-equivalent one-shot runner for curator, learning judge, dreaming, wiki, bus consumer, sync, progress summarizer, and housekeeping
 - [x] T358 [US20] Enrich `supervisor_runtime_failure` capture across supervisor, delegated worker, allocator, and goal paths with bounded metadata and redacted evidence refs
-- [ ] T359 [US20] Tighten curator runtime-failure synthesis so sparse records cannot create high-confidence reusable lessons without sufficient evidence and judge/operator gates
+- [x] T359 [US20] Tighten curator runtime-failure synthesis so sparse records cannot create high-confidence reusable lessons without sufficient evidence and judge/operator gates
 - [ ] T360 [US20] Implement skill evolution conversion helpers and approval-gated publication path from approved memory/wiki/runtime failure candidates into scoped runtime skills
 - [ ] T361 [US20] Implement production runtime smoke CLI/API surface, e.g. `hermes runtime production-smoke --json`, with pass/fail report and redacted artifacts
 - [x] T361A [US20] Implement runtime impact DTO aggregator over live state for sidecars by category, sidecars by job, memory activity timeline, and foreground/background latency attribution

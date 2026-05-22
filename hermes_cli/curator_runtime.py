@@ -77,6 +77,24 @@ class CuratorPolicyCandidate:
 
 
 @dataclass
+class SupervisorFailureEvidenceQuality:
+    status: str
+    score: float
+    evidence_count: int
+    reasons: list[str] = field(default_factory=list)
+    outcome: str = "candidate"
+
+    @property
+    def reusable_candidate_allowed(self) -> bool:
+        return self.status == "sufficient"
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["reusable_candidate_allowed"] = self.reusable_candidate_allowed
+        return data
+
+
+@dataclass
 class CuratorRunResult:
     status: str
     records_scanned: int
@@ -378,6 +396,83 @@ def _bounded_supervisor_failure_payload(record: dict[str, Any]) -> dict[str, Any
     }
 
 
+def assess_supervisor_failure_evidence_quality(record: dict[str, Any]) -> SupervisorFailureEvidenceQuality:
+    payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
+    reasons: list[str] = []
+    evidence_count = 0
+
+    evidence_refs = payload.get("evidence_refs")
+    if isinstance(evidence_refs, list) and any(str(ref or "").strip() for ref in evidence_refs):
+        evidence_count += 1
+    else:
+        reasons.append("missing_evidence_refs")
+
+    status = str(payload.get("status") or "").strip()
+    if status:
+        evidence_count += 1
+    else:
+        reasons.append("missing_status")
+
+    task_id = payload.get("task_id") or record.get("task_id")
+    if task_id:
+        evidence_count += 1
+    else:
+        reasons.append("missing_task_id")
+
+    route = payload.get("actual_route") or payload.get("route") or payload.get("requested_route")
+    if route:
+        evidence_count += 1
+    else:
+        reasons.append("missing_route")
+
+    command_family = payload.get("command_family")
+    if command_family:
+        evidence_count += 1
+    else:
+        reasons.append("missing_command_family")
+
+    mismatch = payload.get("validation_mismatch")
+    if isinstance(mismatch, dict) and mismatch:
+        evidence_count += 1
+    output_excerpt = str(payload.get("output_excerpt") or "")
+    error_excerpt = str(payload.get("error_excerpt") or "")
+    if output_excerpt.strip() or error_excerpt.strip():
+        evidence_count += 1
+
+    if not bool(payload.get("secret_safe", True)):
+        reasons.append("not_secret_safe")
+    if bool(payload.get("requires_judge", True)) is False:
+        reasons.append("missing_judge_gate")
+    if bool(payload.get("operator_approval_required", True)) is False:
+        reasons.append("missing_operator_gate")
+
+    has_failure_identity = bool(status and command_family and route)
+    has_validation_or_excerpt = bool(
+        (isinstance(mismatch, dict) and mismatch)
+        or output_excerpt.strip()
+        or error_excerpt.strip()
+    )
+    has_refs = isinstance(evidence_refs, list) and any(str(ref or "").strip() for ref in evidence_refs)
+    sufficient = (
+        has_refs
+        and has_failure_identity
+        and has_validation_or_excerpt
+        and bool(task_id)
+        and "not_secret_safe" not in reasons
+        and "missing_judge_gate" not in reasons
+        and "missing_operator_gate" not in reasons
+    )
+    if not sufficient and not reasons:
+        reasons.append("insufficient_corroborating_evidence")
+    return SupervisorFailureEvidenceQuality(
+        status="sufficient" if sufficient else "insufficient",
+        score=min(1.0, evidence_count / 7.0),
+        evidence_count=evidence_count,
+        reasons=reasons,
+        outcome="candidate" if sufficient else "needs_human",
+    )
+
+
 def classify_supervisor_failure_types(record: dict[str, Any]) -> list[str]:
     payload = record.get("payload_json") if isinstance(record.get("payload_json"), dict) else {}
     status = str(payload.get("status") or "").strip().lower()
@@ -452,6 +547,7 @@ def build_supervisor_failure_policy_data(
     validation: CuratorValidationResult,
 ) -> dict[str, Any]:
     classifications = classify_supervisor_failure_types(record)
+    evidence_quality = assess_supervisor_failure_evidence_quality(record)
     return {
         "policy_version": CURATOR_POLICY_VERSION,
         "policy_type": "supervisor_runtime_failure_advisory",
@@ -460,6 +556,7 @@ def build_supervisor_failure_policy_data(
         "source_record_kind": "supervisor_runtime_failure",
         "failure_classifications": classifications,
         "payload": _bounded_supervisor_failure_payload(record),
+        "evidence_quality": evidence_quality.to_dict(),
         "curator_output": _redact_and_bound_text(output, max_chars=1200),
         "validation": validation.to_dict(),
         "requires_judge": True,
@@ -502,6 +599,7 @@ def run_curator_policy_pass(
     )
     records = [*tool_records, *failure_records]
     candidates: list[CuratorPolicyCandidate] = []
+    persisted_candidates = 0
     errors: list[str] = []
     precuration_metrics: dict[str, Any] = {
         "enabled": True,
@@ -518,6 +616,61 @@ def run_curator_policy_pass(
         if score < curator_config.min_score:
             continue
         is_supervisor_failure = record.get("kind") == "supervisor_runtime_failure"
+        if is_supervisor_failure:
+            quality = assess_supervisor_failure_evidence_quality(record)
+            if not quality.reusable_candidate_allowed:
+                validation = CuratorValidationResult(
+                    status="needs_human",
+                    warnings=[
+                        {
+                            "code": "sparse_runtime_failure_evidence",
+                            "reason": ",".join(quality.reasons)
+                            or "Runtime failure evidence is insufficient for reusable learning.",
+                        }
+                    ],
+                    errors=[],
+                )
+                diagnostic_evidence = {
+                    "policy_version": CURATOR_POLICY_VERSION,
+                    "policy_type": "supervisor_runtime_failure_diagnostic",
+                    "mode": "diagnostic",
+                    "source_record_id": record.get("id"),
+                    "source_record_kind": "supervisor_runtime_failure",
+                    "payload": _bounded_supervisor_failure_payload(record),
+                    "evidence_quality": quality.to_dict(),
+                    "validation": validation.to_dict(),
+                    "requires_judge": True,
+                    "operator_approval_required": True,
+                    "approved_for_enforcement": False,
+                    "created_at": time.time(),
+                }
+                precuration_metrics["records_skipped"] += 1
+                precuration_metrics["decisions"].append(
+                    {
+                        "record_id": record.get("id"),
+                        "kind": "supervisor_runtime_failure",
+                        "decision": {
+                            "should_run_expensive_curator": False,
+                            "metric": "sparse_runtime_failure_needs_human",
+                            "outcome": quality.outcome,
+                            "reason": ",".join(quality.reasons),
+                        },
+                        "evidence_quality": quality.to_dict(),
+                    }
+                )
+                candidates.append(
+                    CuratorPolicyCandidate(
+                        candidate_id=_stable_supervisor_failure_diagnostic_id(record),
+                        kind="runtime_failure_diagnostic",
+                        claim="Runtime failure record needs more evidence before reusable learning",
+                        status="needs_human",
+                        score=min(score, quality.score),
+                        evidence=diagnostic_evidence,
+                        validation=validation,
+                        curator_output="",
+                    )
+                )
+                continue
         if not is_supervisor_failure:
             precuration = _run_record_precuration(
                 db,
@@ -565,6 +718,7 @@ def run_curator_policy_pass(
             tenant_id=tenant_id,
             repo_id=repo_id,
         )
+        persisted_candidates += 1
         candidates.append(
             CuratorPolicyCandidate(
                 candidate_id=candidate_id,
@@ -581,7 +735,7 @@ def run_curator_policy_pass(
     return CuratorRunResult(
         status="completed" if not errors else "degraded",
         records_scanned=len(records),
-        candidates_created=len(candidates),
+        candidates_created=persisted_candidates,
         candidates=candidates,
         errors=errors,
         config=curator_config.to_dict(),
@@ -683,3 +837,15 @@ def _stable_supervisor_failure_candidate_id(record: dict[str, Any], kind: str) -
     )
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"curadv_{digest}"
+
+
+def _stable_supervisor_failure_diagnostic_id(record: dict[str, Any]) -> str:
+    raw = "|".join(
+        [
+            "runtime_failure_diagnostic",
+            CURATOR_POLICY_VERSION,
+            str(record.get("id") or ""),
+        ]
+    )
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    return f"curdiag_{digest}"

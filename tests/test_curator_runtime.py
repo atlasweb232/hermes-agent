@@ -1,4 +1,5 @@
 from hermes_cli.curator_runtime import (
+    assess_supervisor_failure_evidence_quality,
     build_command_repair_prompt,
     _call_codex,
     load_curator_config,
@@ -158,6 +159,8 @@ def test_policy_pass_writes_advisory_supervisor_failure_candidate(tmp_path):
     assert evidence["mode"] == "advisory"
     assert evidence["source_record_id"] == "memrec_supervisor_failure"
     assert evidence["failure_classifications"] == ["empty_output", "validation mismatch"]
+    assert evidence["evidence_quality"]["status"] == "sufficient"
+    assert evidence["evidence_quality"]["reusable_candidate_allowed"] is True
     assert evidence["requires_judge"] is True
     assert evidence["operator_approval_required"] is True
     assert evidence["approved_for_enforcement"] is False
@@ -166,6 +169,71 @@ def test_policy_pass_writes_advisory_supervisor_failure_candidate(tmp_path):
     assert "sk-" not in serialized
     assert "token=" not in serialized
     assert len(evidence["payload"]["output_excerpt"]) <= 360
+
+
+def test_sparse_supervisor_runtime_failure_becomes_needs_human_not_candidate(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_supervisor_failure(
+        db,
+        record_id="memrec_sparse_failure",
+        task_id="",
+        route="",
+        command_family="",
+        evidence_refs=[],
+        validation_mismatch={},
+        output_excerpt="",
+        error_excerpt="",
+    )
+    calls = []
+
+    result = run_curator_policy_pass(
+        db,
+        config={"supervisor": {"curator": {"provider": "ollama", "max_records": 5}}},
+        tenant_id="atlas",
+        repo_id="hermes-agent",
+        model_call=lambda cfg, prompt: calls.append(prompt) or "should not be called",
+    )
+
+    assert result.status == "completed"
+    assert result.candidates_created == 0
+    assert len(result.candidates) == 1
+    assert result.candidates[0].kind == "runtime_failure_diagnostic"
+    assert result.candidates[0].status == "needs_human"
+    assert result.candidates[0].validation.eligible_for_approval is False
+    assert result.candidates[0].evidence["policy_type"] == "supervisor_runtime_failure_diagnostic"
+    assert result.candidates[0].evidence["approved_for_enforcement"] is False
+    assert calls == []
+    assert result.precuration["records_skipped"] == 1
+    decision = result.precuration["decisions"][0]
+    assert decision["decision"]["metric"] == "sparse_runtime_failure_needs_human"
+    assert decision["decision"]["outcome"] == "needs_human"
+    assert decision["evidence_quality"]["status"] == "insufficient"
+    assert decision["evidence_quality"]["reusable_candidate_allowed"] is False
+    assert db.list_meta_candidates(status="proposed", tenant_id="atlas", repo_id="hermes-agent", limit=5) == []
+
+
+def test_runtime_failure_quality_requires_refs_identity_and_validation_evidence(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    _seed_supervisor_failure(db, record_id="memrec_quality_good")
+    good = db.list_memory_records(kind="supervisor_runtime_failure", limit=1)[0]
+    assert assess_supervisor_failure_evidence_quality(good).reusable_candidate_allowed is True
+
+    _seed_supervisor_failure(
+        db,
+        record_id="memrec_quality_bad",
+        evidence_refs=[],
+        validation_mismatch={},
+        output_excerpt="",
+        error_excerpt="",
+        secret_safe=False,
+    )
+    records = db.list_memory_records(kind="supervisor_runtime_failure", limit=5)
+    bad = next(record for record in records if record["id"] == "memrec_quality_bad")
+    quality = assess_supervisor_failure_evidence_quality(bad)
+    assert quality.status == "insufficient"
+    assert "missing_evidence_refs" in quality.reasons
+    assert "not_secret_safe" in quality.reasons
+    assert quality.outcome == "needs_human"
 
 
 def test_policy_pass_classifies_allocator_runtime_failure_as_worker_health_rule(tmp_path):
