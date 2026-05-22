@@ -17,9 +17,11 @@ from hermes_cli.skill_memory import (
     build_skill_feedback,
     build_skill_metadata,
     build_skill_retrieval_query,
+    publish_skill_candidate,
     record_skill_feedback,
     retrieve_skills,
     stable_json,
+    validate_skill_candidate_publication,
 )
 
 
@@ -320,6 +322,132 @@ def test_skill_candidate_from_approved_memory_and_wiki_is_proposed_not_published
         raise AssertionError("unapproved evidence should be rejected")
 
 
+def test_skill_candidate_from_approved_runtime_failure_requires_publication_gates(tmp_path):
+    registry = SkillMemoryRegistry(_db(tmp_path))
+    candidate = registry.save_candidate(
+        build_skill_candidate_from_memory(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            name="worker timeout recovery",
+            version="0.1.0",
+            summary="If the assigned worker times out, preserve evidence refs and request fallback validation.",
+            source_candidate_refs=[
+                {
+                    "candidate_id": "curadv-runtime-timeout",
+                    "status": "approved",
+                    "kind": "recovery_hint",
+                }
+            ],
+            toolset="terminal",
+            worker_role="worker",
+            validation_refs=["pytest://tests/hermes_cli/test_goal_allocator.py"],
+        )
+    )
+
+    blocked = publish_skill_candidate(
+        registry,
+        candidate,
+        judge_ref="",
+        operator_approval_ref="",
+    )
+
+    assert candidate["candidate_state"] == "proposed"
+    assert candidate["can_publish"] is False
+    assert candidate["source_candidate_refs"] == ["curadv-runtime-timeout"]
+    assert blocked["status"] == "blocked"
+    assert "missing_judge_ref" in blocked["gate"]["errors"]
+    assert "missing_operator_approval_ref" in blocked["gate"]["errors"]
+    assert registry.get(candidate["skill_id"], tenant_id="tenant-a") is None
+
+
+def test_skill_evolution_publish_packet_feedback_and_harmful_repair_loop(tmp_path):
+    registry = SkillMemoryRegistry(_db(tmp_path))
+    candidate = registry.save_candidate(
+        build_skill_candidate_from_memory(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            name="runtime failure recovery",
+            version="1.0.0",
+            summary="Use bounded failure evidence, validate worker output, and avoid accepting empty completions.",
+            source_memory_refs=[{"ref": "mem-approved-runtime", "approval_state": "approved"}],
+            source_wiki_refs=[{"ref": "wiki-approved-runtime", "approval_state": "approved"}],
+            source_candidate_refs=[{"candidate_id": "curadv-empty-output", "status": "approved"}],
+            toolset="terminal",
+            worker_role="worker",
+            validation_refs=["pytest://tests/test_curator_runtime.py"],
+            approval_refs=["approval://prior-design-review"],
+        )
+    )
+
+    gate = validate_skill_candidate_publication(
+        candidate,
+        judge_ref="judge://learning_judge/approved",
+        operator_approval_ref="approval://operator/skill-runtime-failure",
+    )
+    published = publish_skill_candidate(
+        registry,
+        candidate,
+        judge_ref="judge://learning_judge/approved",
+        operator_approval_ref="approval://operator/skill-runtime-failure",
+        published_by="operator-1",
+    )
+
+    assert gate["eligible_for_publication"] is True
+    assert published["status"] == "published"
+    skill = published["skill"]
+    assert skill["approval_state"] == "approved"
+    assert skill["safety_state"] == "safe"
+    assert skill["authority"] == "advisory_only_no_override"
+    assert "approval://operator/skill-runtime-failure" in skill["approval_refs"]
+    assert "curadv-empty-output" in skill["source_candidate_refs"]
+    assert registry.get_candidate(candidate["candidate_id"], tenant_id="tenant-a")["candidate_state"] == "published"
+
+    query = build_skill_retrieval_query(
+        raw_query="worker empty completion runtime failure",
+        tenant_id="tenant-a",
+        repo_id="repo-a",
+        task_id="task-skill-evolve",
+        toolset="terminal",
+        worker_role="worker",
+        feature_state={"skills_enabled": True},
+    )
+    packet = build_bounded_skill_packet(query=query, skills=registry, worker_role="worker")
+    assert packet["status"] == "ok"
+    assert packet["skills"][0]["skill_id"] == skill["skill_id"]
+    assert "content" not in packet["skills"][0]
+
+    feedback = record_skill_feedback(
+        registry,
+        build_skill_feedback(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            task_id="task-skill-evolve",
+            session_id="session-skill-evolve",
+            skill_id=skill["skill_id"],
+            skill_version=skill["version"],
+            worker_role="worker",
+            impact="harmful",
+            evidence_refs=["worker://failed-validation"],
+            validation_refs=["pytest://failed"],
+            reason="The skill was too broad and caused validation failure.",
+        ),
+    )
+    updated = apply_skill_feedback(registry, feedback)
+    repair_candidates = [
+        item
+        for item in registry.list_candidates(tenant_id="tenant-a")
+        if item.get("source_feedback_refs") == [feedback["feedback_id"]]
+    ]
+
+    assert updated["retrieval_demoted"] is True
+    assert retrieve_skills(registry, query)["skills"] == []
+    assert repair_candidates
+    assert repair_candidates[0]["candidate_kind"] in {"repair", "retire"}
+    rendered = stable_json({"skill": skill, "packet": packet, "feedback": feedback, "repair": repair_candidates[0]})
+    assert "SECRET_TOKEN" not in rendered
+    assert "raw_session" not in rendered
+
+
 def test_harmful_feedback_demotes_retrieval_and_creates_repair_candidate(tmp_path):
     registry = SkillMemoryRegistry(_db(tmp_path))
     registry.save(_skill(skill_id="harmful-skill", helpful_count=0, harmful_count=0, usage_count=1))
@@ -445,6 +573,17 @@ def test_skills_cli_runtime_feedback_and_candidates_return_stable_json(tmp_path)
     hermes_home.mkdir()
     registry = SkillMemoryRegistry(SessionDB(db_path=hermes_home / "state.db"))
     skill = registry.save(_skill(skill_id="cli-skill"))
+    candidate = registry.save_candidate(
+        build_skill_candidate_from_memory(
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            name="cli published skill",
+            version="1.0.0",
+            summary="CLI publication skill.",
+            source_memory_refs=[{"ref": "mem-cli", "approval_state": "approved"}],
+            validation_refs=["pytest://cli"],
+        )
+    )
 
     env = {**os.environ, "PYTHONPATH": str(Path.cwd()), "HERMES_HOME": str(hermes_home)}
     search = subprocess.run(
@@ -514,11 +653,36 @@ def test_skills_cli_runtime_feedback_and_candidates_return_stable_json(tmp_path)
         text=True,
         capture_output=True,
     )
+    publish = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_cli.main",
+            "skills",
+            "evolve-publish",
+            "--tenant-id",
+            "tenant-a",
+            "--candidate-id",
+            candidate["candidate_id"],
+            "--judge-ref",
+            "judge://cli-approved",
+            "--operator-approval-ref",
+            "approval://cli-operator",
+            "--json",
+        ],
+        check=True,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
 
     search_json = json.loads(search.stdout)
     feedback_json = json.loads(feedback.stdout)
     candidates_json = json.loads(candidates.stdout)
+    publish_json = json.loads(publish.stdout)
     assert search_json["skills"][0]["skill_id"] == "cli-skill"
     assert feedback_json["status"] == "recorded"
     assert candidates_json["status"] == "ok"
+    assert publish_json["status"] == "published"
+    assert publish_json["skill"]["approval_state"] == "approved"
     assert "authority" not in search_json or search_json["baseline_memory_passthrough"] is True

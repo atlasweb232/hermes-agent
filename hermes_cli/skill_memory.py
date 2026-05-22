@@ -303,6 +303,22 @@ class SkillMemoryRegistry:
         self.db.set_meta(self._candidate_key(candidate), stable_json(candidate))
         return candidate
 
+    def get_candidate(self, candidate_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        keys = []
+        if tenant_id:
+            keys.append(f"{CANDIDATE_PREFIX}{tenant_id}:{candidate_id}")
+        keys.append(f"{CANDIDATE_PREFIX}_global:{candidate_id}")
+        for key in keys:
+            raw = self.db.get_meta(key)
+            if raw:
+                return json.loads(raw)
+        if tenant_id:
+            return None
+        for record in self.list_candidates():
+            if record.get("candidate_id") == candidate_id:
+                return record
+        return None
+
     def list_candidates(self, *, tenant_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         prefix = f"{CANDIDATE_PREFIX}{tenant_id}:%" if tenant_id else f"{CANDIDATE_PREFIX}%"
         with self.db._lock:
@@ -770,6 +786,7 @@ def build_skill_candidate_from_memory(
     summary: str,
     source_memory_refs: Optional[Iterable[Any]] = None,
     source_wiki_refs: Optional[Iterable[Any]] = None,
+    source_candidate_refs: Optional[Iterable[Any]] = None,
     toolset: Optional[str] = None,
     worker_role: Optional[str] = None,
     validation_refs: Optional[Iterable[Any]] = None,
@@ -778,8 +795,9 @@ def build_skill_candidate_from_memory(
 ) -> Dict[str, Any]:
     memory_refs = _approved_ref_ids(source_memory_refs, kind="memory")
     wiki_refs = _approved_ref_ids(source_wiki_refs, kind="wiki")
-    if not memory_refs and not wiki_refs:
-        raise ValueError("skill candidates require approved memory/wiki refs")
+    candidate_refs = _approved_ref_ids(source_candidate_refs, kind="candidate")
+    if not memory_refs and not wiki_refs and not candidate_refs:
+        raise ValueError("skill candidates require approved memory/wiki refs or approved runtime failure candidates")
     validations = _bounded_refs(validation_refs)
     approvals = _bounded_refs(approval_refs)
     created = float(created_at if created_at is not None else _now())
@@ -790,6 +808,7 @@ def build_skill_candidate_from_memory(
         "version": version,
         "source_memory_refs": memory_refs,
         "source_wiki_refs": wiki_refs,
+        "source_candidate_refs": candidate_refs,
     }
     can_publish = bool(validations and approvals)
     metadata = build_skill_metadata(
@@ -805,6 +824,7 @@ def build_skill_candidate_from_memory(
         content=summary,
         source_memory_refs=memory_refs,
         source_wiki_refs=wiki_refs,
+        source_refs=[*memory_refs, *wiki_refs, *candidate_refs],
         validation_refs=validations,
         summary=_bounded_text(summary, limit=320),
         created_at=created,
@@ -818,10 +838,164 @@ def build_skill_candidate_from_memory(
             "requires_validation": not bool(validations),
             "requires_operator_approval": not bool(approvals),
             "approval_refs": approvals,
+            "source_candidate_refs": candidate_refs,
             "can_publish": can_publish,
         }
     )
     return metadata
+
+
+def validate_skill_candidate_publication(
+    candidate: Dict[str, Any],
+    *,
+    judge_ref: Optional[str] = None,
+    operator_approval_ref: Optional[str] = None,
+    validation_refs: Optional[Iterable[Any]] = None,
+) -> Dict[str, Any]:
+    """Fail closed unless validation, judge, operator, and source refs exist."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    candidate_state = str(candidate.get("candidate_state") or "")
+    approval_state = str(candidate.get("approval_state") or "")
+    refs = _bounded_refs(validation_refs) or _bounded_refs(candidate.get("validation_refs"))
+    approval_refs = _bounded_refs(candidate.get("approval_refs"))
+    if judge_ref:
+        approval_refs.append(_bounded_text(judge_ref, limit=120))
+    if operator_approval_ref:
+        approval_refs.append(_bounded_text(operator_approval_ref, limit=120))
+
+    if candidate_state not in {"validated", "approved"} and not refs:
+        errors.append("missing_validation_refs")
+    if approval_state not in {"candidate", "validated", "approved"}:
+        errors.append("invalid_candidate_approval_state")
+    if not judge_ref:
+        errors.append("missing_judge_ref")
+    if not operator_approval_ref:
+        errors.append("missing_operator_approval_ref")
+    if not (
+        candidate.get("source_memory_refs")
+        or candidate.get("source_wiki_refs")
+        or candidate.get("source_candidate_refs")
+        or candidate.get("source_feedback_refs")
+    ):
+        errors.append("missing_approved_source_refs")
+    if str(candidate.get("safety_state") or "unknown") == "unsafe":
+        errors.append("unsafe_candidate")
+    if candidate.get("retired_at"):
+        errors.append("candidate_retired")
+    if candidate_state == "published":
+        warnings.append("already_published")
+
+    return {
+        "status": "valid" if not errors else "blocked",
+        "errors": errors,
+        "warnings": warnings,
+        "eligible_for_publication": not errors,
+        "validation_refs": refs,
+        "approval_refs": approval_refs,
+        "requires_judge": True,
+        "requires_operator_approval": True,
+        "authority": "advisory_skill_publication_only",
+    }
+
+
+def publish_skill_candidate(
+    registry: SkillMemoryRegistry,
+    candidate: Dict[str, Any],
+    *,
+    judge_ref: str,
+    operator_approval_ref: str,
+    validation_refs: Optional[Iterable[Any]] = None,
+    published_by: str = "operator",
+) -> Dict[str, Any]:
+    """Publish bounded skill metadata after judge and operator gates pass."""
+    gate = validate_skill_candidate_publication(
+        candidate,
+        judge_ref=judge_ref,
+        operator_approval_ref=operator_approval_ref,
+        validation_refs=validation_refs,
+    )
+    if not gate["eligible_for_publication"]:
+        return {
+            "status": "blocked",
+            "reason": ",".join(gate["errors"]),
+            "gate": gate,
+            "skill": None,
+            "candidate": candidate,
+        }
+
+    created = _now()
+    refs = gate["validation_refs"]
+    approval_refs = gate["approval_refs"]
+    source_candidate_refs = _list(candidate.get("source_candidate_refs"))
+    source_feedback_refs = _list(candidate.get("source_feedback_refs"))
+    skill = build_skill_metadata(
+        skill_id=candidate.get("skill_id"),
+        name=str(candidate.get("name") or "runtime skill"),
+        version=str(candidate.get("version") or candidate.get("skill_version") or "1.0.0"),
+        scope=str(candidate.get("scope") or ("repo" if candidate.get("repo_id") else "tenant")),
+        tenant_id=candidate.get("tenant_id"),
+        repo_id=candidate.get("repo_id"),
+        domain=candidate.get("domain"),
+        toolset=candidate.get("toolset"),
+        worker_role=candidate.get("worker_role"),
+        task_type=candidate.get("task_type"),
+        language=candidate.get("language"),
+        platform=candidate.get("platform"),
+        approval_state="approved",
+        safety_state="safe" if candidate.get("safety_state") in {None, "", "unknown"} else str(candidate.get("safety_state")),
+        content=str(candidate.get("summary") or candidate.get("name") or ""),
+        source_memory_refs=candidate.get("source_memory_refs") or [],
+        source_wiki_refs=candidate.get("source_wiki_refs") or [],
+        source_refs=candidate.get("source_refs")
+        or [
+            *_list(candidate.get("source_memory_refs")),
+            *_list(candidate.get("source_wiki_refs")),
+            *source_candidate_refs,
+            *source_feedback_refs,
+        ],
+        validation_refs=refs,
+        validation_hooks=refs,
+        summary=_bounded_text(candidate.get("summary") or candidate.get("name"), limit=320),
+        safety_notes=[
+            "Published through judge and operator approval gates.",
+            "Advisory only; current task evidence and policy take precedence.",
+        ],
+        redacted=True,
+        shareable=bool(candidate.get("shareable", False)),
+        sensitivity=str(candidate.get("sensitivity") or "normal"),
+        created_at=created,
+        updated_at=created,
+    )
+    skill.update(
+        {
+            "source_candidate_refs": source_candidate_refs,
+            "source_feedback_refs": source_feedback_refs,
+            "approval_refs": approval_refs,
+            "publication_id": f"skill_publication_{_sha256_text(stable_json({'candidate_id': candidate.get('candidate_id'), 'skill_id': skill.get('skill_id'), 'approval_refs': approval_refs}))[:20]}",
+            "published_at": created,
+            "published_by": _bounded_text(published_by, limit=120),
+            "authority": "advisory_only_no_override",
+            "authority_guard": ADVISORY_GUARD,
+        }
+    )
+    registry.save(skill)
+
+    updated_candidate = dict(candidate)
+    updated_candidate.update(
+        {
+            "candidate_state": "published",
+            "approval_state": "approved",
+            "can_publish": False,
+            "published_skill_id": skill["skill_id"],
+            "publication_id": skill["publication_id"],
+            "approval_refs": approval_refs,
+            "validation_refs": refs,
+            "updated_at": created,
+        }
+    )
+    registry.save_candidate(updated_candidate)
+    return {"status": "published", "gate": gate, "skill": skill, "candidate": updated_candidate}
 
 
 def attach_skill_refs_to_runtime_packet(packet: Any, skill_packet: Optional[Dict[str, Any]]) -> Dict[str, Any]:

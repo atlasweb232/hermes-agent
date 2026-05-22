@@ -11294,12 +11294,20 @@ Examples:
     skills_candidates = skills_subparsers.add_parser("candidates", help="List local skill candidates")
     skills_candidates.add_argument("--tenant-id", required=True)
     skills_candidates.add_argument("--json", action="store_true")
+    skills_publish = skills_subparsers.add_parser("evolve-publish", help="Publish a validated skill candidate after judge/operator gates")
+    skills_publish.add_argument("--tenant-id", required=True)
+    skills_publish.add_argument("--candidate-id", required=True)
+    skills_publish.add_argument("--judge-ref", required=True)
+    skills_publish.add_argument("--operator-approval-ref", required=True)
+    skills_publish.add_argument("--validation-ref", action="append", default=[])
+    skills_publish.add_argument("--published-by", default="operator")
+    skills_publish.add_argument("--json", action="store_true")
 
     def cmd_skills(args):
         def _print_skill_json(payload):
             print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
-        if getattr(args, "skills_action", None) in {"runtime", "feedback", "candidates"}:
+        if getattr(args, "skills_action", None) in {"runtime", "feedback", "candidates", "evolve-publish"}:
             from hermes_state import SessionDB
             from hermes_cli.skill_memory import (
                 SkillMemoryRegistry,
@@ -11307,6 +11315,7 @@ Examples:
                 build_bounded_skill_packet,
                 build_skill_feedback,
                 build_skill_retrieval_query,
+                publish_skill_candidate,
                 record_skill_feedback,
                 retrieve_skills,
             )
@@ -11356,6 +11365,27 @@ Examples:
                     payload["skill"] = None
                     payload["status"] = "recorded_without_skill"
                 _print_skill_json(payload)
+                return
+            if action == "evolve-publish":
+                candidate = registry.get_candidate(args.candidate_id, tenant_id=args.tenant_id)
+                if candidate is None:
+                    _print_skill_json(
+                        {
+                            "status": "blocked",
+                            "reason": "candidate_not_found",
+                            "candidate_id": args.candidate_id,
+                        }
+                    )
+                    return
+                result = publish_skill_candidate(
+                    registry,
+                    candidate,
+                    judge_ref=args.judge_ref,
+                    operator_approval_ref=args.operator_approval_ref,
+                    validation_refs=getattr(args, "validation_ref", []),
+                    published_by=getattr(args, "published_by", "operator"),
+                )
+                _print_skill_json(result)
                 return
             _print_skill_json({"status": "ok", "candidates": registry.list_candidates(tenant_id=args.tenant_id)})
             return
