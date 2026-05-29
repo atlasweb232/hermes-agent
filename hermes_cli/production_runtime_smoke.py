@@ -105,7 +105,15 @@ def _run_curator_and_judge(db: SessionDB, *, tenant_id: str, repo_id: str) -> di
     proposed = [candidate for candidate in curator.candidates if candidate.status == "proposed"]
 
     def _judge_call(_cfg: Any, prompt: str) -> str:
-        candidate_id = proposed[0].candidate_id if proposed else ""
+        candidate_id = ""
+        marker = "Candidate JSON:\n"
+        if marker in prompt:
+            try:
+                candidate_id = str(json.loads(prompt.split(marker, 1)[1]).get("id") or "")
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                candidate_id = ""
+        if not candidate_id:
+            candidate_id = proposed[0].candidate_id if proposed else ""
         return json.dumps(
             {
                 "candidate_id": candidate_id,

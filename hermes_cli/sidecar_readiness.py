@@ -167,6 +167,20 @@ def _acquire_lock(
     return db._execute_write(_do)
 
 
+def _release_locks(db: SessionDB, names: list[str], *, owner: str) -> None:
+    if not names:
+        return
+    ensure_sidecar_readiness_schema(db)
+
+    def _do(conn):
+        conn.executemany(
+            "DELETE FROM hermes_sidecar_leases WHERE sidecar_name = ? AND lease_owner = ?",
+            [(name, owner) for name in names],
+        )
+
+    db._execute_write(_do)
+
+
 def _selected_sidecars(sidecars: list[str] | tuple[str, ...] | None) -> list[str]:
     if not sidecars:
         return list(SIDECAR_DEFINITIONS)
@@ -197,6 +211,7 @@ def run_sidecar_readiness(
     limits, usage = _budget_config(config_map)
     items: list[SidecarReadinessItem] = []
     errors: list[str] = []
+    acquired_for_run_once: list[str] = []
 
     for name in names:
         definition = SIDECAR_DEFINITIONS[name]
@@ -217,6 +232,8 @@ def run_sidecar_readiness(
             now=current,
             lease_seconds=deadline,
         )
+        if run_once and lock_acquired and lock_owner == owner:
+            acquired_for_run_once.append(name)
         budget = evaluate_sidecar_budget(
             SidecarBudgetRequest(
                 tenant_id=str(cfg.get("tenant_id", "")),
@@ -283,6 +300,9 @@ def run_sidecar_readiness(
                 errors=item_errors,
             )
         )
+
+    if run_once:
+        _release_locks(db, acquired_for_run_once, owner=owner)
 
     ready = sum(1 for item in items if item.status == "ready")
     degraded = sum(1 for item in items if item.status == "degraded")

@@ -118,6 +118,33 @@ def test_t357_service_equivalent_one_shot_runner_is_bounded_and_selective(tmp_pa
         db.close()
 
 
+def test_t357_run_once_releases_service_equivalent_leases(tmp_path):
+    db = _db(tmp_path)
+    try:
+        first = run_sidecar_readiness(
+            db,
+            sidecars=["curator"],
+            run_once=True,
+            now=100.0,
+            lease_owner="owner-a",
+        )
+        second = run_sidecar_readiness(
+            db,
+            sidecars=["curator"],
+            run_once=True,
+            now=101.0,
+            lease_owner="owner-b",
+        )
+
+        assert first.items[0].lock_acquired is True
+        assert first.items[0].status == "ready"
+        assert second.items[0].lock_acquired is True
+        assert second.items[0].status == "ready"
+        assert second.items[0].lease_owner == "owner-b"
+    finally:
+        db.close()
+
+
 def test_t357_sidecar_readiness_cli_json_smoke(tmp_path, monkeypatch, capsys):
     home = tmp_path / ".hermes"
     monkeypatch.setenv("HERMES_HOME", str(home))

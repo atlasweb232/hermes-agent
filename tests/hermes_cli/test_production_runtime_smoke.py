@@ -45,6 +45,35 @@ def test_t353_t361_production_runtime_smoke_exercises_learning_loop(tmp_path, mo
         db.close()
 
 
+def test_t353_production_runtime_smoke_judges_preexisting_candidates_cleanly(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLACK_URGENT_CHANNEL", "C123456")
+    db = _db(tmp_path)
+    try:
+        db.upsert_meta_candidate(
+            candidate_id="preexisting-smoke-candidate",
+            kind="recovery_hint",
+            claim="Older proposed candidate should not poison deterministic smoke judge.",
+            evidence_json={"source": "preexisting"},
+            score=0.8,
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            status="proposed",
+        )
+
+        result = run_production_runtime_smoke(
+            db,
+            tenant_id="tenant-a",
+            repo_id="repo-a",
+            env={"PATH": "", "HERMES_SSH_PATH": "", "HERMES_GATEWAY_PATH": "", "HERMES_SIDECAR_PATH": ""},
+        )
+
+        assert result["status"] == "passed"
+        assert result["judge"]["errors"] == []
+        assert result["judge"]["status"] == "completed"
+    finally:
+        db.close()
+
+
 def test_t361_production_runtime_smoke_can_fail_closed_on_missing_urgent_channel(tmp_path, monkeypatch):
     monkeypatch.delenv("SLACK_URGENT_CHANNEL", raising=False)
     monkeypatch.delenv("HERMES_URGENT_CHANNEL", raising=False)
