@@ -7552,6 +7552,18 @@ class GatewayRunner:
                 _warn_token_threshold = int(_hyg_context_length * 0.95)
 
                 _msg_count = len(history)
+                _context_bearing_msg_count = 0
+                for _hyg_msg in history:
+                    if not isinstance(_hyg_msg, dict):
+                        continue
+                    _role = _hyg_msg.get("role")
+                    _content = str(_hyg_msg.get("content") or "")
+                    if _role == "tool" and (
+                        _hyg_msg.get("_context_offloaded")
+                        or "<context-offloaded-transcript-tool-result>" in _content
+                    ):
+                        continue
+                    _context_bearing_msg_count += 1
 
                 # Prefer actual API-reported tokens from the last turn
                 # (stored in session entry) over the rough char-based estimate.
@@ -7578,11 +7590,15 @@ class GatewayRunner:
                 # but catches runaway growth before it becomes unrecoverable.
                 # Threshold is configurable via
                 # compression.hygiene_hard_message_limit.
+                # Count only context-bearing messages. Workload posts can
+                # generate hundreds of compact offloaded tool refs; those no
+                # longer inflate prompt context and should not force a
+                # compression cycle by message count alone.
                 # (#2153)
                 _HARD_MSG_LIMIT = _hyg_hard_msg_limit
                 _needs_compress = (
                     _approx_tokens >= _compress_token_threshold
-                    or _msg_count >= _HARD_MSG_LIMIT
+                    or _context_bearing_msg_count >= _HARD_MSG_LIMIT
                 )
 
                 if _needs_compress:
