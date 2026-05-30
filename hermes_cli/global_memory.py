@@ -989,6 +989,199 @@ def persist_global_lesson(db: SessionDB, lesson: Dict[str, Any]) -> GlobalLesson
     return record
 
 
+# ── Phase 3: dedup-enforcing curation (merge + corroboration + quorum) ───────
+#
+# classify_dedupe already DETECTS exact/near/conflict relationships, but
+# persist_global_lesson only collapses *exact* id collisions — near-duplicates from
+# different tenants land as parallel rows. merge_or_persist_global_lesson closes that:
+# it folds a near-duplicate into its canonical lesson and accumulates cross-tenant
+# corroboration, so independent rediscovery becomes a quorum signal instead of a dup.
+#
+# Security property: a merge NEVER rewrites the canonical claim text or signatures.
+# It only accumulates evidence/corroboration/confidence(bounded)/shareability. A
+# higher-confidence "supersedes" candidate is recorded for curator review, not applied
+# silently — otherwise a crafted high-confidence near-dup would be a content-poisoning
+# vector. Content changes must go through the normal approval path.
+#
+# Serialization (the race when many tenants promote at once) is the single-consumer
+# curator's job — see the dedupe-topic consumer. This function provides the merge
+# SEMANTICS it applies.
+
+_MERGE_DEDUPE_CLASSES = {"exact_duplicate", "same_evidence", "near_duplicate", "same_topic", "supersedes"}
+
+
+@dataclass
+class GlobalCurationResult:
+    action: str  # "created" | "merged" | "conflict"
+    lesson: Dict[str, Any]
+    dedupe_class: str
+    target_id: Optional[str] = None
+    corroboration_count: int = 1
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "action": self.action,
+            "dedupe_class": self.dedupe_class,
+            "target_id": self.target_id,
+            "corroboration_count": self.corroboration_count,
+            "lesson": self.lesson,
+        }
+
+
+def _corroboration_entries(provenance: Dict[str, Any]) -> List[Dict[str, Any]]:
+    entries = (provenance or {}).get("corroborations")
+    return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+
+
+def lesson_corroboration_count(lesson: Dict[str, Any]) -> int:
+    """Number of DISTINCT tenants that have independently corroborated a lesson.
+
+    The originating tenant counts as 1; each distinct merged-in tenant adds one.
+    """
+    provenance = _as_json_dict(lesson.get("approval_provenance") or lesson.get("approval_provenance_json"))
+    tenants = {str(e.get("tenant_id") or "") for e in _corroboration_entries(provenance) if e.get("tenant_id")}
+    origin = str(lesson.get("tenant_id") or "")
+    if origin:
+        tenants.add(origin)
+    return max(1, len(tenants))
+
+
+def lesson_meets_quorum(
+    lesson: Dict[str, Any],
+    *,
+    min_distinct_tenants: int = 2,
+    require_held_out: bool = False,
+) -> bool:
+    """Quorum gate for cross-tenant/global promotion.
+
+    Requires corroboration from ``min_distinct_tenants`` distinct tenants. When
+    ``require_held_out`` is set, at least one corroboration must carry a held-out
+    verification (the model-independent, worker-unseen proof — see
+    hermes_cli.verification_evidence). Fail-closed.
+    """
+    if lesson_corroboration_count(lesson) < max(1, min_distinct_tenants):
+        return False
+    if require_held_out:
+        provenance = _as_json_dict(lesson.get("approval_provenance") or lesson.get("approval_provenance_json"))
+        if not any(bool(e.get("held_out")) for e in _corroboration_entries(provenance)):
+            return False
+    return True
+
+
+def _corroboration_from_record(record: "GlobalLessonRecord") -> Dict[str, Any]:
+    held_out = False
+    verification_sha = ""
+    prov = record.approval_provenance or {}
+    verification = prov.get("verification") if isinstance(prov.get("verification"), dict) else {}
+    if verification:
+        held_out = bool(verification.get("held_out"))
+        verification_sha = str(verification.get("evidence_sha256") or "")
+    return {
+        "tenant_id": record.tenant_id,
+        "evidence_hash": evidence_hash(record.evidence_refs or []),
+        "verification_sha256": verification_sha,
+        "held_out": held_out,
+        "at": _now(),
+    }
+
+
+def merge_global_lesson_records(
+    canonical: "GlobalLessonRecord", incoming: "GlobalLessonRecord"
+) -> "GlobalLessonRecord":
+    """Fold ``incoming`` into ``canonical``. Canonical claim text/signatures are NOT
+    altered — only evidence, corroboration, confidence (bounded) and shareability."""
+    provenance = dict(canonical.approval_provenance or {})
+    entries = _corroboration_entries(provenance)
+    known_tenants = {str(e.get("tenant_id") or "") for e in entries}
+    incoming_corr = _corroboration_from_record(incoming)
+    if str(incoming.tenant_id or "") and str(incoming.tenant_id or "") not in known_tenants:
+        entries.append(incoming_corr)
+    provenance["corroborations"] = entries
+
+    merged_tenants = {str(canonical.tenant_id or "")} | {str(e.get("tenant_id") or "") for e in entries}
+    merged_tenants.discard("")
+    distinct = max(1, len(merged_tenants))
+    provenance["corroboration_count"] = distinct
+
+    base = max(canonical.confidence, incoming.confidence)
+    confidence = min(1.0, base + 0.05 * (distinct - 1))
+
+    canonical.evidence_refs = sorted({*(canonical.evidence_refs or []), *(incoming.evidence_refs or [])})
+    canonical.citation_refs = sorted({*(canonical.citation_refs or []), *(incoming.citation_refs or [])})
+    merged_stats = dict(canonical.reuse_stats or {})
+    for key, value in (incoming.reuse_stats or {}).items():
+        merged_stats[str(key)] = int(merged_stats.get(str(key), 0)) + int(value)
+    canonical.reuse_stats = merged_stats
+    canonical.approval_provenance = provenance
+    canonical.confidence = confidence
+    canonical.cross_tenant_shareable = bool(canonical.cross_tenant_shareable or incoming.cross_tenant_shareable)
+    canonical.updated_at = _now()
+    return canonical
+
+
+def merge_or_persist_global_lesson(
+    db: SessionDB,
+    lesson: Dict[str, Any],
+    *,
+    candidate_limit: int = 200,
+) -> GlobalCurationResult:
+    """Dedup-enforcing write path: merge near-duplicates, accumulate corroboration.
+
+    This is the curation entrypoint (vs the low-level persist_global_lesson). It runs
+    classify_dedupe against the existing non-retired pool and acts on the verdict:
+    merge into the canonical lesson, quarantine a conflicting claim, or create a new
+    canonical lesson. Ordering/serialization across concurrent callers is provided by
+    the single-consumer curator that wraps this.
+    """
+    incoming = _normalize_global_lesson(lesson)
+    existing = [l for l in list_global_lessons(db, limit=candidate_limit) if not l.get("retired_at")]
+
+    decision = classify_dedupe(incoming.to_dict(), existing)
+    target_id = decision.matched_id if decision.dedupe_class in (_MERGE_DEDUPE_CLASSES | {"conflict"}) else None
+
+    if decision.dedupe_class in _MERGE_DEDUPE_CLASSES and target_id:
+        target_dict = get_global_lesson(db, target_id)
+        if target_dict is not None:
+            canonical = _normalize_global_lesson(target_dict)
+            if decision.dedupe_class == "supersedes":
+                prov = dict(canonical.approval_provenance or {})
+                review = list(prov.get("supersede_candidates") or [])
+                review.append({"text_hash": incoming.text_hash, "confidence": incoming.confidence, "at": _now()})
+                prov["supersede_candidates"] = review
+                canonical.approval_provenance = prov
+            merged = merge_global_lesson_records(canonical, incoming)
+            persist_global_lesson(db, merged.to_dict())
+            return GlobalCurationResult(
+                action="merged",
+                lesson=merged.to_dict(),
+                dedupe_class=decision.dedupe_class,
+                target_id=target_id,
+                corroboration_count=lesson_corroboration_count(merged.to_dict()),
+            )
+
+    if decision.dedupe_class == "conflict" and target_id:
+        incoming.approval_state = "quarantined"
+        prov = dict(incoming.approval_provenance or {})
+        prov["conflicts_with"] = target_id
+        incoming.approval_provenance = prov
+        persist_global_lesson(db, incoming.to_dict())
+        return GlobalCurationResult(
+            action="conflict",
+            lesson=incoming.to_dict(),
+            dedupe_class="conflict",
+            target_id=target_id,
+        )
+
+    persist_global_lesson(db, incoming.to_dict())
+    return GlobalCurationResult(
+        action="created",
+        lesson=incoming.to_dict(),
+        dedupe_class="canonical_new",
+        target_id=None,
+        corroboration_count=lesson_corroboration_count(incoming.to_dict()),
+    )
+
+
 def ensure_global_hot_cache_schema(db: SessionDB) -> None:
     def _do(conn):
         conn.execute(
