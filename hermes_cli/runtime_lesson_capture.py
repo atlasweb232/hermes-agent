@@ -16,11 +16,6 @@ import shlex
 from typing import Any, Optional
 
 
-_SECRET_PATTERNS = [
-    re.compile(r"\b(sk-[A-Za-z0-9_-]{12,})\b"),
-    re.compile(r"\b([A-Za-z0-9_]{6,}:[A-Za-z0-9_-]{20,})\b"),
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s]+"),
-]
 _SAFE_HERMES_EVIDENCE_REF_RE = re.compile(
     r"^hermes:(?:delegate|allocation|runtime-lesson):[A-Za-z0-9_.:-]{1,260}$"
 )
@@ -104,9 +99,15 @@ class DelegatedWorkerRuntimeFailure:
 
 
 def redact_sensitive_text(text: str, *, max_chars: int = 2000) -> str:
-    safe = str(text or "")
-    for pattern in _SECRET_PATTERNS:
-        safe = pattern.sub("[REDACTED]", safe)
+    """Strict-redact text captured into a runtime lesson.
+
+    Delegates to the shared :func:`hermes_cli.memory_redaction.redact_for_persistence`
+    (full-erase + canonical breadth) so all persisted memory uses one redactor,
+    then applies this module's historical ``...[truncated]`` bounding marker.
+    """
+    from hermes_cli.memory_redaction import redact_for_persistence
+
+    safe = redact_for_persistence(text)
     if len(safe) > max_chars:
         safe = safe[:max_chars] + "...[truncated]"
     return safe

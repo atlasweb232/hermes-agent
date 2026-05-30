@@ -19,6 +19,7 @@ from hermes_cli.mlops_corpus import (
     LocalCorpusBundleWriter,
     RedactionReport,
 )
+from hermes_cli.verification_evidence import VERIFICATION_EVIDENCE_KEY
 
 
 DATASET_FAMILIES = {
@@ -314,6 +315,37 @@ def _dataset_family_for_candidate(candidate: Dict[str, Any]) -> str:
     return "policy_playbook"
 
 
+def _validation_evidence_from_candidate(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the training-corpus ``validation_evidence`` from a candidate's evidence.
+
+    Precedence: any explicitly-recorded ``validation_evidence``/``validation`` dict is
+    kept as the base, then the model-independent completion-gate ``verification`` block
+    (attached by ``verification_evidence.capture_verification_for_task``) is folded in as
+    the authoritative proof. This is the teacher-independence carry-through: the training
+    artifact records that the lesson was grounded in a harness outcome (compile/test/spec),
+    not just an LLM judge's say-so. When no verification was captured, behaviour is
+    unchanged (returns the explicit validation dict, or {}).
+    """
+    base = evidence.get("validation_evidence") or evidence.get("validation") or {}
+    base = dict(base) if isinstance(base, dict) else {}
+
+    block = evidence.get(VERIFICATION_EVIDENCE_KEY)
+    if not isinstance(block, dict):
+        return base
+
+    refs = list(base.get("evidence_refs") or base.get("commands") or [])
+    uri = block.get("evidence_uri")
+    if uri and uri not in refs:
+        refs.append(uri)
+
+    base["verification"] = block
+    base["evidence_refs"] = refs
+    base["model_independent"] = bool(block.get("passed"))
+    base["held_out"] = bool(block.get("held_out"))
+    base["verification_sha256"] = block.get("evidence_sha256")
+    return base
+
+
 def _wiki_payload_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
     evidence = candidate.get("evidence_json") if isinstance(candidate.get("evidence_json"), dict) else {}
     dataset_family = _dataset_family_for_candidate(candidate)
@@ -337,7 +369,7 @@ def _wiki_payload_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
         "failure_signature": evidence.get("failure_signature") or evidence.get("failed_path"),
         "bad_action": evidence.get("bad_action"),
         "successful_action": evidence.get("successful_action") or evidence.get("working_path") or claim,
-        "validation_evidence": evidence.get("validation_evidence") or evidence.get("validation") or {},
+        "validation_evidence": _validation_evidence_from_candidate(evidence),
         "drift_eval": evidence.get("drift_eval") or {},
         "training_labels": evidence.get("training_labels") or [dataset_family],
     }

@@ -2197,6 +2197,7 @@ def approve_meta_candidate(
     candidate_id: str,
     apply: bool = False,
     config: Optional[Dict[str, Any]] = None,
+    require_verification: Optional[bool] = None,
 ) -> MetaCandidateActionResult:
     candidate = db.get_meta_candidate(candidate_id)
     if candidate is None:
@@ -2204,6 +2205,34 @@ def approve_meta_candidate(
 
     if config is None:
         config = load_config()
+
+    # Teacher-independence gate (verifiable reward). When enabled, a candidate
+    # cannot be approved on an LLM judge's say-so alone — its evidence must carry
+    # a passing, model-independent completion-gate verification. Fail-closed.
+    from hermes_cli.verification_evidence import (
+        evidence_has_passing_verification,
+        load_verification_gate_config,
+    )
+
+    if require_verification is None:
+        require_verification = load_verification_gate_config(config)[
+            "require_verification_for_approval"
+        ]
+    if require_verification and not evidence_has_passing_verification(
+        candidate.get("evidence_json")
+    ):
+        return MetaCandidateActionResult(
+            candidate_id=candidate_id,
+            status="blocked",
+            applied=False,
+            config_written=False,
+            notes=(
+                "approval blocked: no passing verification evidence "
+                "(harness gate required before promotion)"
+            ),
+            candidate=candidate,
+        )
+
     targets: List[str] = []
     config_written = False
     applied = False

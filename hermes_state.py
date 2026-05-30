@@ -494,6 +494,20 @@ class SessionDB:
             _set_last_init_error(f"{type(exc).__name__}: {exc}")
             raise
 
+        # Postgres delegation: set via configure_postgres_backend().
+        # When set, tenant memory methods delegate to the Postgres adapter
+        # (which enforces RLS) instead of SQLite.
+        self._pg_memory: Optional[Any] = None
+
+    def configure_postgres_backend(self, adapter: Any) -> None:
+        """Attach a PostgresMemoryAdapter so tenant memory calls use Postgres RLS.
+
+        Call this once at startup after constructing SessionDB.  On each request,
+        call adapter.for_tenant(authenticated_tenant_id) to bind the tenant:
+            db._pg_memory = db._pg_memory.for_tenant(tenant_id)
+        """
+        self._pg_memory = adapter
+
     # ── Core write helper ──
 
     def _execute_write(self, fn: Callable[[sqlite3.Connection], T]) -> T:
@@ -2633,6 +2647,16 @@ class SessionDB:
         source: Optional[str] = None,
         expires_at: Optional[float] = None,
     ) -> str:
+        if self._pg_memory is not None:
+            return self._pg_memory.upsert_memory_packet(
+                packet_id=packet_id, query=query, status=status,
+                tenant_id=tenant_id, repo_id=repo_id, job_id=job_id,
+                task_id=task_id, scopes=scopes, claims_json=claims_json,
+                evidence_json=evidence_json,
+                contradictions_json=contradictions_json,
+                freshness_json=freshness_json, confidence=confidence,
+                source=source, expires_at=expires_at,
+            )
         now = time.time()
 
         def _do(conn):
@@ -2694,6 +2718,11 @@ class SessionDB:
         task_id: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
+        if self._pg_memory is not None:
+            return self._pg_memory.list_memory_packets(
+                tenant_id=tenant_id, repo_id=repo_id,
+                job_id=job_id, task_id=task_id, limit=limit,
+            )
         clauses = []
         params: List[Any] = []
         for key, value in (
@@ -2726,6 +2755,8 @@ class SessionDB:
         return parsed
 
     def get_memory_packet(self, packet_id: str) -> Optional[Dict[str, Any]]:
+        if self._pg_memory is not None:
+            return self._pg_memory.get_memory_packet(packet_id)
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM hermes_memory_packets WHERE id = ?",
@@ -2756,6 +2787,14 @@ class SessionDB:
         evidence_uri: Optional[str] = None,
         evidence_sha256: Optional[str] = None,
     ) -> str:
+        if self._pg_memory is not None:
+            return self._pg_memory.upsert_memory_record(
+                record_id=record_id, kind=kind, title=title, body=body,
+                payload_json=payload_json, status=status, score=score,
+                tenant_id=tenant_id, repo_id=repo_id, job_id=job_id,
+                task_id=task_id, packet_id=packet_id,
+                evidence_uri=evidence_uri, evidence_sha256=evidence_sha256,
+            )
         now = time.time()
 
         def _do(conn):
@@ -2814,7 +2853,14 @@ class SessionDB:
         sha256: Optional[str] = None,
         mime_type: Optional[str] = None,
         excerpt: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> int:
+        if self._pg_memory is not None:
+            return self._pg_memory.add_memory_evidence(
+                uri=uri, record_id=record_id, packet_id=packet_id,
+                sha256=sha256, mime_type=mime_type, excerpt=excerpt,
+                tenant_id=tenant_id,
+            )
         now = time.time()
 
         def _do(conn):
@@ -2841,6 +2887,11 @@ class SessionDB:
         status: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
+        if self._pg_memory is not None:
+            return self._pg_memory.list_memory_records(
+                tenant_id=tenant_id, repo_id=repo_id, kind=kind,
+                status=status, packet_id=packet_id, limit=limit,
+            )
         clauses = []
         params: List[Any] = []
         for key, value in (
@@ -3005,6 +3056,12 @@ class SessionDB:
         tenant_id: Optional[str] = None,
         repo_id: Optional[str] = None,
     ) -> str:
+        if self._pg_memory is not None:
+            return self._pg_memory.upsert_meta_candidate(
+                candidate_id=candidate_id, kind=kind, claim=claim,
+                evidence_json=evidence_json, score=score, status=status,
+                tenant_id=tenant_id, repo_id=repo_id,
+            )
         now = time.time()
 
         def _do(conn):
@@ -3050,6 +3107,11 @@ class SessionDB:
         status: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
+        if self._pg_memory is not None:
+            return self._pg_memory.list_meta_candidates(
+                tenant_id=tenant_id, repo_id=repo_id, kind=kind,
+                status=status, limit=limit,
+            )
         clauses = []
         params: List[Any] = []
         for key, value in (
@@ -3081,6 +3143,8 @@ class SessionDB:
         return parsed
 
     def get_meta_candidate(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        if self._pg_memory is not None:
+            return self._pg_memory.get_meta_candidate(candidate_id)
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM hermes_meta_candidates WHERE id = ?",
@@ -3100,6 +3164,10 @@ class SessionDB:
         evidence_json: Optional[Any] = None,
         score: Optional[float] = None,
     ) -> bool:
+        if self._pg_memory is not None:
+            return self._pg_memory.update_meta_candidate_status(
+                candidate_id, status=status, evidence_json=evidence_json, score=score
+            )
         now = time.time()
 
         def _do(conn):

@@ -897,10 +897,49 @@ def ensure_global_lesson_schema(db: SessionDB) -> None:
     db._execute_write(_do)
 
 
+def _global_lesson_values(record: "GlobalLessonRecord") -> Dict[str, Any]:
+    """Column→value map for the hermes_global_lessons row (shared by SQLite + PG)."""
+    return {
+        "id": record.id,
+        "tenant_id": record.tenant_id,
+        "repo_id": record.repo_id,
+        "approval_state": record.approval_state,
+        "scope": record.scope,
+        "sensitivity": record.sensitivity,
+        "visibility": record.visibility,
+        "claim_type": record.claim_type,
+        "tool": record.tool,
+        "task_type": record.task_type,
+        "worker_kind": record.worker_kind,
+        "failure_signature": record.failure_signature,
+        "success_signature": record.success_signature,
+        "scope_signature": record.scope_signature,
+        "evidence_signature": record.evidence_signature,
+        "normalized_text": record.normalized_text,
+        "text_hash": record.text_hash,
+        "simhash": record.simhash,
+        "confidence": record.confidence,
+        "reuse_stats_json": json.dumps(record.reuse_stats, sort_keys=True),
+        "approval_provenance_json": json.dumps(record.approval_provenance, sort_keys=True),
+        "evidence_refs_json": json.dumps(record.evidence_refs, sort_keys=True),
+        "citation_refs_json": json.dumps(record.citation_refs, sort_keys=True),
+        "cross_tenant_shareable": 1 if record.cross_tenant_shareable else 0,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "retired_at": record.retired_at,
+    }
+
+
 def persist_global_lesson(db: SessionDB, lesson: Dict[str, Any]) -> GlobalLessonRecord:
-    ensure_global_lesson_schema(db)
     record = _normalize_global_lesson(lesson)
     record.updated_at = _now()
+
+    pg = getattr(db, "_pg_memory", None)
+    if pg is not None:
+        pg.pg_persist_global_lesson(_global_lesson_values(record))
+        return record
+
+    ensure_global_lesson_schema(db)
 
     def _do(conn):
         conn.execute(
@@ -1035,7 +1074,9 @@ def materialize_global_lesson_to_hot_cache(
     *,
     ttl_seconds: int = 3600,
 ) -> GlobalHotCacheEntry:
-    ensure_global_hot_cache_schema(db)
+    pg = getattr(db, "_pg_memory", None)
+    if pg is None:
+        ensure_global_hot_cache_schema(db)
     evt = _as_precuration_event(event)
     source_id = str(lesson.get("id") or lesson.get("global_lesson_id") or "")
     cache_id = f"ghot_{stable_hash([source_id, evt.tenant_id, evt.repo_id, evt.task_type, evt.tool])[:16]}"
@@ -1061,6 +1102,30 @@ def materialize_global_lesson_to_hot_cache(
         last_used_at=now,
         expires_at=now + int(ttl_seconds),
     )
+
+    if pg is not None:
+        pg.pg_upsert_hot_cache({
+            "id": entry.id,
+            "global_lesson_id": entry.global_lesson_id,
+            "tenant_id": entry.tenant_id,
+            "repo_id": entry.repo_id,
+            "scope": entry.scope,
+            "sensitivity": entry.sensitivity,
+            "tool": entry.tool,
+            "task_type": entry.task_type,
+            "worker_kind": entry.worker_kind,
+            "failure_signature": entry.failure_signature,
+            "success_signature": entry.success_signature,
+            "compact_text": entry.compact_text,
+            "confidence": entry.confidence,
+            "evidence_refs_json": json.dumps(entry.evidence_refs, sort_keys=True),
+            "reuse_stats_json": json.dumps(entry.reuse_stats, sort_keys=True),
+            "created_at": entry.created_at,
+            "updated_at": entry.updated_at,
+            "last_used_at": entry.last_used_at,
+            "expires_at": entry.expires_at,
+        })
+        return entry
 
     def _do(conn):
         conn.execute(
@@ -1105,23 +1170,28 @@ def retrieve_global_hot_cache_for_event(
     *,
     limit: int = 3,
 ) -> List[Dict[str, Any]]:
-    ensure_global_hot_cache_schema(db)
+    pg = getattr(db, "_pg_memory", None)
+    if pg is None:
+        ensure_global_hot_cache_schema(db)
     evt = _as_precuration_event(event)
     now = _now()
 
-    def _fetch(conn):
-        rows = conn.execute(
-            """
-            SELECT * FROM hermes_global_hot_cache
-            WHERE (expires_at IS NULL OR expires_at > ?)
-            ORDER BY last_used_at DESC, confidence DESC
-            LIMIT 200
-            """,
-            (now,),
-        ).fetchall()
-        return [_hot_cache_entry_from_row(row) for row in rows]
+    if pg is not None:
+        rows = [_hot_cache_entry_from_row(row) for row in pg.pg_fetch_hot_cache(now=now, limit=200)]
+    else:
+        def _fetch(conn):
+            rows = conn.execute(
+                """
+                SELECT * FROM hermes_global_hot_cache
+                WHERE (expires_at IS NULL OR expires_at > ?)
+                ORDER BY last_used_at DESC, confidence DESC
+                LIMIT 200
+                """,
+                (now,),
+            ).fetchall()
+            return [_hot_cache_entry_from_row(row) for row in rows]
 
-    rows = db._execute_write(_fetch)
+        rows = db._execute_write(_fetch)
     matches: List[Dict[str, Any]] = []
     for row in rows:
         lesson_like = {
@@ -1152,14 +1222,17 @@ def retrieve_global_hot_cache_for_event(
     if selected:
         ids = [item["id"] for item in selected]
 
-        def _touch(conn):
-            ts = _now()
-            conn.executemany(
-                "UPDATE hermes_global_hot_cache SET last_used_at = ?, updated_at = ? WHERE id = ?",
-                [(ts, ts, cache_id) for cache_id in ids],
-            )
+        if pg is not None:
+            pg.pg_touch_hot_cache(ids)
+        else:
+            def _touch(conn):
+                ts = _now()
+                conn.executemany(
+                    "UPDATE hermes_global_hot_cache SET last_used_at = ?, updated_at = ? WHERE id = ?",
+                    [(ts, ts, cache_id) for cache_id in ids],
+                )
 
-        db._execute_write(_touch)
+            db._execute_write(_touch)
     return selected
 
 
@@ -1171,6 +1244,14 @@ def list_global_lessons(
     approval_state: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
+    pg = getattr(db, "_pg_memory", None)
+    if pg is not None:
+        rows = pg.pg_list_global_lessons(
+            tenant_id=tenant_id, repo_id=repo_id,
+            approval_state=approval_state, limit=limit,
+        )
+        return [_global_lesson_from_row(row) for row in rows]
+
     ensure_global_lesson_schema(db)
 
     def _fetch(conn):
@@ -1201,6 +1282,11 @@ def list_global_lessons(
 
 
 def get_global_lesson(db: SessionDB, lesson_id: str) -> Optional[Dict[str, Any]]:
+    pg = getattr(db, "_pg_memory", None)
+    if pg is not None:
+        row = pg.pg_get_global_lesson(lesson_id)
+        return _global_lesson_from_row(row) if row else None
+
     ensure_global_lesson_schema(db)
 
     def _fetch(conn):

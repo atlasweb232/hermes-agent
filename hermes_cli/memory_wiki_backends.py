@@ -358,6 +358,18 @@ def _build_backend(role: str, cfg: Dict[str, Any]) -> Any:
         return LocalFakeVectorIndex(uri)
     if role == "graph" and backend in {"sqlite", "memory"}:
         return SQLiteGraphIndex(uri)
+    if role == "state" and backend == "postgres":
+        try:
+            from hermes_cli.pg_tenant_store import PostgresTenantStore
+            return PostgresTenantStore(uri)
+        except ImportError as exc:
+            return UnavailableBackend(role, backend, f"asyncpg not installed: {exc}")
+    if role == "lexical" and backend == "postgres_fts":
+        try:
+            from hermes_cli.pg_tenant_store import PostgresFTSIndex
+            return PostgresFTSIndex(uri)
+        except ImportError as exc:
+            return UnavailableBackend(role, backend, f"asyncpg not installed: {exc}")
     if backend in PRODUCTION_BACKENDS.get(role, set()):
         return UnavailableBackend(role, backend, f"{role} backend {backend} configured but optional adapter is not installed")
     return UnavailableBackend(role, backend or "unknown", f"{role} backend {backend or 'unknown'} is not supported")

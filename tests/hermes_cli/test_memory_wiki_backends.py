@@ -170,7 +170,9 @@ def test_memory_wiki_unknown_production_backends_are_configured_unavailable(tmp_
     config = _local_config(tmp_path)
     wiki = config["supervisor"]["global_memory_wiki"]
     wiki["object_store"] = {"backend": "s3", "uri": "s3://secret-bucket/path", "access_key": "AKIASECRET"}
-    wiki["state_store"] = {"backend": "postgres", "uri": "postgres://user:pass@db/memory"}
+    # 'delta' is still an unsupported/uninstalled state backend (postgres is now
+    # supported — see test_memory_wiki_postgres_backends_are_supported below).
+    wiki["state_store"] = {"backend": "delta", "uri": "s3://delta/memory"}
     wiki["lexical_index"] = {"backend": "opensearch", "uri": "https://search.example"}
     wiki["vector_index"] = {"backend": "qdrant", "uri": "https://vectors.example"}
     wiki["graph_index"] = {"backend": "neo4j", "uri": "bolt://user:pass@graph"}
@@ -184,6 +186,37 @@ def test_memory_wiki_unknown_production_backends_are_configured_unavailable(tmp_
     dumped = json.dumps(health, sort_keys=True)
     assert "AKIASECRET" not in dumped
     assert "user:pass" not in dumped
+
+
+def test_memory_wiki_postgres_backends_are_supported(tmp_path):
+    """postgres (state) and postgres_fts (lexical) now resolve to real RLS adapters.
+
+    Phase 2: these were UnavailableBackend stubs; they are now PostgresTenantStore /
+    PostgresFTSIndex. They report a non-'unavailable' status and must not leak the
+    DSN password into health output.
+    """
+    from hermes_cli.memory_wiki_backends import build_memory_wiki_backends
+
+    try:
+        import asyncpg  # noqa: F401
+    except ImportError:
+        import pytest
+        pytest.skip("asyncpg not installed")
+
+    config = _local_config(tmp_path)
+    wiki = config["supervisor"]["global_memory_wiki"]
+    wiki["state_store"] = {"backend": "postgres", "uri": "postgres://user:sekret@db/memory"}
+    wiki["lexical_index"] = {"backend": "postgres_fts", "uri": "postgres://user:sekret@db/memory"}
+
+    bundle = build_memory_wiki_backends(config)
+    assert type(bundle.state_store).__name__ == "PostgresTenantStore"
+    assert type(bundle.lexical_index).__name__ == "PostgresFTSIndex"
+    # Real adapters are not "unavailable" — they're initializing until first connect.
+    assert bundle.state_store.health.status != "unavailable"
+    assert bundle.lexical_index.health.status != "unavailable"
+    # DSN password must not leak into the health dump.
+    dumped = json.dumps(bundle.to_dict(), sort_keys=True)
+    assert "sekret" not in dumped
 
 
 def test_memory_wiki_backends_cli_json_reports_safe_health(tmp_path, monkeypatch, capsys):

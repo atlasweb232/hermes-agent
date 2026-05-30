@@ -106,6 +106,73 @@ def test_compile_memory_wiki_creates_scoped_claim_index_and_training_payload(tmp
         db.close()
 
 
+def test_verification_block_carries_into_training_validation_evidence(tmp_path):
+    """The model-independent completion-gate proof must reach the training artifact.
+
+    A candidate carrying a passing ``verification`` block (attached by the harness via
+    capture_verification_for_task) should surface in the training payload's
+    ``validation_evidence`` as model-independent, held-out-flagged proof — without
+    losing any explicitly-recorded validation commands.
+    """
+    from hermes_cli.verification_evidence import capture_verification_for_task
+
+    db = _make_db(tmp_path)
+    try:
+        _seed_candidate(db, "metacand_verified")
+        gate = {
+            "enabled": True,
+            "status": "passed",
+            "repo_path": "/repo",
+            "passed": True,
+            "checks": [
+                {"name": "build_command", "passed": True, "skipped": False,
+                 "command": ["pytest"], "returncode": 0},
+            ],
+        }
+        record = capture_verification_for_task(
+            db, gate, task_id="t-verified",
+            tenant_id="atlas", repo_id="migration-suite",
+            held_out=True, candidate_id="metacand_verified",
+        )
+
+        result = compile_memory_wiki(db, tenant_id="atlas", repo_id="migration-suite")
+        claim = result.claims[0]
+        ve = claim.training_payload_json["validation_evidence"]
+
+        # the harness proof is folded in, and is model-independent + held-out
+        assert ve["verification"]["passed"] is True
+        assert ve["model_independent"] is True
+        assert ve["held_out"] is True
+        assert ve["verification_sha256"] == record.evidence_sha256
+        # the explicitly-recorded validation commands are preserved alongside it
+        assert "pytest tests/test_routes.py" in ve["evidence_refs"]
+        assert record.evidence_uri in ve["evidence_refs"]
+
+        # and it survives into the exported training-corpus record (the artifact)
+        export = export_training_corpus(db, tenant_id="atlas", repo_id="migration-suite")
+        exported = export.records[0].payload_json["validation_evidence"]
+        assert exported["verification"]["passed"] is True
+        assert exported["held_out"] is True
+    finally:
+        db.close()
+
+
+def test_validation_evidence_unchanged_without_verification_block(tmp_path):
+    """Back-compat: candidates with no verification block behave exactly as before."""
+    db = _make_db(tmp_path)
+    try:
+        _seed_candidate(db, "metacand_legacy")
+        result = compile_memory_wiki(db, tenant_id="atlas", repo_id="migration-suite")
+        ve = result.claims[0].training_payload_json["validation_evidence"]
+        assert ve == {
+            "commands": ["pytest tests/test_routes.py"],
+            "output_sha256": "sha256:validation",
+        }
+        assert "verification" not in ve
+    finally:
+        db.close()
+
+
 def test_compile_memory_wiki_deduplicates_by_claim_scope(tmp_path):
     db = _make_db(tmp_path)
     try:

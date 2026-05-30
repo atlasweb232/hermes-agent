@@ -72,6 +72,12 @@ class ContextEngine(ABC):
         """Update tracked token usage from an API response.
 
         Called after every LLM call with the usage dict from the response.
+
+        The host forwards both legacy aggregate keys (``prompt_tokens``,
+        ``completion_tokens``, ``total_tokens``) and the canonical per-bucket
+        keys (``input_tokens``, ``output_tokens``, ``cache_read_tokens``,
+        ``cache_write_tokens``, ``reasoning_tokens``) so engines can reason
+        about cache-hit ratios and reasoning costs, not just aggregates.
         """
 
     @abstractmethod

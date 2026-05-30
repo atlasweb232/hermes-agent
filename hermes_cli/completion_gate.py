@@ -81,6 +81,10 @@ def load_completion_gate_config(config: dict[str, Any] | None) -> dict[str, Any]
             or []
         ),
         "build_commands": list(gate.get("build_commands", []) or []),
+        # Held-out (worker-unseen) checks: run post-hoc by the supervisor/curator,
+        # never surfaced to the worker. This is the train/test split that makes the
+        # learning signal resistant to Goodharting the visible build_commands.
+        "held_out_commands": list(gate.get("held_out_commands", []) or []),
         "max_output_chars": int(gate.get("max_output_chars", 8000) or 8000),
     }
 
@@ -137,6 +141,54 @@ def run_completion_gate(
         repo_path=str(repo),
         checks=checks,
         reason=reason,
+    )
+
+
+def run_held_out_gate(
+    *,
+    repo_path: str | os.PathLike[str] | None,
+    config: dict[str, Any] | None = None,
+) -> CompletionGateResult:
+    """Run the held-out (worker-unseen) check set against an already-finished repo.
+
+    This is intentionally NOT part of ``run_completion_gate`` / the delegate payload:
+    the worker must never see these commands, or the train/test split collapses. The
+    supervisor/curator runs this after the worker reports done. The outcome is what
+    legitimately licenses ``held_out=True`` on a verification record — a worker that
+    overfit the visible ``build_commands`` still has to satisfy unseen checks here.
+
+    Returns ``status="skipped"`` when no ``held_out_commands`` are configured, so a
+    caller can never mint a held-out verification without checks having actually run.
+    """
+    gate_cfg = load_completion_gate_config(config)
+    commands = gate_cfg["held_out_commands"]
+    if not commands:
+        return CompletionGateResult(
+            enabled=True, status="skipped", reason="no held_out_commands configured"
+        )
+    if not repo_path:
+        return CompletionGateResult(
+            enabled=True, status="skipped", reason="no repository path detected"
+        )
+    repo = Path(repo_path).expanduser().resolve()
+    if not (repo / ".git").exists():
+        return CompletionGateResult(
+            enabled=True, status="skipped", repo_path=str(repo),
+            reason="path is not a git repository",
+        )
+
+    max_chars = gate_cfg["max_output_chars"]
+    checks: list[CheckResult] = []
+    for command in commands:
+        check = _check_build_command(repo, command, max_chars=max_chars)
+        check.name = "held_out"
+        checks.append(check)
+
+    failed = [c for c in checks if not c.skipped and not c.passed]
+    status = "passed" if not failed else "blocked"
+    reason = "" if not failed else "one or more held-out checks failed"
+    return CompletionGateResult(
+        enabled=True, status=status, repo_path=str(repo), checks=checks, reason=reason,
     )
 
 

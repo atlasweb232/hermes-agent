@@ -524,7 +524,81 @@ class AIAgent:
                 "Session DB creation failed (will retry next turn): %s", e
             )
 
-    def reset_session_state(self):
+    def _transition_context_engine_session(
+        self,
+        *,
+        old_session_id: Optional[str] = None,
+        new_session_id: Optional[str] = None,
+        previous_messages: Optional[list] = None,
+        carry_over_context: bool = False,
+        reset_engine: bool = True,
+        **extra_context,
+    ) -> None:
+        """Notify the active context engine about a host session transition.
+
+        Generic host-side lifecycle helper. The built-in compressor keeps its
+        existing reset behavior; plugin engines that implement richer hooks
+        (``on_session_end``, ``on_session_reset``, ``on_session_start``,
+        ``carry_over_new_session_context``) can flush old-session state,
+        reset runtime counters, bind to the new session, and optionally
+        carry retained context forward.
+        """
+        engine = getattr(self, "context_compressor", None)
+        if not engine:
+            return
+
+        if old_session_id and previous_messages is not None and hasattr(engine, "on_session_end"):
+            try:
+                engine.on_session_end(old_session_id, previous_messages)
+            except Exception as exc:
+                logger.debug("context engine on_session_end during transition: %s", exc)
+
+        if reset_engine and hasattr(engine, "on_session_reset"):
+            try:
+                engine.on_session_reset()
+            except Exception as exc:
+                logger.debug("context engine on_session_reset during transition: %s", exc)
+
+        should_start = bool(
+            old_session_id
+            or previous_messages is not None
+            or carry_over_context
+            or extra_context
+        )
+        target_session_id = new_session_id or getattr(self, "session_id", "") or ""
+        if should_start and target_session_id and hasattr(engine, "on_session_start"):
+            start_context = {
+                "old_session_id": old_session_id,
+                "carry_over_context": carry_over_context,
+                "platform": getattr(self, "platform", None) or os.environ.get("HERMES_SESSION_SOURCE", "cli"),
+                "model": getattr(self, "model", ""),
+                "context_length": getattr(engine, "context_length", None),
+                "conversation_id": getattr(self, "_gateway_session_key", None),
+            }
+            start_context.update(extra_context)
+            start_context = {k: v for k, v in start_context.items() if v not in (None, "")}
+            try:
+                engine.on_session_start(target_session_id, **start_context)
+            except Exception as exc:
+                logger.debug("context engine on_session_start during transition: %s", exc)
+
+        if (
+            carry_over_context
+            and old_session_id
+            and target_session_id
+            and hasattr(engine, "carry_over_new_session_context")
+        ):
+            try:
+                engine.carry_over_new_session_context(old_session_id, target_session_id)
+            except Exception as exc:
+                logger.debug("context engine carry_over_new_session_context during transition: %s", exc)
+
+    def reset_session_state(
+        self,
+        previous_messages: Optional[list] = None,
+        old_session_id: Optional[str] = None,
+        carry_over_context: bool = False,
+    ):
         """Reset all session-scoped token counters to 0 for a fresh session.
         
         This method encapsulates the reset logic for all session-level metrics
@@ -559,9 +633,14 @@ class AIAgent:
         # Turn counter (added after reset_session_state was first written — #2635)
         self._user_turn_count = 0
 
-        # Context engine reset (works for both built-in compressor and plugins)
-        if hasattr(self, "context_compressor") and self.context_compressor:
-            self.context_compressor.on_session_reset()
+        # Context engine reset/transition (works for built-in compressor and plugins)
+        self._transition_context_engine_session(
+            old_session_id=old_session_id,
+            new_session_id=getattr(self, "session_id", None),
+            previous_messages=previous_messages,
+            carry_over_context=carry_over_context,
+            reset_engine=True,
+        )
 
     def _ensure_lmstudio_runtime_loaded(self, config_context_length: Optional[int] = None) -> None:
         """
@@ -3831,6 +3910,34 @@ class AIAgent:
             self._last_completion_gate = gate
             if gate.enabled and not gate.passed and gate.status != "skipped":
                 self._capture_delegate_runtime_failures(function_args, delegate_result, gate=gate)
+            # Learning-plane handoff: the gate outcome is model-independent verification
+            # evidence, but persisting it + running held-out checks must NOT ride the
+            # serving path. Emit a fire-and-forget event (non-blocking, never raises) and
+            # return — the background bus does the capture/held-out off the hot path. The
+            # blocking gate above is the only learning-related cost serving still pays,
+            # and it is pre-existing (it overrides worker success claims).
+            if gate.enabled and gate.status != "skipped":
+                db = getattr(self, "_session_db", None)
+                if db is not None:
+                    try:
+                        from hermes_cli.learning_events import emit_learning_event
+
+                        task_id = str(
+                            getattr(self, "_current_task_id", None)
+                            or getattr(self, "session_id", None)
+                            or "delegate_task"
+                        )
+                        emit_learning_event(
+                            db=db,
+                            gate=gate.to_dict(),
+                            repo_path=repo_path,
+                            task_id=task_id,
+                            tenant_id=getattr(self, "tenant_id", None),
+                            repo_id=getattr(self, "repo_id", None),
+                            config=config,
+                        )
+                    except Exception:
+                        logger.debug("learning-plane emit failed", exc_info=True)
             return append_gate_to_delegate_payload(delegate_result, gate)
         except Exception:
             logger.debug("completion gate after delegate_task failed", exc_info=True)
