@@ -32,10 +32,12 @@ from hermes_cli.global_memory import (
     GlobalCurationResult,
     build_global_topic,
     build_idempotency_key,
+    evidence_hash,
     lesson_meets_quorum,
     merge_or_persist_global_lesson,
     persist_global_lesson,
 )
+from hermes_cli.provenance_signing import ProvenanceSigner
 from hermes_cli.learning_bus import (
     consume_learning_events,
     mark_learning_event_consumed,
@@ -173,6 +175,20 @@ def promote_candidate_to_global_pool(
 
     verification = evidence.get("verification") if isinstance(evidence.get("verification"), dict) else {}
     evidence_refs = [r for r in [evidence.get("evidence_uri"), verification.get("evidence_uri")] if r]
+    refs = evidence_refs or [f"candidate://{candidate_id}"]
+    provenance: Dict[str, Any] = {"candidate_id": candidate_id, "verification": verification}
+    # Sign this tenant's corroboration so the curator can verify it originated here and
+    # was not tampered with on the bus. Signed content matches the corroboration entry the
+    # merge step reconstructs (tenant_id, evidence_hash, verification_sha256, held_out).
+    signer = ProvenanceSigner.from_config(config)
+    if signer.enabled:
+        content = {
+            "tenant_id": candidate.get("tenant_id"),
+            "evidence_hash": evidence_hash(refs),
+            "verification_sha256": str(verification.get("evidence_sha256") or ""),
+            "held_out": bool(verification.get("held_out")),
+        }
+        provenance["signature"] = signer.sign(content)
     proposal = {
         "tenant_id": candidate.get("tenant_id"),
         "repo_id": candidate.get("repo_id"),
@@ -183,11 +199,11 @@ def promote_candidate_to_global_pool(
         "claim_type": str(candidate.get("kind") or "lesson"),
         "normalized_text": str(candidate.get("claim") or ""),
         "confidence": float(candidate.get("score") or evidence.get("confidence") or 0.0),
-        "evidence_refs": evidence_refs or [f"candidate://{candidate_id}"],
+        "evidence_refs": refs,
         "cross_tenant_shareable": True,
         "failure_signature": str(evidence.get("failure_signature") or ""),
         "success_signature": str(evidence.get("successful_action") or evidence.get("success_signature") or ""),
-        "approval_provenance": {"candidate_id": candidate_id, "verification": verification},
+        "approval_provenance": provenance,
     }
     event = publish_global_lesson_proposal(db, proposal, config=config)
     return GlobalPromotionResult(
@@ -205,6 +221,7 @@ def run_global_curator_once(
     lease_seconds: float = 300.0,
     min_distinct_tenants: int = 2,
     require_held_out: bool = False,
+    require_signed: bool = False,
     promote_on_quorum: bool = True,
 ) -> CurationRunResult:
     """Lease a batch from the dedupe topic and apply merge semantics serially.
@@ -216,6 +233,7 @@ def run_global_curator_once(
     optionally held-out), surfaced in the result for the lifecycle stage to act on.
     """
     topic = resolve_dedupe_topic(config)
+    signer = ProvenanceSigner.from_config(config)
     consumed = consume_learning_events(
         db, consumer=consumer, topics=[topic], limit=limit, lease_seconds=lease_seconds
     )
@@ -224,7 +242,7 @@ def run_global_curator_once(
     for event in consumed.leased:
         try:
             lesson = dict(event.payload_json or {})
-            out = merge_or_persist_global_lesson(db, lesson)
+            out = merge_or_persist_global_lesson(db, lesson, signer=signer)
             if out.action == "created":
                 result.created += 1
             elif out.action == "merged":
@@ -235,6 +253,7 @@ def run_global_curator_once(
                 out.lesson,
                 min_distinct_tenants=min_distinct_tenants,
                 require_held_out=require_held_out,
+                require_signed=require_signed,
             ):
                 result.quorum_met += 1
                 # Quorum gate: flip a quarantined lesson to canonical (usable) ONLY now

@@ -1046,20 +1046,34 @@ def lesson_corroboration_count(lesson: Dict[str, Any]) -> int:
     return max(1, len(tenants))
 
 
+def lesson_signed_corroboration_count(lesson: Dict[str, Any]) -> int:
+    """Distinct tenants whose corroboration entry carries a VERIFIED signature."""
+    provenance = _as_json_dict(lesson.get("approval_provenance") or lesson.get("approval_provenance_json"))
+    return len({
+        str(e.get("tenant_id") or "")
+        for e in _corroboration_entries(provenance)
+        if e.get("tenant_id") and e.get("verified") is True
+    })
+
+
 def lesson_meets_quorum(
     lesson: Dict[str, Any],
     *,
     min_distinct_tenants: int = 2,
     require_held_out: bool = False,
+    require_signed: bool = False,
 ) -> bool:
     """Quorum gate for cross-tenant/global promotion.
 
     Requires corroboration from ``min_distinct_tenants`` distinct tenants. When
     ``require_held_out`` is set, at least one corroboration must carry a held-out
-    verification (the model-independent, worker-unseen proof — see
-    hermes_cli.verification_evidence). Fail-closed.
+    verification (the model-independent, worker-unseen proof). When ``require_signed`` is
+    set, the distinct-tenant count is taken only over corroborations with a *verified*
+    signature — a forged/unsigned corroboration cannot count toward quorum. Fail-closed.
     """
-    if lesson_corroboration_count(lesson) < max(1, min_distinct_tenants):
+    threshold = max(1, min_distinct_tenants)
+    count = lesson_signed_corroboration_count(lesson) if require_signed else lesson_corroboration_count(lesson)
+    if count < threshold:
         return False
     if require_held_out:
         provenance = _as_json_dict(lesson.get("approval_provenance") or lesson.get("approval_provenance_json"))
@@ -1068,7 +1082,12 @@ def lesson_meets_quorum(
     return True
 
 
-def _corroboration_from_record(record: "GlobalLessonRecord") -> Dict[str, Any]:
+def _corroboration_from_record(record: "GlobalLessonRecord", *, signer: Any = None) -> Dict[str, Any]:
+    """Build a corroboration entry for one tenant. When a signer is supplied, the entry's
+    ``signature`` (set by the promoting tenant in ``approval_provenance.signature``) is
+    verified over the signed content {tenant_id, evidence_hash, verification_sha256,
+    held_out} and the result recorded in ``verified`` — so quorum can require *signed*
+    corroborations and a forged one cannot inflate it."""
     held_out = False
     verification_sha = ""
     prov = record.approval_provenance or {}
@@ -1076,24 +1095,30 @@ def _corroboration_from_record(record: "GlobalLessonRecord") -> Dict[str, Any]:
     if verification:
         held_out = bool(verification.get("held_out"))
         verification_sha = str(verification.get("evidence_sha256") or "")
-    return {
+    entry: Dict[str, Any] = {
         "tenant_id": record.tenant_id,
         "evidence_hash": evidence_hash(record.evidence_refs or []),
         "verification_sha256": verification_sha,
         "held_out": held_out,
         "at": _now(),
     }
+    signature = prov.get("signature")
+    if signature:
+        entry["signature"] = signature
+    if signer is not None:
+        entry["verified"] = bool(signer.verify(entry, signature))
+    return entry
 
 
 def merge_global_lesson_records(
-    canonical: "GlobalLessonRecord", incoming: "GlobalLessonRecord"
+    canonical: "GlobalLessonRecord", incoming: "GlobalLessonRecord", *, signer: Any = None
 ) -> "GlobalLessonRecord":
     """Fold ``incoming`` into ``canonical``. Canonical claim text/signatures are NOT
     altered — only evidence, corroboration, confidence (bounded) and shareability."""
     provenance = dict(canonical.approval_provenance or {})
     entries = _corroboration_entries(provenance)
     known_tenants = {str(e.get("tenant_id") or "") for e in entries}
-    incoming_corr = _corroboration_from_record(incoming)
+    incoming_corr = _corroboration_from_record(incoming, signer=signer)
     if str(incoming.tenant_id or "") and str(incoming.tenant_id or "") not in known_tenants:
         entries.append(incoming_corr)
     provenance["corroborations"] = entries
@@ -1124,14 +1149,16 @@ def merge_or_persist_global_lesson(
     lesson: Dict[str, Any],
     *,
     candidate_limit: int = 200,
+    signer: Any = None,
 ) -> GlobalCurationResult:
     """Dedup-enforcing write path: merge near-duplicates, accumulate corroboration.
 
     This is the curation entrypoint (vs the low-level persist_global_lesson). It runs
     classify_dedupe against the existing non-retired pool and acts on the verdict:
     merge into the canonical lesson, quarantine a conflicting claim, or create a new
-    canonical lesson. Ordering/serialization across concurrent callers is provided by
-    the single-consumer curator that wraps this.
+    canonical lesson. ``signer`` (a ProvenanceSigner) verifies each tenant's corroboration
+    signature so quorum can require *signed* corroborations. Ordering/serialization across
+    concurrent callers is provided by the single-consumer curator that wraps this.
     """
     incoming = _normalize_global_lesson(lesson)
     existing = [l for l in list_global_lessons(db, limit=candidate_limit) if not l.get("retired_at")]
@@ -1149,7 +1176,7 @@ def merge_or_persist_global_lesson(
                 review.append({"text_hash": incoming.text_hash, "confidence": incoming.confidence, "at": _now()})
                 prov["supersede_candidates"] = review
                 canonical.approval_provenance = prov
-            merged = merge_global_lesson_records(canonical, incoming)
+            merged = merge_global_lesson_records(canonical, incoming, signer=signer)
             persist_global_lesson(db, merged.to_dict())
             return GlobalCurationResult(
                 action="merged",
@@ -1172,6 +1199,12 @@ def merge_or_persist_global_lesson(
             target_id=target_id,
         )
 
+    # Created: seed the originating tenant's own corroboration entry (signed+verified when
+    # a signer is present) so signed quorum counts the origin, not just merged-in tenants.
+    prov = dict(incoming.approval_provenance or {})
+    prov["corroborations"] = [_corroboration_from_record(incoming, signer=signer)]
+    prov["corroboration_count"] = 1
+    incoming.approval_provenance = prov
     persist_global_lesson(db, incoming.to_dict())
     return GlobalCurationResult(
         action="created",
